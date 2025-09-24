@@ -1,0 +1,152 @@
+{
+  "application": {
+    "name": "Video Downloader Pro",
+    "version": "1.0.0",
+    "environment": "production"
+  },
+  "download": {
+    "concurrent_downloads": 5,
+    "timeout_seconds": 120,
+    "retry_attempts": 3,
+    "auto_verify_integrity": true,
+    "default_output_directory": "./downloads",
+    "max_download_size_gb": 10,
+    "enable_resume": true,
+    "segment_size_mb": 10,
+    "buffer_size_kb": 64,
+    "user_agent": "VideoDownloaderPro/1.0.0 (Production)"
+  },
+  "monitoring": {
+    "enable_prometheus": true,
+    "prometheus_port": 9090,
+    "enable_websocket_dashboard": true,
+    "websocket_port": 8080,
+    "log_level": "info",
+    "enable_tracing": false,
+    "metrics_retention_hours": 24,
+    "health_check_interval_seconds": 30,
+    "enable_alerting": true,
+    "alert_rules": [
+      {
+        "name": "HighMemoryUsage",
+        "condition": "memory_usage_percent > 80",
+        "severity": "warning"
+      },
+      {
+        "name": "DownloadFailureRate",
+        "condition": "failed_downloads_rate > 0.1",
+        "severity": "critical"
+      }
+    ]
+  },
+  "youtube": {
+    "enable_by_default": true,
+    "max_concurrent_downloads": 3,
+    "default_video_quality": "high",
+    "default_audio_quality": "high",
+    "auto_install_binaries": true,
+    "auto_update_binaries": false,
+    "libraries_directory": "./libs",
+    "enable_thumbnail_download": true,
+    "parallel_segments": 8,
+    "max_buffer_size_mb": 50
+  },
+  "security": {
+    "enable_rate_limiting": true,
+    "max_requests_per_minute": 60,
+    "enable_user_agent_rotation": false,
+    "allowed_domains": [
+      "youtube.com",
+      "youtu.be",
+      "m.youtube.com"
+    ],
+    "blocked_domains": [],
+    "validate_ssl_certificates": true,
+    "max_redirect_count": 5
+  },
+  "performance": {
+    "max_memory_usage_mb": 2048,
+    "enable_compression": true,
+    "gc_frequency_seconds": 300,
+    "worker_threads": "auto",
+    "max_blocking_threads": 512,
+    "stack_size_kb": 2048,
+    "enable_work_stealing": true,
+    "io_buffer_size_kb": 64,
+    "enable_async_io": true
+  },
+  "logging": {
+    "level": "info",
+    "enable_file_logging": true,
+    "log_directory": "./logs",
+    "max_log_file_size_mb": 100,
+    "max_log_files": 10,
+    "enable_json_format": false,
+    "enable_console_output": true,
+    "sensitive_data_filtering": true
+  },
+  "network": {
+    "timeout_connect_seconds": 30,
+    "timeout_read_seconds": 60,
+    "max_connections_per_host": 8,
+    "enable_keep_alive": true,
+    "keep_alive_timeout_seconds": 90,
+    "enable_compression": true,
+    "proxy": {
+      "enable": false,
+      "url": "",
+      "username": "",
+      "password": ""
+    }
+  },
+  "file_system": {
+    "enable_atomic_writes": true,
+    "enable_backup_on_overwrite": false,
+    "file_permissions": "644",
+    "directory_permissions": "755",
+    "enable_disk_space_check": true,
+    "min_free_space_gb": 1
+  },
+  "error_handling": {
+    "enable_circuit_breaker": true,
+    "circuit_breaker_failure_threshold": 5,
+    "circuit_breaker_recovery_timeout_seconds": 30,
+    "enable_exponential_backoff": true,
+    "backoff_base_delay_ms": 1000,
+    "backoff_max_delay_seconds": 300,
+    "backoff_multiplier": 2.0,
+    "enable_jitter": true,
+    "jitter_factor": 0.1
+  },
+  "features": {
+    "enable_batch_import": true,
+    "enable_scheduler": true,
+    "enable_statistics": true,
+    "enable_export": true,
+    "enable_api": false,
+    "enable_plugin_system": false
+  },
+  "ui": {
+    "theme": "system",
+    "enable_system_tray": true,
+    "minimize_to_tray": true,
+    "enable_notifications": true,
+    "auto_start": false,
+    "window": {
+      "width": 1200,
+      "height": 800,
+      "min_width": 800,
+      "min_height": 600,
+      "resizable": true,
+      "fullscreen": false
+    }
+  },
+  "maintenance": {
+    "enable_auto_cleanup": true,
+    "cleanup_interval_hours": 24,
+    "max_completed_tasks_retention_days": 7,
+    "max_log_retention_days": 30,
+    "enable_auto_updates": false,
+    "update_check_interval_hours": 24
+  }
+}

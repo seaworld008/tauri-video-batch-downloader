@@ -1,0 +1,77 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm vite",
+    "beforeBuildCommand": "pnpm vite build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist-simple",
+    "withGlobalTauri": false
+  },
+  "package": {
+    "productName": "Video Downloader Pro - Simple Test",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "all": false,
+        "message": true,
+        "ask": true,
+        "confirm": true
+      },
+      "window": {
+        "all": false,
+        "center": true,
+        "setTitle": true,
+        "setSize": true,
+        "close": true,
+        "show": true
+      },
+      "app": {
+        "all": false,
+        "show": true,
+        "hide": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["msi", "nsis"],
+      "identifier": "com.videodownloader.pro.simple",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "resources": [],
+      "copyright": "© 2024 Video Downloader Pro Team",
+      "category": "Productivity",
+      "shortDescription": "Simple test version",
+      "longDescription": "Simplified test version to debug connection issues"
+    },
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost"
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "Video Downloader Pro - Simple Test",
+        "width": 800,
+        "height": 600,
+        "minWidth": 400,
+        "minHeight": 300,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "theme": null
+      }
+    ],
+    "updater": {
+      "active": false
+    }
+  }
+}

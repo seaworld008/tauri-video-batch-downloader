@@ -1,0 +1,215 @@
+{
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "cancel": "取消",
+    "confirm": "确认",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭",
+    "search": "搜索",
+    "filter": "筛选",
+    "clear": "清空",
+    "refresh": "刷新",
+    "retry": "重试",
+    "browse": "浏览",
+    "select": "选择",
+    "all": "全部",
+    "none": "无"
+  },
+  "nav": {
+    "import": "导入任务",
+    "downloads": "下载管理",
+    "settings": "系统设置",
+    "monitoring": "系统监控"
+  },
+  "import": {
+    "title": "导入下载任务",
+    "description": "从CSV文件导入或手动输入视频下载任务",
+    "dropZone": {
+      "title": "将CSV文件拖拽至此",
+      "description": "或点击选择文件",
+      "supportedFormats": "支持CSV文件格式"
+    },
+    "manualInput": {
+      "title": "手动输入",
+      "placeholder": "输入视频链接，每行一个",
+      "addUrls": "添加链接"
+    },
+    "preview": {
+      "title": "导入预览",
+      "taskCount": "将导入 {{count}} 个任务",
+      "columns": {
+        "url": "链接",
+        "title": "标题",
+        "output": "输出路径"
+      }
+    },
+    "options": {
+      "outputDir": "输出目录",
+      "selectOutputDir": "选择输出目录",
+      "downloadType": "下载类型",
+      "quality": "画质"
+    },
+    "validation": {
+      "invalidFile": "无效的文件格式",
+      "emptyFile": "文件为空",
+      "invalidUrls": "部分链接无效",
+      "noTasks": "没有可导入的任务"
+    }
+  },
+  "downloads": {
+    "title": "下载任务",
+    "stats": {
+      "totalTasks": "总任务数",
+      "activeTasks": "活跃任务",
+      "completedTasks": "已完成",
+      "failedTasks": "失败任务",
+      "totalDownloaded": "总下载量",
+      "averageSpeed": "平均速度"
+    },
+    "controls": {
+      "startAll": "全部开始",
+      "pauseAll": "全部暂停",
+      "resumeAll": "全部继续",
+      "clearCompleted": "清理完成",
+      "deleteSelected": "删除选中"
+    },
+    "task": {
+      "status": {
+        "pending": "等待中",
+        "downloading": "下载中",
+        "paused": "已暂停",
+        "completed": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
+      },
+      "actions": {
+        "start": "开始",
+        "pause": "暂停",
+        "resume": "继续",
+        "cancel": "取消",
+        "retry": "重试",
+        "delete": "删除",
+        "openFile": "打开文件",
+        "openFolder": "打开文件夹"
+      },
+      "info": {
+        "speed": "速度",
+        "progress": "进度",
+        "timeRemaining": "剩余时间",
+        "fileSize": "文件大小",
+        "downloadedSize": "已下载"
+      }
+    },
+    "filters": {
+      "all": "所有任务",
+      "pending": "等待中",
+      "downloading": "下载中",
+      "completed": "已完成",
+      "failed": "失败"
+    },
+    "search": {
+      "placeholder": "按标题、链接或路径搜索任务..."
+    },
+    "empty": {
+      "noTasks": "暂无下载任务",
+      "noTasksDescription": "点击左侧导航的「导入任务」开始批量添加下载任务",
+      "noMatches": "没有匹配的任务",
+      "noMatchesDescription": "请调整搜索条件或过滤器",
+      "importButton": "导入任务"
+    }
+  },
+  "settings": {
+    "title": "系统设置",
+    "language": {
+      "title": "语言设置",
+      "description": "选择您偏好的语言"
+    },
+    "theme": {
+      "title": "主题设置",
+      "description": "选择您偏好的主题",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统"
+    },
+    "download": {
+      "title": "下载设置",
+      "concurrentDownloads": "并发下载数",
+      "concurrentDownloadsDescription": "同时进行的最大下载数量",
+      "retryAttempts": "重试次数",
+      "retryAttemptsDescription": "下载失败时的重试次数",
+      "timeout": "超时时间（秒）",
+      "timeoutDescription": "单个下载请求的超时时间",
+      "outputDirectory": "输出目录",
+      "outputDirectoryDescription": "下载文件的默认保存目录"
+    },
+    "advanced": {
+      "title": "高级设置",
+      "userAgent": "用户代理",
+      "userAgentDescription": "自定义请求的User-Agent头",
+      "proxy": "代理设置",
+      "proxyDescription": "HTTP代理配置（可选）",
+      "headers": "自定义请求头",
+      "headersDescription": "额外的HTTP请求头"
+    },
+    "validation": {
+      "invalidNumber": "请输入有效数字",
+      "invalidDirectory": "请选择有效目录",
+      "invalidUrl": "请输入有效的URL"
+    },
+    "saveSuccess": "设置保存成功",
+    "saveError": "设置保存失败"
+  },
+  "monitoring": {
+    "title": "系统监控",
+    "systemInfo": {
+      "title": "系统信息",
+      "cpuUsage": "CPU使用率",
+      "memoryUsage": "内存使用率",
+      "diskUsage": "磁盘使用率",
+      "networkSpeed": "网络速度",
+      "downloadSpeed": "下载速度",
+      "uploadSpeed": "上传速度"
+    },
+    "performance": {
+      "title": "性能指标",
+      "activeDownloads": "活跃下载",
+      "totalBandwidth": "总带宽",
+      "averageSpeed": "平均速度",
+      "peakSpeed": "峰值速度"
+    }
+  },
+  "errors": {
+    "networkError": "网络连接失败",
+    "fileNotFound": "文件未找到",
+    "permissionDenied": "权限被拒绝",
+    "diskFull": "磁盘空间不足",
+    "invalidUrl": "无效的URL格式",
+    "downloadFailed": "下载失败",
+    "configLoadFailed": "配置加载失败",
+    "configSaveFailed": "配置保存失败",
+    "systemError": "系统错误"
+  },
+  "notifications": {
+    "downloadStarted": "下载已开始",
+    "downloadCompleted": "下载已完成",
+    "downloadFailed": "下载失败",
+    "allDownloadsCompleted": "所有下载已完成",
+    "taskAdded": "任务添加成功",
+    "tasksImported": "成功导入 {{count}} 个任务",
+    "configUpdated": "配置已更新",
+    "systemReady": "系统准备就绪"
+  },
+  "formats": {
+    "bytes": "{{value}} B",
+    "kilobytes": "{{value}} KB",
+    "megabytes": "{{value}} MB",
+    "gigabytes": "{{value}} GB",
+    "speed": "{{value}}/s",
+    "timeRemaining": "剩余 {{time}}",
+    "percentage": "{{value}}%"
+  }
+}

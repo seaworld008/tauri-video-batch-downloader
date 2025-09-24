@@ -1,0 +1,397 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Create Release Draft
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.id }}
+      release_upload_url: ${{ steps.create-release.outputs.upload_url }}
+      release_body: ${{ steps.tag-info.outputs.tag_body }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag information
+        id: tag-info
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          
+          # Extract version from tag (remove 'v' prefix)
+          VERSION=${TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Get the tag message/body
+          TAG_BODY=$(git tag -l --format='%(contents)' "$TAG" || echo "Release $TAG")
+          echo "tag_body<<EOF" >> $GITHUB_OUTPUT
+          echo "$TAG_BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        id: create-release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag-info.outputs.tag }}
+          release_name: 'Video Downloader Pro ${{ steps.tag-info.outputs.version }}'
+          body: |
+            ## Video Downloader Pro ${{ steps.tag-info.outputs.version }}
+            
+            🎉 **Professional batch video downloader with modern UI**
+            
+            ### 📥 Downloads
+            
+            Choose the appropriate version for your operating system:
+            
+            - **Windows**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_x64_en-US.msi`
+            - **macOS (Intel)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_x64.dmg`  
+            - **macOS (Apple Silicon)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_aarch64.dmg`
+            - **Linux (AppImage)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_amd64.AppImage`
+            - **Linux (deb)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_amd64.deb`
+            
+            ### ✨ Features
+            
+            - 🚀 **High-Performance Downloads**: Multi-threaded downloading with resume support
+            - 🎯 **Multiple Formats**: HTTP/HTTPS, M3U8 streams, YouTube videos
+            - 📊 **Real-time Progress**: Live bandwidth monitoring and statistics
+            - 🎨 **Modern UI**: Dark/light themes with responsive design
+            - 📁 **Batch Processing**: CSV import and bulk operations
+            - ⚙️ **Advanced Settings**: Proxy support, custom headers, speed limiting
+            
+            ### 🔧 System Requirements
+            
+            - **Windows**: Windows 10 version 1903+ (64-bit)
+            - **macOS**: macOS 10.15+ (Catalina or later)
+            - **Linux**: Ubuntu 18.04+ / Debian 10+ / other modern distributions
+            
+            ### 📝 Changelog
+            
+            ${{ steps.tag-info.outputs.tag_body }}
+            
+            ### 🛡️ Security
+            
+            All release binaries are signed and checksums are provided below for verification.
+            
+            ---
+            
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ github.event.before }}...${{ steps.tag-info.outputs.tag }}
+          draft: true
+          prerelease: ${{ contains(steps.tag-info.outputs.tag, '-') }}
+
+  # Build for Multiple Platforms
+  build-release:
+    name: Build Release
+    needs: create-release
+    runs-on: ${{ matrix.platform.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # Windows
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            arch: x64
+            cmd: cmd
+            
+          # macOS Intel  
+          - os: macos-latest
+            rust_target: x86_64-apple-darwin
+            arch: x64
+            cmd: bash
+            
+          # macOS Apple Silicon
+          - os: macos-latest
+            rust_target: aarch64-apple-darwin
+            arch: aarch64
+            cmd: bash
+            
+          # Linux
+          - os: ubuntu-20.04
+            rust_target: x86_64-unknown-linux-gnu
+            arch: amd64
+            cmd: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.platform.rust_target }}
+
+      # Platform-specific dependencies
+      - name: Install Linux dependencies
+        if: matrix.platform.os == 'ubuntu-20.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.0-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      # Code signing setup
+      - name: Import Windows certificate
+        if: matrix.platform.os == 'windows-latest'
+        run: |
+          if (-not [string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
+            $cert = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+            [IO.File]::WriteAllBytes("certificate.p12", $cert)
+            certutil -user -q -p $env:WINDOWS_CERTIFICATE_PASSWORD -importpfx certificate.p12
+            Remove-Item certificate.p12
+          } else {
+            echo "No Windows certificate provided, skipping code signing"
+          }
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+      - name: Import macOS certificate  
+        if: matrix.platform.os == 'macos-latest'
+        run: |
+          if [[ -n "$APPLE_CERTIFICATE" ]]; then
+            echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+            security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+            security default-keychain -s build.keychain
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+            security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+            rm certificate.p12
+          else
+            echo "No Apple certificate provided, skipping code signing"
+          fi
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      # Build Tauri app
+      - name: Build Tauri app
+        run: pnpm tauri build --target ${{ matrix.platform.rust_target }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Post-build signing (macOS notarization)
+      - name: Notarize macOS app
+        if: matrix.platform.os == 'macos-latest' && env.APPLE_ID != ''
+        run: |
+          xcrun notarytool submit "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/dmg/*.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Collect build artifacts
+      - name: Collect Windows artifacts
+        if: matrix.platform.os == 'windows-latest'
+        run: |
+          mkdir -p artifacts
+          $msiPath = Get-ChildItem "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/msi/*.msi" | Select-Object -First 1
+          $exePath = Get-ChildItem "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if ($msiPath) { Copy-Item $msiPath.FullName "artifacts/" }
+          if ($exePath) { Copy-Item $exePath.FullName "artifacts/" }
+
+      - name: Collect macOS artifacts
+        if: matrix.platform.os == 'macos-latest'
+        run: |
+          mkdir -p artifacts
+          find "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" -name "*.dmg" -exec cp {} artifacts/ \;
+
+      - name: Collect Linux artifacts
+        if: matrix.platform.os == 'ubuntu-20.04'
+        run: |
+          mkdir -p artifacts
+          find "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) -exec cp {} artifacts/ \;
+
+      # Generate checksums
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          if [[ "${{ matrix.platform.cmd }}" == "cmd" ]]; then
+            for file in *; do
+              certutil -hashfile "$file" SHA256 >> checksums.txt
+            done
+          else
+            sha256sum * > checksums.txt
+          fi
+
+      # Upload artifacts
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform.rust_target }}
+          path: artifacts/*
+          retention-days: 30
+
+      # Upload to release
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          draft: true
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish Release
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [create-release, build-release]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Download all artifacts and create combined checksum
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create combined checksums
+        run: |
+          cd release-artifacts
+          echo "# SHA256 Checksums" > ../CHECKSUMS.txt
+          echo "" >> ../CHECKSUMS.txt
+          for dir in release-*; do
+            if [[ -d "$dir" ]]; then
+              echo "## $(basename $dir)" >> ../CHECKSUMS.txt
+              if [[ -f "$dir/checksums.txt" ]]; then
+                cat "$dir/checksums.txt" >> ../CHECKSUMS.txt
+              fi
+              echo "" >> ../CHECKSUMS.txt
+            fi
+          done
+
+      # Generate release notes with asset information
+      - name: Update release notes
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            CHECKSUMS.txt
+            release-artifacts/release-*/
+          draft: false  # This publishes the release
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
+          body: |
+            ${{ needs.create-release.outputs.release_body }}
+            
+            ### 📋 Checksums
+            
+            SHA256 checksums are provided in `CHECKSUMS.txt` for integrity verification.
+            
+            ### 🔍 Verify Downloads
+            
+            ```bash
+            # Download checksum file
+            curl -L -o CHECKSUMS.txt https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.tag_name }}/CHECKSUMS.txt
+            
+            # Verify your downloaded file
+            sha256sum -c CHECKSUMS.txt --ignore-missing
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Post-release tasks
+  post-release:
+    name: Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [create-release, publish-release]
+    if: always() && needs.publish-release.result == 'success'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Update Homebrew formula (if applicable)
+      - name: Update Homebrew formula
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          echo "TODO: Update Homebrew formula"
+          # Implementation for updating Homebrew tap
+
+      # Update Chocolatey package (if applicable) 
+      - name: Update Chocolatey package
+        if: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          echo "TODO: Update Chocolatey package"
+          # Implementation for updating Chocolatey package
+
+      # Create Docker image (if applicable)
+      - name: Build and push Docker image
+        if: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          echo "TODO: Build and push Docker image"
+          # Implementation for Docker image creation
+
+      # Notify success
+      - name: Release notification
+        run: |
+          echo "🎉 Release ${{ needs.create-release.outputs.tag_name }} published successfully!"
+          echo "🔗 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.tag_name }}"

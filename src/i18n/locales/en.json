@@ -1,0 +1,215 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "search": "Search",
+    "filter": "Filter",
+    "clear": "Clear",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "browse": "Browse",
+    "select": "Select",
+    "all": "All",
+    "none": "None"
+  },
+  "nav": {
+    "import": "Import Tasks",
+    "downloads": "Downloads",
+    "settings": "Settings",
+    "monitoring": "Monitoring"
+  },
+  "import": {
+    "title": "Import Download Tasks",
+    "description": "Import video download tasks from CSV files or manual input",
+    "dropZone": {
+      "title": "Drop CSV File Here",
+      "description": "or click to select file",
+      "supportedFormats": "Supports CSV files"
+    },
+    "manualInput": {
+      "title": "Manual Input",
+      "placeholder": "Enter video URLs, one per line",
+      "addUrls": "Add URLs"
+    },
+    "preview": {
+      "title": "Import Preview",
+      "taskCount": "{{count}} tasks to import",
+      "columns": {
+        "url": "URL",
+        "title": "Title",
+        "output": "Output Path"
+      }
+    },
+    "options": {
+      "outputDir": "Output Directory",
+      "selectOutputDir": "Select Output Directory",
+      "downloadType": "Download Type",
+      "quality": "Quality"
+    },
+    "validation": {
+      "invalidFile": "Invalid file format",
+      "emptyFile": "File is empty",
+      "invalidUrls": "Some URLs are invalid",
+      "noTasks": "No tasks to import"
+    }
+  },
+  "downloads": {
+    "title": "Download Tasks",
+    "stats": {
+      "totalTasks": "Total Tasks",
+      "activeTasks": "Active",
+      "completedTasks": "Completed",
+      "failedTasks": "Failed",
+      "totalDownloaded": "Total Downloaded",
+      "averageSpeed": "Average Speed"
+    },
+    "controls": {
+      "startAll": "Start All",
+      "pauseAll": "Pause All",
+      "resumeAll": "Resume All",
+      "clearCompleted": "Clear Completed",
+      "deleteSelected": "Delete Selected"
+    },
+    "task": {
+      "status": {
+        "pending": "Pending",
+        "downloading": "Downloading",
+        "paused": "Paused",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
+      "actions": {
+        "start": "Start",
+        "pause": "Pause",
+        "resume": "Resume",
+        "cancel": "Cancel",
+        "retry": "Retry",
+        "delete": "Delete",
+        "openFile": "Open File",
+        "openFolder": "Open Folder"
+      },
+      "info": {
+        "speed": "Speed",
+        "progress": "Progress",
+        "timeRemaining": "Time Remaining",
+        "fileSize": "File Size",
+        "downloadedSize": "Downloaded"
+      }
+    },
+    "filters": {
+      "all": "All Tasks",
+      "pending": "Pending",
+      "downloading": "Downloading",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
+    "search": {
+      "placeholder": "Search tasks by title, URL or path..."
+    },
+    "empty": {
+      "noTasks": "No Download Tasks",
+      "noTasksDescription": "Click 'Import Tasks' in the sidebar to start batch adding download tasks",
+      "noMatches": "No Matching Tasks",
+      "noMatchesDescription": "Please adjust your search criteria or filters",
+      "importButton": "Import Tasks"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "language": {
+      "title": "Language",
+      "description": "Choose your preferred language"
+    },
+    "theme": {
+      "title": "Theme",
+      "description": "Choose your preferred theme",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    },
+    "download": {
+      "title": "Download Settings",
+      "concurrentDownloads": "Concurrent Downloads",
+      "concurrentDownloadsDescription": "Maximum number of simultaneous downloads",
+      "retryAttempts": "Retry Attempts",
+      "retryAttemptsDescription": "Number of retry attempts for failed downloads",
+      "timeout": "Timeout (seconds)",
+      "timeoutDescription": "Request timeout for each download",
+      "outputDirectory": "Output Directory",
+      "outputDirectoryDescription": "Default directory for downloaded files"
+    },
+    "advanced": {
+      "title": "Advanced Settings",
+      "userAgent": "User Agent",
+      "userAgentDescription": "Custom User-Agent header for requests",
+      "proxy": "Proxy Settings",
+      "proxyDescription": "HTTP proxy configuration (optional)",
+      "headers": "Custom Headers",
+      "headersDescription": "Additional HTTP headers for requests"
+    },
+    "validation": {
+      "invalidNumber": "Please enter a valid number",
+      "invalidDirectory": "Please select a valid directory",
+      "invalidUrl": "Please enter a valid URL"
+    },
+    "saveSuccess": "Settings saved successfully",
+    "saveError": "Failed to save settings"
+  },
+  "monitoring": {
+    "title": "System Monitoring",
+    "systemInfo": {
+      "title": "System Information",
+      "cpuUsage": "CPU Usage",
+      "memoryUsage": "Memory Usage",
+      "diskUsage": "Disk Usage",
+      "networkSpeed": "Network Speed",
+      "downloadSpeed": "Download",
+      "uploadSpeed": "Upload"
+    },
+    "performance": {
+      "title": "Performance Metrics",
+      "activeDownloads": "Active Downloads",
+      "totalBandwidth": "Total Bandwidth",
+      "averageSpeed": "Average Speed",
+      "peakSpeed": "Peak Speed"
+    }
+  },
+  "errors": {
+    "networkError": "Network connection failed",
+    "fileNotFound": "File not found",
+    "permissionDenied": "Permission denied",
+    "diskFull": "Insufficient disk space",
+    "invalidUrl": "Invalid URL format",
+    "downloadFailed": "Download failed",
+    "configLoadFailed": "Failed to load configuration",
+    "configSaveFailed": "Failed to save configuration",
+    "systemError": "System error occurred"
+  },
+  "notifications": {
+    "downloadStarted": "Download started",
+    "downloadCompleted": "Download completed",
+    "downloadFailed": "Download failed",
+    "allDownloadsCompleted": "All downloads completed",
+    "taskAdded": "Task added successfully",
+    "tasksImported": "{{count}} tasks imported successfully",
+    "configUpdated": "Configuration updated",
+    "systemReady": "System ready"
+  },
+  "formats": {
+    "bytes": "{{value}} B",
+    "kilobytes": "{{value}} KB",
+    "megabytes": "{{value}} MB",
+    "gigabytes": "{{value}} GB",
+    "speed": "{{value}}/s",
+    "timeRemaining": "{{time}} remaining",
+    "percentage": "{{value}}%"
+  }
+}

@@ -1,0 +1,207 @@
+# GitHub Dependabot configuration
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Frontend dependencies (npm/pnpm)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "video-downloader-pro-maintainers"
+    assignees:
+      - "video-downloader-pro-maintainers"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "frontend"
+      - "javascript"
+    # Group updates by dependency type
+    groups:
+      # Production dependencies
+      production-dependencies:
+        patterns:
+          - "@headlessui/react"
+          - "@heroicons/react"
+          - "@hookform/resolvers"  
+          - "@tanstack/react-query*"
+          - "@tanstack/react-virtual"
+          - "@tauri-apps/api"
+          - "clsx"
+          - "date-fns"
+          - "react"
+          - "react-dom"
+          - "react-dropzone"
+          - "react-hook-form"
+          - "react-hot-toast"
+          - "zod"
+          - "zustand"
+      # Development dependencies  
+      development-dependencies:
+        patterns:
+          - "@tauri-apps/cli"
+          - "@testing-library/*"
+          - "@types/*"
+          - "@typescript-eslint/*"
+          - "@vitejs/plugin-react"
+          - "@vitest/*"
+          - "autoprefixer"
+          - "eslint*"
+          - "husky"
+          - "jsdom"
+          - "lint-staged"
+          - "postcss"
+          - "prettier"
+          - "selenium-webdriver"
+          - "tailwindcss"
+          - "typescript"
+          - "vite"
+          - "vitest"
+      # Build tools
+      build-tools:
+        patterns:
+          - "vite*"
+          - "vitest*" 
+          - "@vitejs/*"
+          - "rollup*"
+          - "esbuild*"
+
+  # Backend dependencies (Cargo/Rust)
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly" 
+      day: "monday"
+      time: "10:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "video-downloader-pro-maintainers"
+    assignees:
+      - "video-downloader-pro-maintainers"  
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "backend"
+      - "rust"
+    # Group Rust dependencies
+    groups:
+      # Core Tauri dependencies
+      tauri-core:
+        patterns:
+          - "tauri*"
+          - "serde*"
+          - "tokio*"
+      # HTTP and networking
+      networking:
+        patterns:
+          - "reqwest*"
+          - "hyper*"
+          - "url*"
+          - "http*"
+      # Async runtime
+      async-runtime:
+        patterns:
+          - "tokio*"
+          - "futures*"
+          - "async-*"
+      # Serialization
+      serialization:
+        patterns:
+          - "serde*"
+          - "serde_json*"
+          - "csv*"
+      # Development dependencies
+      dev-dependencies:
+        patterns:
+          - "tempfile*"
+          - "criterion*"
+          - "proptest*"
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "first-monday"
+      time: "11:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "video-downloader-pro-maintainers"
+    assignees:
+      - "video-downloader-pro-maintainers"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+    groups:
+      # Core GitHub Actions
+      github-actions:
+        patterns:
+          - "actions/*"
+          - "github/codeql-action*"
+          - "softprops/action-gh-release*"
+          - "codecov/codecov-action*"
+
+  # Docker dependencies (if we add Docker support)
+  # - package-ecosystem: "docker"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "monthly"
+  #   open-pull-requests-limit: 2
+
+# Global settings for all package ecosystems
+# Ignore certain dependencies that we want to manage manually
+ignore:
+  # Ignore major version updates for stable dependencies
+  - dependency-name: "react"
+    update-types: ["version-update:semver-major"]
+  - dependency-name: "react-dom"
+    update-types: ["version-update:semver-major"]
+  
+  # Ignore beta/alpha versions
+  - dependency-name: "*"
+    update-types: ["version-update:semver-major"]
+    versions: ["*alpha*", "*beta*", "*rc*", "*pre*"]
+
+  # Tauri major updates - handle manually  
+  - dependency-name: "tauri*"
+    update-types: ["version-update:semver-major"]
+  - dependency-name: "@tauri-apps/*"
+    update-types: ["version-update:semver-major"]
+
+  # Node.js major version updates - handle manually
+  - dependency-name: "node"
+    update-types: ["version-update:semver-major"]
+
+  # TypeScript major updates - handle manually for compatibility
+  - dependency-name: "typescript"
+    update-types: ["version-update:semver-major"]
+
+  # ESLint major updates - handle manually for configuration compatibility
+  - dependency-name: "eslint*"
+    update-types: ["version-update:semver-major"]
+
+  # Vite major updates - handle manually
+  - dependency-name: "vite*"  
+    update-types: ["version-update:semver-major"]
+
+  # Testing framework major updates - handle manually
+  - dependency-name: "vitest*"
+    update-types: ["version-update:semver-major"]
+  - dependency-name: "@testing-library/*"
+    update-types: ["version-update:semver-major"]
