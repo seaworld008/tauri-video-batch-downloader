@@ -5,12 +5,12 @@ export type UiFieldKey = 'record_url' | 'zl_id' | 'zl_name' | 'kc_id' | 'kc_name
 const REQUIRED_FIELDS: UiFieldKey[] = ['record_url'];
 
 const URL_KEYWORDS = ['url', 'link', 'href', 'download', 'record'];
-const URL_KEYWORDS_CN = ['\u94fe\u63a5', '\u5730\u5740', '\u4e0b\u8f7d', '\u64ad\u653e'];
-const COLUMN_KEYWORDS = ['column', 'zl', '\u4e13\u680f'];
-const COURSE_KEYWORDS = ['course', 'kc', '\u8bfe', '\u8bfe\u7a0b'];
-const ID_KEYWORDS = ['id', 'code', 'number', '\u7f16\u53f7', '\u8bc6\u522b'];
-const NAME_KEYWORDS = ['name', 'title', '\u540d', '\u79f0', '\u6807\u9898'];
-const VIDEO_KEYWORDS = ['video', '\u89c6\u9891'];
+const URL_KEYWORDS_CN = ['链接', '地址', '下载', '播放'];
+const COLUMN_KEYWORDS = ['column', 'zl', '专栏'];
+const COURSE_KEYWORDS = ['course', 'kc', '课', '课程'];
+const ID_KEYWORDS = ['id', 'code', 'number', '编号', '识别'];
+const NAME_KEYWORDS = ['name', 'title', '名', '称', '标题'];
+const VIDEO_KEYWORDS = ['video', '视频'];
 
 const normalize = (value: string): string => value.replace(/[\s_\-]+/g, '').toLowerCase();
 
