@@ -50,6 +50,11 @@ export const ImportView: React.FC<ImportViewProps> = () => {
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [latestImportTaskIds, setLatestImportTaskIds] = useState<string[]>([]);
   const [importSuccess, setImportSuccess] = useState(false); // 新增：导入成功状态
+  const [importResultSummary, setImportResultSummary] = useState<{
+    createdCount: number;
+    totalRows: number;
+    skippedCount: number;
+  } | null>(null);
   
   // 导入进度跟踪状态
   const [importSteps, setImportSteps] = useState<ImportProgressStep[]>(createImportSteps());
@@ -154,6 +159,9 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
       if (selected && !Array.isArray(selected)) {
         console.log('📁 File selected:', selected);
+        setImportSuccess(false);
+        setImportResultSummary(null);
+        setLatestImportTaskIds([]);
         setSelectedFile(selected);
         const previewResult = await previewImportData(selected);
         if (!previewResult) {
@@ -172,6 +180,8 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
   const previewImportData = async (filePath: string) => {
     setIsLoading(true);
+    setImportSuccess(false);
+    setImportResultSummary(null);
     console.log('[Import] previewImportData called with:', filePath);
     try {
       console.log('[Import] Invoking preview_import_data', {
@@ -328,6 +338,7 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
         const createdCount = newTaskIds.length;
         const totalRows = validRows.length;
+        const skippedCount = Math.max(totalRows - createdCount, 0);
 
         if (createdCount === 0) {
           notify.info('未创建新任务', '导入内容可能已经存在于下载列表中。');
@@ -337,21 +348,23 @@ export const ImportView: React.FC<ImportViewProps> = () => {
           notify.success(`成功导入 ${createdCount} 个下载任务`);
         }
 
+        setImportResultSummary({
+          createdCount,
+          totalRows,
+          skippedCount,
+        });
+        setImportSuccess(true);
         triggerImportGuide(createdCount, newTaskIds.length);
         updateStep('ui-update', 'completed');
         setImportProgress(100);
 
         setShowDetailedProgress(false);
-        setImportSuccess(false);
-        setSelectedFile(null);
-        setImportPreview(null);
-        setFieldMapping({});
-        setOutputDir('');
-        setCurrentView('downloads');
 
         return tasksToAdd;
       } catch (error) {
         console.error('导入失败:', error);
+        setImportResultSummary(null);
+        setImportSuccess(false);
         if (currentStep) {
           updateStep(currentStep, 'error', String(error));
         }
@@ -364,7 +377,7 @@ export const ImportView: React.FC<ImportViewProps> = () => {
         setIsLoading(false);
       }
     },
-    [addTasks, currentStep, defaultOutputDirFromConfig, outputDir, resetProgress, setCurrentView, triggerImportGuide, updateStep]
+    [addTasks, currentStep, defaultOutputDirFromConfig, outputDir, resetProgress, triggerImportGuide, updateStep]
   );
 
 
@@ -761,8 +774,20 @@ export const ImportView: React.FC<ImportViewProps> = () => {
                           <div className="text-center">
                             <div className="inline-flex items-center px-8 py-3 bg-green-100 dark:bg-green-900/20 border-2 border-green-500 rounded-lg text-green-800 dark:text-green-200 font-medium text-lg mb-4">
                               <CheckCircleIcon className="w-6 h-6 mr-3" />
-                              导入成功！已添加 {importPreview?.total_rows} 个下载任务
+                              {importResultSummary
+                                ? `导入成功！已添加 ${importResultSummary.createdCount}/${importResultSummary.totalRows} 个下载任务`
+                                : '导入成功！任务已添加到下载列表'}
                             </div>
+                            {importResultSummary && importResultSummary.skippedCount > 0 && (
+                              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                                其中 {importResultSummary.skippedCount} 行因缺少有效链接或已存在于列表中而被忽略。
+                              </p>
+                            )}
+                            {latestImportTaskIds.length > 0 && (
+                              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                                已自动选中 {latestImportTaskIds.length} 个新任务，前往下载管理即可开始。
+                              </p>
+                            )}
                             <div className="flex gap-3 justify-center">
                               <button
                                 onClick={() => setCurrentView('downloads')}
@@ -777,6 +802,8 @@ export const ImportView: React.FC<ImportViewProps> = () => {
                                   setFieldMapping({});
                                   setImportSuccess(false);
                                   setOutputDir('');
+                                  setImportResultSummary(null);
+                                  setLatestImportTaskIds([]);
                                 }}
                                 className="inline-flex items-center px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
                               >
