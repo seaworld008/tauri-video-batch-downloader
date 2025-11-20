@@ -18,7 +18,7 @@ export const YoutubeUrlInput: React.FC<YoutubeUrlInputProps> = () => {
   const [videoInfo, setVideoInfo] = useState<YoutubeVideoInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [outputDir, setOutputDir] = useState<string>('');
-  const { addTasks } = useDownloadStore();
+  const { addTasks, startDownload } = useDownloadStore();
 
   // 获取视频信息
   const handleGetVideoInfo = async () => {
@@ -102,11 +102,13 @@ export const YoutubeUrlInput: React.FC<YoutubeUrlInputProps> = () => {
       // 添加到任务列表
       await addTasks([task]);
       
-      // 调用后端开始下载
-      await invoke('start_download', { taskId: task.id });
+      const result = await startDownload(task.id);
       
       console.log('✅ YouTube download started');
-      notify.success('YouTube下载已开始', `正在下载: ${videoInfo.title}`);
+      notify.success(
+        result === 'queued' ? '任务已排队' : 'YouTube下载已开始',
+        `正在处理: ${videoInfo.title}`
+      );
       
       // 清空表单
       setUrl('');

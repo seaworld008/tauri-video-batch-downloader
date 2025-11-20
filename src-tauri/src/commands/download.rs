@@ -2,7 +2,6 @@
 
 use serde::Deserialize;
 use tauri::{command, State};
-use uuid::Uuid;
 
 use crate::{core::models::*, AppState};
 
@@ -135,6 +134,36 @@ pub async fn cancel_download(task_id: String, state: State<'_, AppState>) -> Res
 }
 
 #[command]
+pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::info!("Pausing all active downloads");
+    let mut manager = state.download_manager.write().await;
+    manager.pause_all_downloads().await.map_err(|e| {
+        tracing::error!("Failed to pause all downloads: {}", e);
+        e.to_string()
+    })
+}
+
+#[command]
+pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::info!("Resuming all paused downloads");
+    let mut manager = state.download_manager.write().await;
+    manager.resume_all_downloads().await.map_err(|e| {
+        tracing::error!("Failed to resume all downloads: {}", e);
+        e.to_string()
+    })
+}
+
+#[command]
+pub async fn cancel_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::info!("Cancelling all in-flight downloads");
+    let mut manager = state.download_manager.write().await;
+    manager.cancel_all_downloads().await.map_err(|e| {
+        tracing::error!("Failed to cancel all downloads: {}", e);
+        e.to_string()
+    })
+}
+
+#[command]
 pub async fn remove_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut manager = state.download_manager.write().await;
 
@@ -239,10 +268,52 @@ pub async fn clear_completed_tasks(state: State<'_, AppState>) -> Result<(), Str
 
 #[command]
 pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String> {
-    let _manager = state.download_manager.write().await;
+    let mut manager = state.download_manager.write().await;
 
-    // TODO: Restart failed tasks
-    tracing::info!("Retrying failed tasks");
+    let failed_task_ids: Vec<String> = manager
+        .get_tasks()
+        .await
+        .into_iter()
+        .filter(|task| task.status == TaskStatus::Failed)
+        .map(|task| task.id.clone())
+        .collect();
+
+    if failed_task_ids.is_empty() {
+        tracing::info!("No failed tasks to retry");
+        return Ok(());
+    }
+
+    tracing::info!("Retrying {} failed tasks", failed_task_ids.len());
+
+    manager
+        .retry_failed()
+        .await
+        .map_err(|e| format!("Failed to reset failed tasks: {}", e))?;
+
+    let mut started = 0usize;
+    let mut start_errors = Vec::new();
+
+    for task_id in failed_task_ids {
+        match manager.start_download(&task_id).await {
+            Ok(_) => {
+                started += 1;
+                tracing::info!("Restarted download for task: {}", task_id);
+            }
+            Err(err) => {
+                tracing::warn!("Failed to restart task {}: {}", task_id, err);
+                start_errors.push(format!("{}: {}", task_id, err));
+            }
+        }
+    }
+
+    if !start_errors.is_empty() {
+        return Err(format!(
+            "Restarted {} tasks, but {} failed to start: {}",
+            started,
+            start_errors.len(),
+            start_errors.join(", ")
+        ));
+    }
 
     Ok(())
 }
@@ -256,4 +327,33 @@ pub struct CreateTaskRequest {
 
     // 保存完整的视频信息供后续使用
     pub video_info: Option<crate::core::models::VideoInfo>,
+}
+
+#[command]
+pub async fn set_rate_limit(
+    bytes_per_second: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<Option<u64>, String> {
+    const MIN_LIMIT: u64 = 64 * 1024; // 64KB/s
+    const MAX_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10GB/s
+
+    if let Some(limit) = bytes_per_second {
+        if limit < MIN_LIMIT || limit > MAX_LIMIT {
+            return Err(format!(
+                "Rate limit must be between {} and {} bytes/sec",
+                MIN_LIMIT, MAX_LIMIT
+            ));
+        }
+    }
+
+    let manager = state.download_manager.read().await;
+    manager.set_rate_limit(bytes_per_second).await;
+    let applied = manager.get_rate_limit().await;
+    Ok(applied)
+}
+
+#[command]
+pub async fn get_rate_limit(state: State<'_, AppState>) -> Result<Option<u64>, String> {
+    let manager = state.download_manager.read().await;
+    Ok(manager.get_rate_limit().await)
 }

@@ -17,12 +17,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{CpuExt, DiskExt, NetworkExt, System, SystemExt};
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::time::{interval, sleep};
+use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::core::error_handling::{ErrorCategory, RetryStats};
-use crate::core::models::{AppError, AppResult, TaskStatus};
+use crate::core::models::AppResult;
 use crate::core::progress_tracker::{EnhancedProgressStats, GlobalProgressStats};
 
 /// Monitoring system configuration
@@ -334,7 +334,7 @@ pub struct MonitoringSystem {
     /// Background monitoring tasks
     monitoring_tasks: Vec<tokio::task::JoinHandle<()>>,
     /// System information provider
-    system_info: Arc<Mutex<sysinfo::System>>,
+    system_info: Arc<Mutex<System>>,
     /// Network statistics baseline
     network_baseline: Arc<RwLock<Option<(u64, u64, Instant)>>>, // rx_bytes, tx_bytes, timestamp
     /// Performance baseline for calculations
@@ -346,10 +346,10 @@ pub struct MonitoringSystem {
 /// Performance calculation baseline
 #[derive(Debug, Clone)]
 struct PerformanceBaseline {
-    timestamp: Instant,
-    total_downloads: u64,
-    total_tasks_processed: u64,
-    total_bytes: u64,
+    _timestamp: Instant,
+    _total_downloads: u64,
+    _total_tasks_processed: u64,
+    _total_bytes: u64,
 }
 
 impl MonitoringSystem {
@@ -365,7 +365,7 @@ impl MonitoringSystem {
             recent_errors: Arc::new(RwLock::new(Vec::new())),
             dashboard_clients: Arc::new(RwLock::new(HashMap::new())),
             monitoring_tasks: Vec::new(),
-            system_info: Arc::new(Mutex::new(sysinfo::System::new_all())),
+            system_info: Arc::new(Mutex::new(System::new_all())),
             network_baseline: Arc::new(RwLock::new(None)),
             performance_baseline: Arc::new(RwLock::new(None)),
             is_running: Arc::new(RwLock::new(false)),
@@ -661,7 +661,7 @@ impl MonitoringSystem {
 
     /// Collect system metrics
     async fn collect_system_metrics(
-        system_info: &Arc<Mutex<sysinfo::System>>,
+        system_info: &Arc<Mutex<System>>,
         network_baseline: &Arc<RwLock<Option<(u64, u64, Instant)>>>,
     ) -> AppResult<SystemMetrics> {
         let mut sys = system_info.lock().await;
@@ -693,7 +693,7 @@ impl MonitoringSystem {
         sys.refresh_disks();
         for disk in sys.disks() {
             disk_total += disk.total_space();
-            disk_used += (disk.total_space() - disk.available_space());
+            disk_used += disk.total_space() - disk.available_space();
         }
         // Fallback to placeholder values if no disks found
         if disk_total == 0 {
@@ -709,7 +709,6 @@ impl MonitoringSystem {
         // Calculate network rates
         let mut network_rx_bytes: u64 = 0;
         let mut network_tx_bytes: u64 = 0;
-        let mut active_connections = 0;
 
         // Get network usage - simplified approach
         sys.refresh_networks();
@@ -744,7 +743,7 @@ impl MonitoringSystem {
 
         // Estimate active connections (simplified)
         sys.refresh_processes();
-        active_connections = sys.processes().len() as u32;
+        let active_connections = sys.processes().len() as u32;
 
         Ok(SystemMetrics {
             timestamp,
@@ -811,10 +810,10 @@ impl MonitoringSystem {
             let mut baseline = performance_baseline.write().await;
             if baseline.is_none() {
                 *baseline = Some(PerformanceBaseline {
-                    timestamp: Instant::now(),
-                    total_downloads: 0,
-                    total_tasks_processed: 0,
-                    total_bytes: 0,
+                    _timestamp: Instant::now(),
+                    _total_downloads: 0,
+                    _total_tasks_processed: 0,
+                    _total_bytes: 0,
                 });
             }
         }
@@ -945,7 +944,7 @@ impl MonitoringSystem {
     fn calculate_health_status(
         system_metrics: &SystemMetrics,
         download_stats: &DownloadStatistics,
-        performance_metrics: &PerformanceMetrics,
+        _performance_metrics: &PerformanceMetrics,
     ) -> HealthStatus {
         // Calculate component health scores
         let cpu_health = Self::calculate_component_health(

@@ -3,10 +3,13 @@
 //! 测试编码检测、CSV解析和Excel解析功能
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
     use crate::core::file_parser::*;
     use anyhow::Result;
-    use encoding_rs::{BIG5, GB18030, GBK, SHIFT_JIS, UTF_8};
+    use calamine::DataType;
+    use encoding_rs::{Encoding, BIG5, GB18030, GBK, SHIFT_JIS, UTF_8};
+    use std::collections::HashMap;
     use std::io::{Read, Write};
     use tempfile::{tempdir, NamedTempFile};
 
@@ -131,9 +134,9 @@ mod tests {
             .with_priority_encodings(vec![UTF_8, GBK, BIG5]);
 
         // 测试配置是否生效
-        assert_eq!(detector.buffer_size, 4096);
-        assert_eq!(detector.deep_detection, true);
-        assert_eq!(detector.priority_encodings.len(), 3);
+        assert_eq!(detector.buffer_size_for_tests(), 4096);
+        assert_eq!(detector.deep_detection_for_tests(), true);
+        assert_eq!(detector.priority_encodings_for_tests().len(), 3);
     }
 
     #[test]
@@ -141,20 +144,20 @@ mod tests {
         let detector = EncodingDetector::new();
 
         // 正常文本
-        assert!(detector.is_reasonable_text("Hello, 世界! 测试内容。"));
+        assert!(detector.test_is_reasonable_text("Hello, 世界! 测试内容。"));
 
         // 过多控制字符的文本
         let control_heavy = "\x01\x02\x03\x04\x05Hello\x06\x07\x08\x09\x0A";
-        assert!(!detector.is_reasonable_text(control_heavy));
+        assert!(!detector.test_is_reasonable_text(control_heavy));
 
         // 空文本
-        assert!(!detector.is_reasonable_text(""));
+        assert!(!detector.test_is_reasonable_text(""));
 
         // 纯ASCII
-        assert!(detector.is_reasonable_text("Hello World"));
+        assert!(detector.test_is_reasonable_text("Hello World"));
 
         // 纯中文
-        assert!(detector.is_reasonable_text("你好世界"));
+        assert!(detector.test_is_reasonable_text("你好世界"));
     }
 
     #[test]
@@ -163,7 +166,7 @@ mod tests {
 
         // 模拟GBK字节序列
         let gbk_bytes = &[0xC4, 0xE3, 0xBA, 0xC3]; // "你好" in GBK
-        let detected = detector.statistical_chinese_detect(gbk_bytes);
+        let detected = detector.test_statistical_chinese_detect(gbk_bytes);
 
         // 应该能检测出中文编码
         assert!(detected == GBK || detected == GB18030 || detected == BIG5);
@@ -175,25 +178,25 @@ mod tests {
 
         // UTF-8 BOM
         let utf8_bom = &[0xEF, 0xBB, 0xBF, b'H', b'e', b'l', b'l', b'o'];
-        assert_eq!(detector.detect_bom(utf8_bom), Some(UTF_8));
+        assert_eq!(detector.test_detect_bom(utf8_bom), Some(UTF_8));
 
         // UTF-16 LE BOM
         let utf16le_bom = &[0xFF, 0xFE, b'H', 0x00, b'e', 0x00];
         assert_eq!(
-            detector.detect_bom(utf16le_bom),
+            detector.test_detect_bom(utf16le_bom),
             Some(encoding_rs::UTF_16LE)
         );
 
         // UTF-16 BE BOM
         let utf16be_bom = &[0xFE, 0xFF, 0x00, b'H', 0x00, b'e'];
         assert_eq!(
-            detector.detect_bom(utf16be_bom),
+            detector.test_detect_bom(utf16be_bom),
             Some(encoding_rs::UTF_16BE)
         );
 
         // 无BOM
         let no_bom = &[b'H', b'e', b'l', b'l', b'o'];
-        assert_eq!(detector.detect_bom(no_bom), None);
+        assert_eq!(detector.test_detect_bom(no_bom), None);
     }
 
     #[test]
@@ -201,27 +204,30 @@ mod tests {
         let detector = EncodingDetector::new();
 
         // 测试GBK范围检测
-        assert!(detector.is_gbk_range(0x81, 0x40)); // GBK范围内
-        assert!(detector.is_gbk_range(0xFE, 0xFE)); // GBK范围内
-        assert!(!detector.is_gbk_range(0x80, 0x40)); // 超出范围
-        assert!(!detector.is_gbk_range(0x81, 0x7F)); // 第二字节无效
+        assert!(detector.test_is_gbk_range(0x81, 0x40)); // GBK范围内
+        assert!(detector.test_is_gbk_range(0xFE, 0xFE)); // GBK范围内
+        assert!(!detector.test_is_gbk_range(0x80, 0x40)); // 超出范围
+        assert!(!detector.test_is_gbk_range(0x81, 0x7F)); // 第二字节无效
 
         // 测试Big5范围检测
-        assert!(detector.is_big5_range(0xA1, 0xA1)); // Big5范围内
-        assert!(!detector.is_big5_range(0x80, 0x40)); // 超出范围
+        assert!(detector.test_is_big5_range(0xA1, 0xA1)); // Big5范围内
+        assert!(!detector.test_is_big5_range(0x80, 0x40)); // 超出范围
 
         // 测试Shift-JIS范围检测
-        assert!(detector.is_shift_jis_range(0x81, 0x40)); // Shift-JIS范围内
-        assert!(detector.is_shift_jis_range(0xE0, 0x80)); // Shift-JIS范围内
-        assert!(!detector.is_shift_jis_range(0x80, 0x40)); // 超出范围
+        assert!(detector.test_is_shift_jis_range(0x81, 0x40)); // Shift-JIS范围内
+        assert!(detector.test_is_shift_jis_range(0xE0, 0x80)); // Shift-JIS范围内
+        assert!(!detector.test_is_shift_jis_range(0x80, 0x40)); // 超出范围
     }
 }
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod integration_tests {
     use crate::core::file_parser::*;
     use anyhow::Result;
-    use encoding_rs::GBK;
+    use calamine::DataType;
+    use encoding_rs::{GB18030, GBK, UTF_8};
+    use std::collections::HashMap;
     use std::{fs, io::Read};
     use tempfile::tempdir;
 
@@ -252,15 +258,13 @@ mod integration_tests {
         let temp_dir = create_test_csv_files().unwrap();
 
         // 测试CSV格式检测
-        let csv_format = parser
-            .detect_file_format(temp_dir.path().join("utf8_test.csv"))
+        let csv_format = parser.test_detect_file_format(temp_dir.path().join("utf8_test.csv"))
             .unwrap();
         assert_eq!(csv_format, FileFormat::Csv);
 
         // 测试未知扩展名（应该默认为CSV）
         fs::write(temp_dir.path().join("unknown.txt"), "test").unwrap();
-        let unknown_format = parser
-            .detect_file_format(temp_dir.path().join("unknown.txt"))
+        let unknown_format = parser.test_detect_file_format(temp_dir.path().join("unknown.txt"))
             .unwrap();
         assert_eq!(unknown_format, FileFormat::Csv);
     }
@@ -523,9 +527,6 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_excel_parser_basic() {
-        use calamine::{Writer, Xlsx};
-        use std::io::Cursor;
-
         let temp_dir = tempdir().unwrap();
         let xlsx_path = temp_dir.path().join("test.xlsx");
 
@@ -779,3 +780,7 @@ mod integration_tests {
         assert_eq!(parser.config.skip_empty_rows, false);
     }
 }
+
+
+
+

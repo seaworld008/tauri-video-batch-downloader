@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Ensure directory exists
 pub fn ensure_dir_exists(path: &Path) -> Result<()> {

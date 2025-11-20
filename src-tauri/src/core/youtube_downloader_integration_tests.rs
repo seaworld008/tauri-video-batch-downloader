@@ -5,11 +5,12 @@
 //! proper video information fetching, download management, and progress tracking.
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
     use super::super::manager::*;
     use super::super::models::*;
     use super::super::youtube_downloader::*;
-    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::sleep;
 

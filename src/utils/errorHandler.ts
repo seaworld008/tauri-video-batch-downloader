@@ -319,6 +319,6 @@ export class AppErrorHandler {
 }
 
 // 导出便捷的错误处理函数
-export const handleError = AppErrorHandler.handle;
-export const withRetry = AppErrorHandler.withRetry;
-export const withTimeout = AppErrorHandler.withTimeout;
+export const handleError = AppErrorHandler.handle.bind(AppErrorHandler);
+export const withRetry = AppErrorHandler.withRetry.bind(AppErrorHandler);
+export const withTimeout = AppErrorHandler.withTimeout.bind(AppErrorHandler);

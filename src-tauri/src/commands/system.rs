@@ -17,8 +17,8 @@ use crate::AppState;
 /// Get current system information
 #[tauri::command]
 pub async fn get_system_info(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
 ) -> Result<SystemInfo, String> {
     info!("📊 Getting system information");
 
@@ -34,8 +34,8 @@ pub async fn get_system_info(
 /// Start system monitoring
 #[tauri::command]
 pub async fn start_system_monitor(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!("🔍 Starting system monitor");
 
@@ -46,7 +46,7 @@ pub async fn start_system_monitor(
 
 /// Stop system monitoring
 #[tauri::command]
-pub async fn stop_system_monitor(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_system_monitor(_app: AppHandle, _state: State<'_, AppState>) -> Result<(), String> {
     info!("⏹️ Stopping system monitor");
 
     // This is a placeholder - real implementation would stop the monitoring task
@@ -56,7 +56,7 @@ pub async fn stop_system_monitor(app: AppHandle, state: State<'_, AppState>) -> 
 /// Open the downloads folder
 #[tauri::command]
 pub async fn open_download_folder(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let config = state.config.read().await;
@@ -79,8 +79,8 @@ pub async fn open_download_folder(
 /// Show a specific file in its containing folder
 #[tauri::command]
 pub async fn show_in_folder(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
     file_path: String,
 ) -> Result<(), String> {
     info!("📂 Showing file in folder: {}", file_path);
@@ -542,7 +542,7 @@ pub async fn log_frontend_event(
     level: Option<String>,
     message: String,
 ) -> Result<(), String> {
-    let mut log_root = if let Some(mut dir) = app.path_resolver().app_config_dir() {
+    let log_root = if let Some(mut dir) = app.path_resolver().app_config_dir() {
         dir.push("logs");
         dir
     } else if let Some(mut dir) = app.path_resolver().app_data_dir() {

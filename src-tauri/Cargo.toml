@@ -41,6 +41,9 @@ sha1 = "0.10"           # SHA-1 (for legacy support)
 digest = "0.10"         # Common traits for hash functions
 hex = "0.4"             # Hex encoding/decoding
 base64 = "0.22"         # Base64 encoding/decoding
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+cipher = "0.4"
 
 # UUID 生成
 uuid = { version = "1.0", features = ["v4", "serde"] }
@@ -111,6 +114,7 @@ path = "src/main-fixed.rs"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+integration-tests = []
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "processthreadsapi"] }

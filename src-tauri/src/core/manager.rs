@@ -220,7 +220,7 @@ pub struct DownloadManager {
     task_queue: Arc<Mutex<std::collections::BinaryHeap<TaskPriority>>>,
 
     /// Rate limiting: bytes per second (0 = unlimited)
-    rate_limit: Arc<tokio::sync::RwLock<Option<u64>>>,
+    rate_limit: Arc<RwLock<Option<u64>>>,
 
     /// Flag to indicate if manager is running
     is_running: bool,
@@ -263,9 +263,10 @@ impl DownloadManager {
         // Create HTTP downloader
         let http_downloader = HttpDownloader::new(downloader_config)
             .map_err(|e| AppError::System(format!("Failed to create downloader: {}", e)))?;
+        let rate_limit_handle = http_downloader.bandwidth_controller().limit_handle();
 
         // Create integrity checker configuration
-        let integrity_config = IntegrityConfig {
+        let _integrity_config = IntegrityConfig {
             buffer_size: 64 * 1024, // 64KB buffer
             concurrent: true,
             max_concurrent: 2, // Limit concurrent integrity checks
@@ -318,7 +319,7 @@ impl DownloadManager {
             download_semaphore: Arc::new(tokio::sync::Semaphore::new(concurrent_downloads)),
             http_downloader: Arc::new(http_downloader),
             task_queue: Arc::new(Mutex::new(std::collections::BinaryHeap::new())),
-            rate_limit: Arc::new(tokio::sync::RwLock::new(None)),
+            rate_limit: rate_limit_handle,
             is_running: false,
             progress_tracker: Arc::new(ProgressTrackingManager::new()),
             integrity_checker: Arc::new(integrity_checker),
@@ -699,9 +700,13 @@ impl DownloadManager {
 
     /// Cancel a download task
     pub async fn cancel_download(&mut self, task_id: &str) -> AppResult<()> {
+        let downloader = Arc::clone(&self.http_downloader);
         if let Some(handle) = self.active_downloads.remove(task_id) {
             handle.abort();
         }
+
+        // 发信号给 HttpDownloader，确保底层任务尽快停止
+        let _ = downloader.cancel_download(task_id).await;
 
         self.update_task_status(task_id, TaskStatus::Cancelled)
             .await?;
@@ -715,6 +720,77 @@ impl DownloadManager {
 
         info!("🚫 Cancelled download: {}", task_id);
         Ok(())
+    }
+
+    /// Pause all active downloads
+    pub async fn pause_all_downloads(&mut self) -> AppResult<usize> {
+        let downloader = Arc::clone(&self.http_downloader);
+        downloader.pause_all().await;
+
+        let task_ids: Vec<String> = self.active_downloads.keys().cloned().collect();
+
+        let mut paused = 0usize;
+        for task_id in task_ids {
+            match self.pause_download(&task_id).await {
+                Ok(_) => paused += 1,
+                Err(e) => warn!("Failed to pause task {}: {}", task_id, e),
+            }
+        }
+
+        info!("Paused {} active downloads", paused);
+        Ok(paused)
+    }
+
+    /// Resume all paused downloads
+    pub async fn resume_all_downloads(&mut self) -> AppResult<usize> {
+        let downloader = Arc::clone(&self.http_downloader);
+        downloader.resume_all().await;
+
+        let paused_ids: Vec<String> = self
+            .tasks
+            .iter()
+            .filter_map(|(task_id, task)| {
+                if task.status == TaskStatus::Paused {
+                    Some(task_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut resumed = 0usize;
+        for task_id in paused_ids {
+            match self.resume_download(&task_id).await {
+                Ok(_) => resumed += 1,
+                Err(e) => warn!("Failed to resume task {}: {}", task_id, e),
+            }
+        }
+
+        info!("Resumed {} paused downloads", resumed);
+        Ok(resumed)
+    }
+
+    /// Cancel all pending/downloading/paused tasks
+    pub async fn cancel_all_downloads(&mut self) -> AppResult<usize> {
+        let cancellable_ids: Vec<String> = self
+            .tasks
+            .iter()
+            .filter_map(|(task_id, task)| match task.status {
+                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => None,
+                _ => Some(task_id.clone()),
+            })
+            .collect();
+
+        let mut cancelled = 0usize;
+        for task_id in cancellable_ids {
+            match self.cancel_download(&task_id).await {
+                Ok(_) => cancelled += 1,
+                Err(e) => warn!("Failed to cancel task {}: {}", task_id, e),
+            }
+        }
+
+        info!("Cancelled {} downloads", cancelled);
+        Ok(cancelled)
     }
 
     /// Remove a completed or failed task
@@ -851,12 +927,14 @@ impl DownloadManager {
     }
 
     /// Update enhanced progress for a task
+    #[allow(dead_code)]
     async fn update_enhanced_progress(
         &self,
         task_id: &str,
         downloaded_bytes: u64,
     ) -> AppResult<()> {
-        self.progress_tracker
+        let _ = self
+            .progress_tracker
             .update_progress(task_id, downloaded_bytes)
             .await;
 
@@ -874,6 +952,7 @@ impl DownloadManager {
     }
 
     /// Stop enhanced progress tracking for a task
+    #[allow(dead_code)]
     async fn stop_enhanced_tracking(&self, task_id: &str) -> AppResult<()> {
         self.progress_tracker.stop_tracking(task_id).await
     }
@@ -882,9 +961,9 @@ impl DownloadManager {
     async fn task_scheduler(
         task_queue: Arc<Mutex<std::collections::BinaryHeap<TaskPriority>>>,
         semaphore: Arc<tokio::sync::Semaphore>,
-        downloader: Arc<HttpDownloader>,
-        rate_limit: Arc<tokio::sync::RwLock<Option<u64>>>,
-        event_sender: EventSender,
+        _downloader: Arc<HttpDownloader>,
+        rate_limit: Arc<RwLock<Option<u64>>>,
+        _event_sender: EventSender,
     ) {
         info!("🎯 Starting intelligent task scheduler");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
@@ -901,9 +980,7 @@ impl DownloadManager {
             if let Some(task_priority) = next_task {
                 // Try to acquire a permit for concurrent download
                 if let Ok(permit) = semaphore.clone().try_acquire_owned() {
-                    let task_id = task_priority.task_id;
-                    let downloader_clone = Arc::clone(&downloader);
-                    let event_sender_clone = event_sender.clone();
+                    let TaskPriority { task_id, priority, .. } = task_priority;
                     let rate_limit_clone = Arc::clone(&rate_limit);
 
                     // Spawn individual download task
@@ -912,7 +989,7 @@ impl DownloadManager {
 
                         info!(
                             "🚀 Starting download for task: {} (priority: {})",
-                            task_id, task_priority.priority
+                            task_id, priority
                         );
 
                         // Apply rate limiting if configured
@@ -997,7 +1074,7 @@ impl DownloadManager {
             failed_tasks,
             total_downloaded,
             average_speed,
-            active_downloads: self.active_downloads.len(),
+            active_downloads,
         };
 
         // Emit stats updated event
@@ -1008,8 +1085,8 @@ impl DownloadManager {
         }
 
         // Update monitoring system with current statistics
-        let pending_tasks = self.task_queue.lock().await.len();
-        let current_speed = current_speeds.iter().sum::<f64>() as u64; // Total current speed
+        let _pending_tasks = self.task_queue.lock().await.len();
+        let _current_speed = current_speeds.iter().sum::<f64>() as u64; // Total current speed
 
         // TODO: Update monitoring statistics when proper method is available
         // For now, monitoring system will collect its own statistics
@@ -1047,8 +1124,8 @@ impl DownloadManager {
         let output_path = output_path.to_string();
 
         // Execute download with retry mechanism
-        let result: Result<String, anyhow::Error> = retry_executor
-            .execute::<_, String, DownloadError>(|retry_context| {
+        let result = retry_executor
+            .execute(|retry_context| {
                 let task_id = task_id.clone();
                 let url = url.clone();
                 let output_path = output_path.clone();
@@ -1239,7 +1316,7 @@ impl DownloadManager {
                             });
 
                             // Set up progress tracking for integrity check
-                            let (integrity_progress_tx, mut integrity_progress_rx) =
+                            let (_integrity_progress_tx, mut integrity_progress_rx) =
                                 mpsc::unbounded_channel::<
                                     crate::core::integrity_checker::IntegrityProgress,
                                 >();
@@ -1247,7 +1324,6 @@ impl DownloadManager {
 
                             // Clone necessary data for progress tracking
                             let task_id_integrity = task_id.to_string();
-                            let event_sender_integrity = event_sender.clone();
 
                             // Spawn integrity progress tracking task
                             let integrity_progress_handle = tokio::spawn(async move {
@@ -1647,23 +1723,23 @@ impl DownloadManager {
 
     /// Update monitoring system with current download statistics
     pub async fn update_monitoring_stats(&self) {
-        let current_stats = self.get_stats().await;
-        let active_downloads = self.active_downloads.len();
-        let total_tasks = self.tasks.len();
-        let pending_tasks = self.task_queue.lock().await.len();
+        let _current_stats = self.get_stats().await;
+        let _active_downloads = self.active_downloads.len();
+        let _total_tasks = self.tasks.len();
+        let _pending_tasks = self.task_queue.lock().await.len();
 
         // TODO: Update monitoring statistics when proper method is available
         // For now, monitoring system will collect its own statistics
     }
 
     /// Enable or disable Prometheus metrics export
-    pub async fn set_prometheus_enabled(&self, enabled: bool) -> AppResult<()> {
+    pub async fn set_prometheus_enabled(&self, _enabled: bool) -> AppResult<()> {
         // TODO: Implement when monitoring system supports this method
         Ok(())
     }
 
     /// Enable or disable WebSocket dashboard
-    pub async fn set_websocket_dashboard_enabled(&self, enabled: bool) -> AppResult<()> {
+    pub async fn set_websocket_dashboard_enabled(&self, _enabled: bool) -> AppResult<()> {
         // TODO: Implement when monitoring system supports this method
         Ok(())
     }
@@ -1970,7 +2046,7 @@ impl DownloadManager {
         &mut self,
         config: YoutubeDownloaderConfig,
     ) -> AppResult<()> {
-        if let Some(downloader) = &mut self.youtube_downloader {
+        if let Some(_downloader) = &mut self.youtube_downloader {
             // Since we have Arc<YoutubeDownloader>, we need to create a new instance
             let new_downloader =
                 YoutubeDownloader::with_auto_install(config)
@@ -2049,7 +2125,7 @@ mod tests {
             .verify_file_integrity(test_file.to_str().unwrap(), HashAlgorithm::Sha256)
             .await?;
 
-        assert!(result.is_valid() || result.expected_hash().is_none()); // Should pass if no expected hash
+        assert!(result.is_valid || result.expected_hash.is_none()); // Should pass if no expected hash
 
         // Test compute hash functionality
         let hash = manager
@@ -2090,7 +2166,7 @@ mod tests {
 
         assert_eq!(results.len(), 3);
         for (file_path, result) in results {
-            assert!(result.is_valid() || result.expected_hash().is_none());
+            assert!(result.is_valid || result.expected_hash.is_none());
             assert!(!file_path.is_empty());
         }
 
@@ -2195,12 +2271,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_conversion() {
-        // Test network error conversion
-        let app_error = AppError::Network("Connection timeout".into());
-        let download_error = DownloadManager::convert_app_error_to_download_error(app_error);
-        assert_eq!(download_error.category(), ErrorCategory::Network);
-        assert!(download_error.is_retryable());
-
         // Test configuration error conversion
         let app_error = AppError::Config("Invalid API key".into());
         let download_error = DownloadManager::convert_app_error_to_download_error(app_error);

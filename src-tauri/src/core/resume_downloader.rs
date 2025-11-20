@@ -9,21 +9,23 @@
 
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::AtomicBool,
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
-use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::sync::RwLock;
 
-use crate::core::models::TaskStatus;
+use crate::core::downloader::BandwidthController;
+
+/// 下载进度回调：参数为 (task_id, delta_bytes, total_size)
+pub type ResumeProgressCallback = Arc<dyn Fn(&str, u64, u64) + Send + Sync>;
 
 /// 分片信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,13 +213,18 @@ pub struct ResumeDownloader {
     config: ResumeDownloaderConfig,
     client: Client,
     server_capabilities_cache: Arc<RwLock<HashMap<String, ServerCapabilities>>>,
-    active_chunks: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+    _active_chunks: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
     resume_info_cache: Arc<RwLock<HashMap<String, ResumeInfo>>>,
+    bandwidth_controller: BandwidthController,
 }
 
 impl ResumeDownloader {
     /// 创建新的断点续传下载器
-    pub fn new(config: ResumeDownloaderConfig, client: Client) -> Result<Self> {
+    pub fn new(
+        config: ResumeDownloaderConfig,
+        client: Client,
+        bandwidth_controller: BandwidthController,
+    ) -> Result<Self> {
         // 确保断点信息目录存在
         std::fs::create_dir_all(&config.resume_info_dir)?;
 
@@ -225,8 +232,9 @@ impl ResumeDownloader {
             config,
             client,
             server_capabilities_cache: Arc::new(RwLock::new(HashMap::new())),
-            active_chunks: Arc::new(RwLock::new(HashMap::new())),
+            _active_chunks: Arc::new(RwLock::new(HashMap::new())),
             resume_info_cache: Arc::new(RwLock::new(HashMap::new())),
+            bandwidth_controller,
         })
     }
 
@@ -305,6 +313,7 @@ impl ResumeDownloader {
         url: &str,
         file_path: &Path,
         total_size: Option<u64>,
+        progress_callback: Option<ResumeProgressCallback>,
     ) -> Result<ResumeInfo> {
         // 尝试加载已有的断点信息
         let mut resume_info = self.load_resume_info(task_id).await?.unwrap_or_else(|| {
@@ -346,7 +355,8 @@ impl ResumeDownloader {
         }
 
         // 开始下载
-        self.download_chunks(url, &mut resume_info).await?;
+        self.download_chunks(url, &mut resume_info, progress_callback.clone())
+            .await?;
 
         // 合并分片
         if resume_info.server_capabilities.supports_ranges && resume_info.chunks.len() > 1 {
@@ -386,12 +396,19 @@ impl ResumeDownloader {
     }
 
     /// 下载所有分片
-    async fn download_chunks(&self, url: &str, resume_info: &mut ResumeInfo) -> Result<()> {
+    async fn download_chunks(
+        &self,
+        url: &str,
+        resume_info: &mut ResumeInfo,
+        progress_callback: Option<ResumeProgressCallback>,
+    ) -> Result<()> {
         let pending_chunks: Vec<usize> = resume_info
             .pending_chunks()
             .iter()
             .map(|chunk| chunk.index)
             .collect();
+
+        let bandwidth_controller = self.bandwidth_controller.clone();
 
         if pending_chunks.is_empty() {
             tracing::info!("所有分片已完成");
@@ -419,12 +436,26 @@ impl ResumeDownloader {
             let client = self.client.clone();
             let config = self.config.clone();
             let resume_info_clone = resume_info.clone();
+            let task_id = Arc::new(resume_info_clone.task_id.clone());
+            let total_size = resume_info_clone.total_size;
+            let progress_callback = progress_callback.clone();
+            let controller = bandwidth_controller.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
 
-                Self::download_chunk_static(&client, &config, &url, &resume_info_clone, chunk_index)
-                    .await
+                Self::download_chunk_static(
+                    &client,
+                    &config,
+                    &url,
+                    &resume_info_clone,
+                    chunk_index,
+                    task_id,
+                    total_size,
+                    progress_callback,
+                    controller.clone(),
+                )
+                .await
             });
 
             handles.push(handle);
@@ -466,6 +497,10 @@ impl ResumeDownloader {
         url: &str,
         resume_info: &ResumeInfo,
         chunk_index: usize,
+        task_id: Arc<String>,
+        total_size: u64,
+        progress_callback: Option<ResumeProgressCallback>,
+        bandwidth_controller: BandwidthController,
     ) -> Result<ChunkInfo> {
         let mut chunk = resume_info
             .chunks
@@ -480,7 +515,19 @@ impl ResumeDownloader {
         let mut retry_count = 0;
 
         while retry_count <= config.max_retries {
-            match Self::download_chunk_attempt(client, config, url, resume_info, &mut chunk).await {
+            match Self::download_chunk_attempt(
+                client,
+                config,
+                url,
+                resume_info,
+                &mut chunk,
+                &task_id,
+                total_size,
+                progress_callback.clone(),
+                bandwidth_controller.clone(),
+            )
+            .await
+            {
                 Ok(_) => {
                     chunk.status = ChunkStatus::Completed;
                     tracing::debug!("分片 {} 下载完成", chunk.index);
@@ -517,6 +564,10 @@ impl ResumeDownloader {
         url: &str,
         resume_info: &ResumeInfo,
         chunk: &mut ChunkInfo,
+        task_id: &Arc<String>,
+        total_size: u64,
+        progress_callback: Option<ResumeProgressCallback>,
+        bandwidth_controller: BandwidthController,
     ) -> Result<()> {
         chunk.status = ChunkStatus::Downloading;
 
@@ -556,11 +607,16 @@ impl ResumeDownloader {
         while let Some(chunk_data) = stream.next().await {
             let chunk_data = chunk_data?;
             file.write_all(&chunk_data).await?;
+            bandwidth_controller.throttle(chunk_data.len() as u64).await;
 
             downloaded_in_this_attempt += chunk_data.len() as u64;
             chunk.downloaded = (chunk.start + chunk.downloaded + downloaded_in_this_attempt)
                 .saturating_sub(chunk.start);
             chunk.last_update = SystemTime::now();
+
+            if let Some(callback) = &progress_callback {
+                callback(task_id.as_str(), chunk_data.len() as u64, total_size);
+            }
         }
 
         file.flush().await?;
@@ -573,7 +629,7 @@ impl ResumeDownloader {
     async fn merge_chunks(&self, resume_info: &ResumeInfo) -> Result<()> {
         if resume_info.chunks.len() <= 1 {
             // 单个分片，直接移动文件
-            if let Some(chunk) = resume_info.chunks.first() {
+            if let Some(_chunk) = resume_info.chunks.first() {
                 let temp_path = Self::get_chunk_temp_path(&self.config, &resume_info.task_id, 0);
                 let final_path = Path::new(&resume_info.file_path);
 
@@ -755,7 +811,6 @@ impl ResumeDownloader {
         }
 
         // 删除所有分片临时文件
-        let pattern = format!("{}.chunk.*", task_id);
         if let Ok(entries) = tokio::fs::read_dir(&self.config.resume_info_dir).await {
             let mut entries = entries;
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -790,7 +845,7 @@ mod tests {
         config.resume_info_dir = temp_dir.path().to_path_buf();
 
         let client = Client::new();
-        let downloader = ResumeDownloader::new(config, client);
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new());
         assert!(downloader.is_ok());
     }
 
@@ -824,7 +879,7 @@ mod tests {
         config.large_file_threshold = 2048; // 2KB threshold
 
         let client = Client::new();
-        let downloader = ResumeDownloader::new(config, client).unwrap();
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
 
         let mut resume_info = ResumeInfo::new(
             "test".to_string(),
@@ -866,7 +921,7 @@ mod tests {
         config.resume_info_dir = temp_dir.path().to_path_buf();
 
         let client = Client::new();
-        let downloader = ResumeDownloader::new(config, client).unwrap();
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
 
         // 测试 httpbin.org，它应该支持Range请求
         let result = downloader

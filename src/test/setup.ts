@@ -1,9 +1,18 @@
 import '@testing-library/jest-dom'
 
 // Mock Tauri APIs that are used in the application
-vi.mock('@tauri-apps/api/tauri', () => ({
-  invoke: vi.fn().mockResolvedValue({}),
-}))
+vi.mock('@tauri-apps/api/tauri', async () => {
+  const actual = await vi.importActual<typeof import('@tauri-apps/api/tauri')>('@tauri-apps/api/tauri')
+  return {
+    ...actual,
+    invoke: vi.fn((cmd: string, args?: Record<string, unknown>) => {
+      if (typeof window !== 'undefined' && typeof window.__TAURI_IPC__ === 'function') {
+        return actual.invoke(cmd, args)
+      }
+      return Promise.resolve({})
+    }),
+  }
+})
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn().mockResolvedValue(() => {}),

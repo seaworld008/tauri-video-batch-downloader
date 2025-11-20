@@ -11,7 +11,6 @@ mod tests {
     use super::super::downloader::{DownloadTask, DownloaderConfig, HttpDownloader};
     use super::super::models::TaskStatus;
     use tempfile::tempdir;
-    use uuid::Uuid;
 
     /// 创建测试用的 HttpDownloader
     async fn create_test_downloader() -> (HttpDownloader, tempfile::TempDir) {

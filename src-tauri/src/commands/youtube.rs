@@ -14,8 +14,8 @@ use crate::AppState;
 /// Get YouTube video information
 #[tauri::command]
 pub async fn get_youtube_info(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
     url: String,
 ) -> Result<YoutubeVideoInfo, String> {
     info!("📺 Getting YouTube video info for: {}", url);
@@ -38,8 +38,8 @@ pub async fn get_youtube_info(
 /// Get available formats for a YouTube video
 #[tauri::command]
 pub async fn get_youtube_formats(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
     url: String,
 ) -> Result<Vec<VideoFormat>, String> {
     info!("🎬 Getting YouTube formats for: {}", url);
@@ -59,8 +59,8 @@ pub async fn get_youtube_formats(
 /// Download YouTube playlist and extract individual video URLs
 #[tauri::command]
 pub async fn download_youtube_playlist(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
     playlist_url: String,
     max_videos: Option<usize>,
 ) -> Result<Vec<ImportedData>, String> {
@@ -224,7 +224,7 @@ async fn get_playlist_with_ytdlp(
 
 // Fallback methods (when yt-dlp is not available)
 
-async fn get_video_info_fallback(url: &str, video_id: &str) -> AppResult<YoutubeVideoInfo> {
+async fn get_video_info_fallback(_url: &str, video_id: &str) -> AppResult<YoutubeVideoInfo> {
     warn!("Using fallback method for YouTube video info");
 
     // This is a very basic fallback that creates minimal video info
@@ -242,9 +242,9 @@ async fn get_video_info_fallback(url: &str, video_id: &str) -> AppResult<Youtube
 }
 
 async fn get_playlist_fallback(
-    playlist_url: &str,
-    playlist_id: &str,
-    max_videos: Option<usize>,
+    _playlist_url: &str,
+    _playlist_id: &str,
+    _max_videos: Option<usize>,
 ) -> AppResult<Vec<ImportedData>> {
     warn!("Using fallback method for YouTube playlist");
 
@@ -518,7 +518,7 @@ fn extract_playlist_id(url: &str) -> Option<String> {
     None
 }
 
-fn determine_quality_string(width: Option<u32>, height: Option<u32>, format_id: &str) -> String {
+fn determine_quality_string(_width: Option<u32>, height: Option<u32>, format_id: &str) -> String {
     if let Some(h) = height {
         match h {
             2160 => "4K".to_string(),

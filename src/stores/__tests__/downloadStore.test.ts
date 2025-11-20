@@ -213,7 +213,7 @@ describe('downloadStore', () => {
         await result.current.removeTasks(taskIds)
       })
       
-      expect(invoke).toHaveBeenCalledWith('remove_download_tasks', { taskIds })
+      expect(invoke).toHaveBeenCalledWith('remove_download_tasks', { task_ids: taskIds })
     })
 
     it('calls correct Tauri command for download control', async () => {
@@ -224,19 +224,19 @@ describe('downloadStore', () => {
         await result.current.startDownload(taskId)
       })
       
-      expect(invoke).toHaveBeenCalledWith('start_download', { taskId })
+      expect(invoke).toHaveBeenCalledWith('start_download', { task_id: taskId })
       
       await act(async () => {
         await result.current.pauseDownload(taskId)
       })
       
-      expect(invoke).toHaveBeenCalledWith('pause_download', { taskId })
+      expect(invoke).toHaveBeenCalledWith('pause_download', { task_id: taskId })
       
       await act(async () => {
         await result.current.resumeDownload(taskId)
       })
       
-      expect(invoke).toHaveBeenCalledWith('resume_download', { taskId })
+      expect(invoke).toHaveBeenCalledWith('resume_download', { task_id: taskId })
     })
 
     it('handles initialization correctly', async () => {

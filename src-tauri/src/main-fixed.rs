@@ -4,11 +4,10 @@
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod commands;
 mod core;
-mod downloaders;
 mod parsers;
 mod utils;
 
@@ -43,26 +42,34 @@ impl AppState {
     }
 
     fn try_new() -> Result<Self, String> {
-        // 使用默认配置而不是加载文件，避免IO错误
-        let config = AppConfig::default();
+        // 使用更安全的方式优先加载本地配置，失败时再回退到默认值
+        let mut config = Self::load_initial_config();
+        let download_config = config.download.clone();
 
         // 简化DownloadManager创建
-        let download_manager = DownloadManager::new(config.download.clone())
+        let download_manager = DownloadManager::new(download_config.clone())
             .map_err(|e| format!("DownloadManager creation failed: {}", e))?;
 
-        // 使用更保守的HTTP下载器配置
+        // 根据实际配置生成HTTP下载器参数
         let downloader_config = DownloaderConfig {
-            max_concurrent: 3,               // 减少并发数
-            max_connections_per_download: 2, // 减少连接数
-            timeout: 60,                     // 增加超时时间
-            retry_attempts: 1,               // 减少重试次数
-            buffer_size: 32 * 1024,          // 减小缓冲区
-            user_agent: "VideoDownloaderPro/1.0.0".to_string(),
+            max_concurrent: download_config.concurrent_downloads.max(1), // 至少一个并发
+            max_connections_per_download: 4,
+            timeout: download_config.timeout_seconds,
+            retry_attempts: download_config.retry_attempts,
+            buffer_size: 64 * 1024,
+            user_agent: download_config.user_agent.clone(),
             resume_enabled: true,
         };
 
         let http_downloader = HttpDownloader::new(downloader_config)
             .map_err(|e| format!("HttpDownloader creation failed: {}", e))?;
+
+        if config.ui.is_none() {
+            config.ui = Some(core::config::UiConfig::default());
+        }
+        if config.system.is_none() {
+            config.system = Some(core::config::SystemConfig::default());
+        }
 
         Ok(Self {
             download_manager: Arc::new(RwLock::new(download_manager)),
@@ -71,9 +78,40 @@ impl AppState {
         })
     }
 
+    fn load_initial_config() -> AppConfig {
+        match AppConfig::load() {
+            Ok(cfg) => {
+                if let Err(err) = cfg.validate() {
+                    warn!(
+                        "Invalid configuration detected ({}), falling back to defaults",
+                        err
+                    );
+                    let default_cfg = AppConfig::default();
+                    if let Err(save_err) = default_cfg.save() {
+                        warn!("Failed to persist default configuration: {}", save_err);
+                    }
+                    default_cfg
+                } else {
+                    cfg
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to load configuration from disk: {}. Using defaults",
+                    err
+                );
+                let default_cfg = AppConfig::default();
+                if let Err(save_err) = default_cfg.save() {
+                    warn!("Failed to persist default configuration: {}", save_err);
+                }
+                default_cfg
+            }
+        }
+    }
+
     fn create_fallback() -> Self {
         // 创建最基本的状态，即使某些组件失败也能工作
-        let config = AppConfig::default();
+        let config = Self::load_initial_config();
 
         // 如果DownloadManager创建失败，使用更简单的配置
         let download_manager = DownloadManager::new(config.download.clone()).unwrap_or_else(|_| {
@@ -127,15 +165,21 @@ fn main() {
             pause_download,
             resume_download,
             cancel_download,
+            pause_all_downloads,
+            resume_all_downloads,
+            cancel_all_downloads,
             remove_download,
             remove_download_tasks,
             get_download_tasks,
             get_download_stats,
             clear_completed_tasks,
             retry_failed_tasks,
+            set_rate_limit,
+            get_rate_limit,
             // 导入相关命令
             import_file,
             import_csv_file,
+            import_tasks_and_enqueue,
             import_excel_file,
             detect_file_encoding,
             preview_import_data,
@@ -161,17 +205,32 @@ fn main() {
             check_ffmpeg,
             check_yt_dlp,
             select_output_directory,
+            log_frontend_event,
         ])
         .setup(|app| {
             info!("🔧 Setting up application");
 
             // 获取应用状态
             let app_state: State<AppState> = app.state();
+            let app_handle = app.handle();
+
+            // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
+            let bootstrap_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = log_frontend_event(
+                    bootstrap_handle,
+                    Some("info".to_string()),
+                    "backend_setup".to_string(),
+                )
+                .await
+                {
+                    error!("Failed to write frontend bootstrap log: {}", error);
+                }
+            });
 
             // 异步启动下载管理器，但不阻塞主线程
             info!("🚀 启动下载管理器...");
             let download_manager = app_state.download_manager.clone();
-            let app_handle = app.handle();
 
             tauri::async_runtime::spawn(async move {
                 match tokio::time::timeout(
@@ -221,7 +280,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
+            tauri::WindowEvent::CloseRequested { api: _api, .. } => {
                 info!("📦 Application closing requested");
 
                 // 移除 prevent_close() 调用，允许直接关闭
@@ -249,3 +308,5 @@ mod tests {
         assert!(!state.config.try_read().is_err());
     }
 }
+
+

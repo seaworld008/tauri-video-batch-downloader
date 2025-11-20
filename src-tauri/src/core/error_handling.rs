@@ -542,7 +542,7 @@ impl RetryExecutor {
     }
 
     /// Execute a function with full retry logic and circuit breaker protection
-    pub async fn execute<F, T, E>(&self, mut f: F) -> AnyhowResult<T>
+    pub async fn execute<F, T>(&self, mut f: F) -> AnyhowResult<T>
     where
         F: FnMut(
             RetryContext,
@@ -550,7 +550,6 @@ impl RetryExecutor {
             Box<dyn std::future::Future<Output = Result<T, DownloadError>> + Send>,
         >,
         T: Send + 'static,
-        E: std::error::Error + Send + Sync + 'static,
     {
         let start_time = Instant::now();
         let attempt_id = Uuid::new_v4().to_string();
@@ -839,6 +838,17 @@ mod tests {
     use super::*;
     use tokio::time::sleep;
 
+    #[derive(Debug)]
+    struct TestError(&'static str);
+
+    impl std::fmt::Display for TestError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for TestError {}
+
     #[tokio::test]
     async fn test_circuit_breaker_states() {
         let config = CircuitBreakerConfig {
@@ -854,10 +864,10 @@ mod tests {
         assert_eq!(breaker.state().await, CircuitBreakerState::Closed);
 
         // Simulate failures to open circuit
-        let result1: Result<(), &str> = Err("error");
+        let result1: Result<(), TestError> = Err(TestError("error"));
         let _ = breaker.call(async { result1 }).await;
 
-        let result2: Result<(), &str> = Err("error");
+        let result2: Result<(), TestError> = Err(TestError("error"));
         let _ = breaker.call(async { result2 }).await;
 
         // Should be open now
@@ -867,12 +877,12 @@ mod tests {
         sleep(Duration::from_millis(150)).await;
 
         // Should allow call and transition to half-open
-        let result3: Result<(), &str> = Ok(());
+        let result3: Result<(), TestError> = Ok(());
         let _ = breaker.call(async { result3 }).await;
         assert_eq!(breaker.state().await, CircuitBreakerState::HalfOpen);
 
         // Another success should close the circuit
-        let result4: Result<(), &str> = Ok(());
+        let result4: Result<(), TestError> = Ok(());
         let _ = breaker.call(async { result4 }).await;
         assert_eq!(breaker.state().await, CircuitBreakerState::Closed);
     }
@@ -888,7 +898,7 @@ mod tests {
         let executor = RetryExecutor::new(policy);
         let mut call_count = 0;
 
-        let result = executor
+        let result: AnyhowResult<String> = executor
             .execute(|_ctx| {
                 call_count += 1;
                 Box::pin(async move {
@@ -917,7 +927,7 @@ mod tests {
         let executor = RetryExecutor::new(policy);
         let mut call_count = 0;
 
-        let result = executor
+        let result: AnyhowResult<String> = executor
             .execute(|_ctx| {
                 call_count += 1;
                 Box::pin(async move { Err(errors::configuration_error("Invalid config", None)) })

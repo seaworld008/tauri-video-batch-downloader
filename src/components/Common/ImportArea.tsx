@@ -12,7 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { useConfigStore } from '../../stores/configStore';
-import { notify, useUIStore } from '../../stores/uiStore';
+import { notify } from '../../stores/uiStore';
 import { buildDefaultFieldMapping, buildBackendFieldMapping, canProceedWithImport } from '../../utils/importMapping';
 import type { ImportPreview, ImportedData } from '../../types';
 
@@ -37,7 +37,6 @@ const resolveImportCommand = (filePath: string): 'import_csv_file' | 'import_exc
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const { addTasks } = useDownloadStore();
   const defaultOutputDirFromConfig = useConfigStore(state => state.config.download.output_directory);
-  const setCurrentView = useUIStore(state => state.setCurrentView);
   const canImport = importPreview ? canProceedWithImport(importPreview.headers, fieldMapping) : false;
 
   // 选择导入文件
@@ -89,7 +88,7 @@ const resolveImportCommand = (filePath: string): 'import_csv_file' | 'import_exc
     setIsLoading(true);
     try {
       const preview = await invoke<ImportPreview>('preview_import_data', {
-        file_path: filePath,
+        filePath,
         encoding: 'utf-8'
       });
 
@@ -128,12 +127,12 @@ const resolveImportCommand = (filePath: string): 'import_csv_file' | 'import_exc
 
       const command = resolveImportCommand(filePath);
       const importArgs: Record<string, unknown> = {
-        file_path: filePath,
-        field_mapping: backendFieldMapping,
+        filePath,
+        fieldMapping: backendFieldMapping,
         encoding: preview.encoding
       };
       if (command === 'import_excel_file') {
-        importArgs.sheet_name = null;
+        importArgs.sheetName = null;
       }
 
       const importedData = await invoke<ImportedData[]>(command, importArgs);
@@ -197,8 +196,6 @@ const resolveImportCommand = (filePath: string): 'import_csv_file' | 'import_exc
       setImportPreview(null);
       setFieldMapping({});
       setShowAdvanced(false);
-      setCurrentView('downloads');
-
       return tasks;
     } catch (error) {
       console.error('导入失败:', error);
@@ -207,7 +204,7 @@ const resolveImportCommand = (filePath: string): 'import_csv_file' | 'import_exc
     } finally {
       setIsLoading(false);
     }
-  }, [addTasks, defaultOutputDirFromConfig, outputDir, setCurrentView]);
+  }, [addTasks, defaultOutputDirFromConfig, outputDir]);
 
 
   // 执行导入

@@ -2,14 +2,32 @@ import React, { useState } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { formatBytes } from '../../utils/format';
 import type { VideoTask, TaskStatus } from '../../types';
+import { 
+  PlayIcon, 
+  PauseIcon, 
+  StopIcon, 
+  ArrowPathIcon, 
+  TrashIcon, 
+  FolderIcon 
+} from '@heroicons/react/24/outline';
 
 interface VideoTableItemProps {
   task: VideoTask;
   isVirtualized?: boolean;
+  style?: React.CSSProperties;
+  onClick?: () => void;
+  onSelect?: (selected: boolean) => void;
+  isSelected?: boolean;
 }
 
-export const VideoTableItem: React.FC<VideoTableItemProps> = ({ task, isVirtualized = false }) => {
-  const [showActions, setShowActions] = useState(false);
+export const VideoTableItem: React.FC<VideoTableItemProps> = ({ 
+  task, 
+  isVirtualized = false,
+  style,
+  onClick,
+  onSelect,
+  isSelected: propIsSelected
+}) => {
   const { 
     selectedTasks,
     toggleTaskSelection,
@@ -20,47 +38,81 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({ task, isVirtuali
     removeTasks
   } = useDownloadStore();
 
-  const isSelected = selectedTasks.includes(task.id);
+  const isSelected = propIsSelected ?? selectedTasks.includes(task.id);
 
-  const getStatusColor = (status: TaskStatus) => {
-    switch (status) {
-      case 'pending':
-        return 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20 dark:text-yellow-400';
-      case 'downloading':
-        return 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400';
-      case 'paused':
-        return 'text-orange-600 bg-orange-50 dark:bg-orange-900/20 dark:text-orange-400';
-      case 'completed':
-        return 'text-green-600 bg-green-50 dark:bg-green-900/20 dark:text-green-400';
-      case 'failed':
-        return 'text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400';
-      case 'cancelled':
-        return 'text-gray-600 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400';
-      default:
-        return 'text-gray-600 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400';
+  // 格式化时间
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return dateString;
     }
   };
 
-  const getStatusIcon = (status: TaskStatus) => {
+  const getStatusConfig = (status: TaskStatus) => {
     switch (status) {
       case 'pending':
-        return '⏳';
+        return {
+          color: 'bg-yellow-500',
+          text: 'text-yellow-600 dark:text-yellow-400',
+          bg: 'bg-yellow-50 dark:bg-yellow-900/20',
+          label: '待下载'
+        };
       case 'downloading':
-        return '⬇️';
+        return {
+          color: 'bg-blue-500',
+          text: 'text-blue-600 dark:text-blue-400',
+          bg: 'bg-blue-50 dark:bg-blue-900/20',
+          label: '下载中'
+        };
       case 'paused':
-        return '⏸️';
+        return {
+          color: 'bg-orange-500',
+          text: 'text-orange-600 dark:text-orange-400',
+          bg: 'bg-orange-50 dark:bg-orange-900/20',
+          label: '已暂停'
+        };
       case 'completed':
-        return '✅';
+        return {
+          color: 'bg-green-500',
+          text: 'text-green-600 dark:text-green-400',
+          bg: 'bg-green-50 dark:bg-green-900/20',
+          label: '已完成'
+        };
       case 'failed':
-        return '❌';
+        return {
+          color: 'bg-red-500',
+          text: 'text-red-600 dark:text-red-400',
+          bg: 'bg-red-50 dark:bg-red-900/20',
+          label: '失败'
+        };
       case 'cancelled':
-        return '🚫';
+        return {
+          color: 'bg-gray-400',
+          text: 'text-gray-500 dark:text-gray-400',
+          bg: 'bg-gray-100 dark:bg-gray-800',
+          label: '已取消'
+        };
       default:
-        return '❓';
+        return {
+          color: 'bg-gray-400',
+          text: 'text-gray-500',
+          bg: 'bg-gray-100',
+          label: '未知'
+        };
     }
   };
 
-  const handleAction = async (action: 'start' | 'pause' | 'resume' | 'cancel' | 'remove') => {
+  const statusConfig = getStatusConfig(task.status);
+
+  const handleAction = async (e: React.MouseEvent, action: 'start' | 'pause' | 'resume' | 'cancel' | 'remove') => {
+    e.stopPropagation();
     try {
       switch (action) {
         case 'start':
@@ -88,272 +140,159 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({ task, isVirtuali
   };
 
   // 从video_info或fallback到基础字段获取信息
-  const getVideoInfo = () => {
-    const videoInfo = task.video_info;
-    return {
-      zlName: videoInfo?.zl_name || '未知专栏',
-      kcName: videoInfo?.kc_name || task.title || '未知课程',
-      zlId: videoInfo?.zl_id || videoInfo?.id || '未知',
-      kcId: videoInfo?.kc_id || task.id.substring(0, 8) || '未知',
-      recordUrl: videoInfo?.record_url || task.url
-    };
-  };
-
-  const videoInfo = getVideoInfo();
-
-  // 截取URL显示
-  const getTruncatedUrl = (url: string, maxLength: number = 40) => {
-    if (url.length <= maxLength) return url;
-    return url.substring(0, maxLength) + '...';
+  const videoInfo = {
+    zlName: task.video_info?.zl_name || '未知专栏',
+    kcName: task.video_info?.kc_name || task.title || '未知课程',
+    recordUrl: task.video_info?.record_url || task.url
   };
 
   return (
     <div 
-      className={`border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${
-        isSelected ? 'bg-primary-50 dark:bg-primary-900/20' : ''
+      style={style}
+      className={`group relative flex items-center p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800 transition-all duration-200 ${
+        isSelected ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'bg-white dark:bg-gray-900'
       }`}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
+      onClick={onClick}
     >
-      <div className="px-4 py-3">
-        <div className="grid grid-cols-12 gap-2 items-center text-sm">
-          {/* 选择框 */}
-          <div className="col-span-1">
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={() => toggleTaskSelection(task.id)}
-              className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-            />
-          </div>
+      {/* 左侧选择与图标区 */}
+      <div className="flex items-center h-full mr-4" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={(e) => {
+            if (onSelect) {
+              onSelect(e.target.checked);
+            } else {
+              toggleTaskSelection(task.id);
+            }
+          }}
+          className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer transition-colors"
+        />
+      </div>
 
-          {/* 专栏名称 */}
-          <div className="col-span-2">
-            <div 
-              className="font-medium text-gray-900 dark:text-gray-100 truncate"
-              title={videoInfo.zlName}
-            >
-              {videoInfo.zlName}
-            </div>
-            {videoInfo.zlName === '未知专栏' && (
-              <div className="text-xs text-amber-600 dark:text-amber-400">
-                需要字段映射
-              </div>
-            )}
-          </div>
+      {/* 图标区域 */}
+      <div className="hidden sm:flex flex-shrink-0 w-10 h-10 mr-4 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+        {task.downloader_type === 'youtube' ? (
+          <PlayIcon className="w-6 h-6 text-red-500" />
+        ) : (
+          <span className="text-xs font-bold text-gray-400">VIDEO</span>
+        )}
+      </div>
 
-          {/* 课程名称 */}
-          <div className="col-span-2">
-            <div 
-              className="font-medium text-gray-900 dark:text-gray-100 truncate"
-              title={videoInfo.kcName}
-            >
-              {videoInfo.kcName}
-            </div>
-            {task.error_message && (
-              <div className="text-xs text-red-600 dark:text-red-400 truncate">
-                {task.error_message}
-              </div>
-            )}
-          </div>
+      {/* 中间主要信息区 */}
+      <div className="flex-1 min-w-0 mr-4 flex flex-col justify-center space-y-1.5">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" title={videoInfo.kcName}>
+            {videoInfo.kcName}
+          </h3>
+          {videoInfo.zlName !== '未知专栏' && (
+             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+               {videoInfo.zlName}
+             </span>
+          )}
+        </div>
 
-          {/* 专栏ID */}
-          <div className="col-span-1">
-            <div 
-              className="text-gray-600 dark:text-gray-400 font-mono text-xs truncate"
-              title={videoInfo.zlId}
-            >
-              {videoInfo.zlId}
-            </div>
-          </div>
-
-          {/* 课程ID */}
-          <div className="col-span-1">
-            <div 
-              className="text-gray-600 dark:text-gray-400 font-mono text-xs truncate"
-              title={videoInfo.kcId}
-            >
-              {videoInfo.kcId}
-            </div>
-          </div>
-
-          {/* 视频链接 */}
-          <div className="col-span-3">
-            <div className="flex items-center space-x-1">
-              <a
-                href={videoInfo.recordUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 truncate text-xs"
-                title={videoInfo.recordUrl}
-              >
-                {getTruncatedUrl(videoInfo.recordUrl)}
-              </a>
-              {task.downloader_type && (
-                <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">
-                  {task.downloader_type}
+        {/* 进度条和状态信息 */}
+        <div className="w-full max-w-xl">
+           <div className="flex items-center justify-between text-xs mb-1.5">
+              <div className="flex items-center gap-2">
+                <span className={`font-medium ${statusConfig.text}`}>
+                  {statusConfig.label} {task.progress > 0 && `${task.progress.toFixed(1)}%`}
                 </span>
-              )}
-            </div>
-          </div>
-
-          {/* 下载进度 */}
-          <div className="col-span-2">
-            <div className="flex flex-col space-y-1">
-              {/* 进度条 */}
-              <div className="flex items-center space-x-2">
-                <span className="text-xs">{getStatusIcon(task.status)}</span>
-                <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                  <div
-                    className={`h-1.5 rounded-full transition-all duration-300 ${
-                      task.status === 'completed' ? 'bg-green-500' :
-                      task.status === 'failed' ? 'bg-red-500' :
-                      task.status === 'downloading' ? 'bg-blue-500' :
-                      'bg-gray-400'
-                    }`}
-                    style={{ width: `${Math.min(task.progress, 100)}%` }}
-                  />
-                </div>
-                <span className="text-xs font-mono w-12 text-right">
-                  {task.progress.toFixed(0)}%
-                </span>
-              </div>
-              
-              {/* 速度和大小信息 */}
-              <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <span className={`px-1.5 py-0.5 rounded text-xs ${getStatusColor(task.status)}`}>
-                  {task.status}
-                </span>
-                {task.status === 'downloading' && task.speed > 0 && (
-                  <span>{formatBytes(task.speed)}/s</span>
-                )}
-                {task.file_size && (
-                  <span>{formatBytes(task.downloaded_size)}/{formatBytes(task.file_size)}</span>
-                )}
-              </div>
-            </div>
-
-            {/* 操作按钮 - 仅在hover时显示 */}
-            {showActions && (
-              <div className="flex items-center justify-center space-x-1 mt-1">
-                {task.status === 'pending' && (
-                  <>
-                    <ActionButton
-                      icon="▶️"
-                      tooltip="开始下载"
-                      onClick={() => handleAction('start')}
-                      variant="primary"
-                    />
-                    <ActionButton
-                      icon="🗑️"
-                      tooltip="删除"
-                      onClick={() => handleAction('remove')}
-                      variant="danger"
-                    />
-                  </>
-                )}
                 {task.status === 'downloading' && (
                   <>
-                    <ActionButton
-                      icon="⏸️"
-                      tooltip="暂停"
-                      onClick={() => handleAction('pause')}
-                      variant="secondary"
-                    />
-                    <ActionButton
-                      icon="🚫"
-                      tooltip="取消"
-                      onClick={() => handleAction('cancel')}
-                      variant="danger"
-                    />
+                    <span className="text-gray-300 dark:text-gray-600">|</span>
+                    <span className="text-gray-500 dark:text-gray-400 font-mono">
+                      {formatBytes(task.speed)}/s
+                    </span>
                   </>
-                )}
-                {task.status === 'paused' && (
-                  <>
-                    <ActionButton
-                      icon="▶️"
-                      tooltip="继续"
-                      onClick={() => handleAction('resume')}
-                      variant="primary"
-                    />
-                    <ActionButton
-                      icon="🚫"
-                      tooltip="取消"
-                      onClick={() => handleAction('cancel')}
-                      variant="danger"
-                    />
-                  </>
-                )}
-                {task.status === 'failed' && (
-                  <>
-                    <ActionButton
-                      icon="🔄"
-                      tooltip="重试"
-                      onClick={() => handleAction('start')}
-                      variant="primary"
-                    />
-                    <ActionButton
-                      icon="🗑️"
-                      tooltip="删除"
-                      onClick={() => handleAction('remove')}
-                      variant="danger"
-                    />
-                  </>
-                )}
-                {(task.status === 'completed' || task.status === 'cancelled') && (
-                  <ActionButton
-                    icon="🗑️"
-                    tooltip="删除"
-                    onClick={() => handleAction('remove')}
-                    variant="danger"
-                  />
                 )}
               </div>
-            )}
-          </div>
+              <div className="text-gray-400 font-mono">
+                {task.file_size ? `${formatBytes(task.downloaded_size)} / ${formatBytes(task.file_size)}` : formatBytes(task.downloaded_size)}
+              </div>
+           </div>
+           
+           <div className="h-1.5 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+             <div 
+               className={`h-full rounded-full transition-all duration-500 ease-out ${statusConfig.color} ${
+                 task.status === 'downloading' ? 'animate-pulse' : ''
+               }`}
+               style={{ width: `${Math.max(task.progress, 2)}%` }}
+             />
+           </div>
+        </div>
+        
+        {/* 底部额外信息 */}
+        <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
+           <span>Added: {formatDate(task.created_at)}</span>
+           <a 
+             href={videoInfo.recordUrl} 
+             target="_blank" 
+             rel="noreferrer" 
+             className="hover:text-blue-500 hover:underline truncate max-w-[200px]"
+             onClick={(e) => e.stopPropagation()}
+           >
+             {videoInfo.recordUrl}
+           </a>
         </div>
       </div>
+
+      {/* 右侧操作区 - 悬浮显示 */}
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute right-4 bg-white/90 dark:bg-gray-900/90 px-2 py-1 rounded-lg shadow-sm backdrop-blur-sm">
+        {task.status === 'pending' || task.status === 'failed' ? (
+          <button 
+            onClick={(e) => handleAction(e, 'start')}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
+            title="开始下载"
+          >
+            <PlayIcon className="w-5 h-5" />
+          </button>
+        ) : null}
+        
+        {task.status === 'downloading' ? (
+          <button 
+            onClick={(e) => handleAction(e, 'pause')}
+            className="p-2 text-gray-500 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/30 rounded-lg transition-colors"
+            title="暂停"
+          >
+            <PauseIcon className="w-5 h-5" />
+          </button>
+        ) : null}
+        
+        {task.status === 'paused' ? (
+          <button 
+            onClick={(e) => handleAction(e, 'resume')}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
+            title="继续"
+          >
+            <PlayIcon className="w-5 h-5" />
+          </button>
+        ) : null}
+        
+        {task.status === 'downloading' || task.status === 'paused' ? (
+          <button 
+            onClick={(e) => handleAction(e, 'cancel')}
+            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+            title="取消"
+          >
+            <StopIcon className="w-5 h-5" />
+          </button>
+        ) : null}
+
+        <button 
+          onClick={(e) => handleAction(e, 'remove')}
+          className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+          title="删除任务"
+        >
+          <TrashIcon className="w-5 h-5" />
+        </button>
+      </div>
+      
+      {/* 状态标签 - 在未悬浮且非下载中状态显示 */}
+      <div className="group-hover:opacity-0 transition-opacity duration-200 absolute right-4 text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+        {statusConfig.label}
+      </div>
     </div>
-  );
-};
-
-// 小型操作按钮组件
-interface ActionButtonProps {
-  icon: string;
-  tooltip: string;
-  onClick: () => void;
-  variant?: 'primary' | 'secondary' | 'danger';
-  disabled?: boolean;
-}
-
-const ActionButton: React.FC<ActionButtonProps> = ({ 
-  icon, 
-  tooltip, 
-  onClick, 
-  variant = 'secondary',
-  disabled = false 
-}) => {
-  const getVariantClasses = () => {
-    switch (variant) {
-      case 'primary':
-        return 'text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20';
-      case 'danger':
-        return 'text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20';
-      default:
-        return 'text-gray-600 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700';
-    }
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={tooltip}
-      className={`p-1 rounded transition-colors ${getVariantClasses()} ${
-        disabled ? 'opacity-50 cursor-not-allowed' : ''
-      }`}
-    >
-      <span className="text-xs">{icon}</span>
-    </button>
   );
 };

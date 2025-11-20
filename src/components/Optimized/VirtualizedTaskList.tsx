@@ -9,17 +9,11 @@
  * - 智能缓冲：预渲染缓冲区项目
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { VideoTask } from '../../schemas';
-import { perfMonitor, usePerformanceTracker } from '../../utils/performanceMonitor';
+import { useDownloadStore } from '../../stores/downloadStore';
+import type { VideoTask } from '../../types';
 
 interface VirtualizedTaskListProps {
-  tasks: VideoTask[];
-  itemHeight: number;
-  containerHeight: number;
   overscan?: number; // 缓冲区项目数量
-  onTaskClick?: (task: VideoTask) => void;
-  onTaskSelect?: (taskId: string, selected: boolean) => void;
-  selectedTasks?: string[];
   className?: string;
 }
 
@@ -30,6 +24,21 @@ interface VirtualItem {
   height: number;
 }
 
+// 工具函数
+function formatSpeed(bytesPerSecond: number): string {
+  if (bytesPerSecond === 0) return '0 B/s';
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(1024));
+  const size = bytesPerSecond / Math.pow(1024, i);
+  return `${size.toFixed(1)} ${units[i]}`;
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
 /**
  * 轻量级任务项组件 - 使用React.memo优化
  */
@@ -37,68 +46,76 @@ const TaskItem = React.memo<{
   task: VideoTask;
   style: React.CSSProperties;
   isSelected: boolean;
-  onClick: () => void;
   onSelect: (selected: boolean) => void;
-}>(({ task, style, isSelected, onClick, onSelect }) => {
-  const { trackCallback } = usePerformanceTracker('TaskItem');
-  
-  const handleClick = trackCallback('click', onClick);
-  const handleSelectChange = trackCallback('select', (e: React.ChangeEvent<HTMLInputElement>) => {
+  index: number;
+}>(({ task, style, isSelected, onSelect, index }) => {
+
+  const handleSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSelect(e.target.checked);
-  });
-  
+  };
+
   const statusColor = useMemo(() => {
     switch (task.status) {
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'downloading': return 'bg-blue-100 text-blue-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      case 'paused': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'completed': return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+      case 'downloading': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'failed': return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+      case 'paused': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
+      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
     }
   }, [task.status]);
-  
+
   const progressPercentage = Math.round(task.progress);
-  
+
   return (
     <div
       style={style}
-      className={`absolute flex items-center p-3 border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors duration-150 ${
-        isSelected ? 'bg-blue-50 border-blue-200' : ''
-      }`}
-      onClick={handleClick}
+      className={`absolute flex items-center px-4 py-3 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors duration-150 ${isSelected ? 'bg-blue-50 dark:bg-blue-900/10' : ''
+        }`}
     >
-      <input
-        type="checkbox"
-        checked={isSelected}
-        onChange={handleSelectChange}
-        onClick={(e) => e.stopPropagation()}
-        className="mr-3 rounded"
-      />
-      
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-1">
-          <h4 className="text-sm font-medium text-gray-900 truncate" title={task.title}>
+      <div className="flex items-center h-full mr-4" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={handleSelectChange}
+          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+        />
+      </div>
+
+      <div className="flex-1 min-w-0 pr-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate pr-4" title={task.title}>
+            <span className="text-gray-400 dark:text-gray-500 mr-2 font-normal text-xs">#{index + 1}</span>
             {task.title}
           </h4>
-          <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColor}`}>
-            {task.status}
+          <span className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}>
+            {task.status === 'pending' ? '等待中' :
+              task.status === 'downloading' ? '下载中' :
+                task.status === 'completed' ? '已完成' :
+                  task.status === 'failed' ? '失败' :
+                    task.status === 'paused' ? '暂停' : task.status}
           </span>
         </div>
-        
-        <div className="flex items-center space-x-4 text-sm text-gray-600">
-          <span>{progressPercentage}%</span>
-          {task.speed > 0 && (
-            <span>{formatSpeed(task.speed)}</span>
+
+        <div className="flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400">
+          {task.status === 'downloading' && (
+            <>
+              <span className="w-16">{progressPercentage}%</span>
+              <span className="w-20">{formatSpeed(task.speed)}</span>
+              <span>剩余: {task.eta ? formatTime(task.eta) : '--'}</span>
+            </>
           )}
-          {task.eta && (
-            <span>ETA: {formatTime(task.eta)}</span>
+          {task.status !== 'downloading' && (
+            <span className="truncate text-gray-400">{task.output_path}</span>
           )}
         </div>
-        
+
         {/* 进度条 */}
-        <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1 mt-2 overflow-hidden">
           <div
-            className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+            className={`h-full transition-all duration-300 ${task.status === 'failed' ? 'bg-red-500' :
+              task.status === 'completed' ? 'bg-green-500' :
+                'bg-blue-600'
+              }`}
             style={{ width: `${progressPercentage}%` }}
           />
         </div>
@@ -110,121 +127,128 @@ const TaskItem = React.memo<{
 TaskItem.displayName = 'TaskItem';
 
 /**
- * 虚拟化任务列表主组件
+ * 虚拟化任务列表主组件 - 适配 UnifiedView
  */
 export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
-  tasks,
-  itemHeight,
-  containerHeight,
-  overscan = 5,
-  onTaskClick,
-  onTaskSelect,
-  selectedTasks = [],
+  overscan = 3,
   className = ''
 }) => {
-  const { trackEffect, trackCallback } = usePerformanceTracker('VirtualizedTaskList');
+  // 从 Store 获取数据，替代 Props 传递，简化 UnifiedView
+  const {
+    tasks,
+    filterStatus,
+    searchQuery,
+    selectedTasks,
+    toggleTaskSelection
+  } = useDownloadStore();
+
+  // 本地计算过滤列表 (如果 Store 没有直接提供)
+  const displayedTasks = useMemo(() => {
+    let result = tasks;
+
+    // 状态过滤
+    if (filterStatus !== 'all') {
+      result = result.filter(t => t.status === filterStatus);
+    }
+
+    // 搜索过滤
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(t => t.title.toLowerCase().includes(query) || t.url.toLowerCase().includes(query));
+    }
+
+    return result;
+  }, [tasks, filterStatus, searchQuery]);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const [isScrolling, setIsScrolling] = useState(false);
-  const scrollTimeoutRef = useRef<NodeJS.Timeout>();
-  
+  const [containerHeight, setContainerHeight] = useState(600); // 默认高度
+
+  const itemHeight = 88; // 固定高度，根据 CSS 调整
+
+  // 监听容器大小变化
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setContainerHeight(entry.contentRect.height);
+      }
+    });
+
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // Auto-scroll to top when new tasks are added
+  const prevTaskCountRef = useRef(tasks.length);
+
+  useEffect(() => {
+    if (tasks.length > prevTaskCountRef.current) {
+      if (containerRef.current) {
+        containerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+    prevTaskCountRef.current = tasks.length;
+  }, [tasks.length]);
+
   // 计算可见项目范围
   const visibleRange = useMemo(() => {
     const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
     const endIndex = Math.min(
-      tasks.length - 1,
+      displayedTasks.length - 1,
       Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
     );
-    
+
     return { startIndex, endIndex };
-  }, [scrollTop, itemHeight, containerHeight, overscan, tasks.length]);
-  
+  }, [scrollTop, itemHeight, containerHeight, overscan, displayedTasks.length]);
+
   // 生成虚拟项目列表
   const virtualItems = useMemo<VirtualItem[]>(() => {
     const items: VirtualItem[] = [];
-    
     for (let i = visibleRange.startIndex; i <= visibleRange.endIndex; i++) {
-      if (i < tasks.length) {
+      if (i < displayedTasks.length) {
         items.push({
           index: i,
-          task: tasks[i],
+          task: displayedTasks[i],
           top: i * itemHeight,
           height: itemHeight
         });
       }
     }
-    
     return items;
-  }, [visibleRange, tasks, itemHeight]);
-  
-  // 总高度
-  const totalHeight = tasks.length * itemHeight;
-  
-  // 滚动处理
-  const handleScroll = trackCallback('scroll', useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const newScrollTop = e.currentTarget.scrollTop;
-    setScrollTop(newScrollTop);
-    setIsScrolling(true);
-    
-    // 防抖处理停止滚动
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-    scrollTimeoutRef.current = setTimeout(() => {
-      setIsScrolling(false);
-    }, 150);
-  }, []));
-  
-  // 任务点击处理
-  const handleTaskClick = trackCallback('taskClick', useCallback((task: VideoTask) => {
-    onTaskClick?.(task);
-  }, [onTaskClick]));
-  
-  // 任务选择处理
-  const handleTaskSelect = trackCallback('taskSelect', useCallback((taskId: string, selected: boolean) => {
-    onTaskSelect?.(taskId, selected);
-  }, [onTaskSelect]));
-  
-  // 性能监控：记录滚动性能
-  useEffect(() => {
-    trackEffect('scrollUpdate', async () => {
-      perfMonitor.recordDataProcessing('VirtualList.scroll', virtualItems.length, performance.now());
-    });
-  }, [virtualItems.length, trackEffect]);
-  
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current);
-      }
-    };
+  }, [visibleRange, displayedTasks, itemHeight]);
+
+  const totalHeight = displayedTasks.length * itemHeight;
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
   }, []);
-  
-  // 滚动到特定任务
-  const scrollToTask = useCallback((taskId: string) => {
-    const taskIndex = tasks.findIndex(task => task.id === taskId);
-    if (taskIndex !== -1 && containerRef.current) {
-      const scrollTop = taskIndex * itemHeight;
-      containerRef.current.scrollTop = scrollTop;
+
+  const handleTaskSelect = useCallback((taskId: string, selected: boolean) => {
+    if (selected) {
+      if (!selectedTasks.includes(taskId)) {
+        toggleTaskSelection(taskId); // DownloadStore 里通常是 toggle
+      }
+    } else {
+      if (selectedTasks.includes(taskId)) {
+        toggleTaskSelection(taskId);
+      }
     }
-  }, [tasks, itemHeight]);
-  
-  
+  }, [selectedTasks, toggleTaskSelection]);
+
   return (
-    <div className={`relative ${className}`}>
+    <div className={`h-full w-full ${className}`}>
       <div
         ref={containerRef}
-        className="overflow-auto"
-        style={{ height: containerHeight }}
+        className="h-full w-full overflow-y-auto custom-scrollbar"
         onScroll={handleScroll}
       >
-        {/* 占位容器 - 维持总高度 */}
         <div style={{ height: totalHeight, position: 'relative' }}>
-          {/* 虚拟项目渲染 */}
           {virtualItems.map(({ task, top, height, index }) => (
             <TaskItem
               key={task.id}
+              index={index} // 实际列表索引
               task={task}
               style={{
                 top,
@@ -233,45 +257,17 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
                 right: 0,
               }}
               isSelected={selectedTasks.includes(task.id)}
-              onClick={() => handleTaskClick(task)}
               onSelect={(selected) => handleTaskSelect(task.id, selected)}
             />
           ))}
-          
-          {/* 滚动指示器 */}
-          {isScrolling && (
-            <div className="fixed top-4 right-4 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-sm z-50">
-              {Math.round((scrollTop / (totalHeight - containerHeight)) * 100)}%
+
+          {displayedTasks.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+              <p>没有符合条件的任务</p>
             </div>
           )}
         </div>
       </div>
-      
-      {/* 性能统计显示（开发模式） */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="absolute top-2 left-2 text-xs text-gray-500 bg-white bg-opacity-75 px-2 py-1 rounded">
-          渲染: {virtualItems.length}/{tasks.length}
-        </div>
-      )}
     </div>
   );
 };
-
-// 工具函数
-function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond === 0) return '0 B/s';
-  
-  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(1024));
-  const size = bytesPerSecond / Math.pow(1024, i);
-  
-  return `${size.toFixed(1)} ${units[i]}`;
-}
-
-function formatTime(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${Math.round(seconds / 3600)}h`;
-}
-
-export default VirtualizedTaskList;

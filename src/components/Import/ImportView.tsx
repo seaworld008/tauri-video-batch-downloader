@@ -22,12 +22,24 @@ import { notify, useUIStore } from '../../stores/uiStore';
 import { useImportGuide } from '../../hooks/useImportGuide';
 import { buildDefaultFieldMapping, buildBackendFieldMapping, canProceedWithImport } from '../../utils/importMapping';
 import { ImportProgress, SimpleProgress, createImportSteps, type ImportProgressStep } from './ImportProgress';
-import { TaskControls } from '../Downloads/TaskControls';
-import { VideoTable } from '../Downloads/VideoTable';
-import { LoadingButton, StatusMessage, LoadingOverlay } from '../UI/LoadingStates';
 import type { ImportPreview, ImportedData, VideoTask } from '../../types';
 
 type ImportTabType = 'file' | 'manual' | 'youtube';
+
+const generateTaskId = (() => {
+  let counter = 0;
+  const sanitizeSeed = (seed?: string | null) =>
+    (seed ?? 'task')
+      .toString()
+      .trim()
+      .replace(/[^a-zA-Z0-9]+/g, '')
+      .slice(-16) || 'task';
+
+  return (seed?: string | null) => {
+    counter = (counter + 1) % 1000000;
+    return `${sanitizeSeed(seed)}_${Date.now()}_${counter}_${Math.random().toString(36).slice(2, 8)}`;
+  };
+})();
 
 interface ManualUrlEntry {
   id: string;
@@ -48,7 +60,6 @@ export const ImportView: React.FC<ImportViewProps> = () => {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
-  const [latestImportTaskIds, setLatestImportTaskIds] = useState<string[]>([]);
   const [importSuccess, setImportSuccess] = useState(false); // 新增：导入成功状态
   const [importResultSummary, setImportResultSummary] = useState<{
     createdCount: number;
@@ -71,15 +82,30 @@ export const ImportView: React.FC<ImportViewProps> = () => {
   const {
     addTasks,
     tasks,
-    selectedTasks,
-    startAllDownloads,
-    clearSelection,
+    enqueueDownloads,
+    setSelectedTasks,
+    refreshTasks,
+    setFilterStatus,
+    setSearchQuery,
+    setSortBy,
+    pendingStartQueue,
+    recentImportTaskIds,
+    recentImportSnapshot,
   } = useDownloadStore();
   const defaultOutputDirFromConfig = useConfigStore(state => state.config.download.output_directory);
   const setCurrentView = useUIStore(state => state.setCurrentView);
 
   const canImport = importPreview ? canProceedWithImport(importPreview.headers, fieldMapping) : false;
   const { triggerImportGuide } = useImportGuide();
+  const latestImportedTasks = useMemo(() => {
+    if (recentImportTaskIds.length === 0) {
+      return recentImportSnapshot;
+    }
+    const matched = recentImportTaskIds
+      .map(id => tasks.find(task => task.id === id))
+      .filter((task): task is VideoTask => Boolean(task));
+    return matched.length > 0 ? matched : recentImportSnapshot;
+  }, [recentImportTaskIds, recentImportSnapshot, tasks]);
   const getImportCommand = (filePath: string): 'import_csv_file' | 'import_excel_file' => {
     const lower = filePath.toLowerCase();
     if (lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.ods')) {
@@ -90,7 +116,7 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
   
   // 进度步骤更新辅助函数
-  const updateStep = (stepId: string, status: ImportProgressStep['status'], errorMessage?: string) => {
+  const updateStep = useCallback((stepId: string, status: ImportProgressStep['status'], errorMessage?: string) => {
     setImportSteps(prev => prev.map(step => {
       if (step.id === stepId) {
         const updatedStep = { 
@@ -108,14 +134,14 @@ export const ImportView: React.FC<ImportViewProps> = () => {
     if (status === 'processing') {
       setCurrentStep(stepId);
     }
-  };
+  }, [setCurrentStep, setImportSteps]);
   
-  const resetProgress = () => {
+  const resetProgress = useCallback(() => {
     setImportSteps(createImportSteps());
     setCurrentStep(undefined);
     setImportProgress(0);
     setShowDetailedProgress(false);
-  };
+  }, [setImportSteps, setCurrentStep, setImportProgress, setShowDetailedProgress]);
 
   // 标签页配置 - 符合现代UI设计
   const tabs = [
@@ -161,7 +187,6 @@ export const ImportView: React.FC<ImportViewProps> = () => {
         console.log('📁 File selected:', selected);
         setImportSuccess(false);
         setImportResultSummary(null);
-        setLatestImportTaskIds([]);
         setSelectedFile(selected);
         const previewResult = await previewImportData(selected);
         if (!previewResult) {
@@ -185,13 +210,13 @@ export const ImportView: React.FC<ImportViewProps> = () => {
     console.log('[Import] previewImportData called with:', filePath);
     try {
       console.log('[Import] Invoking preview_import_data', {
-        file_path: filePath,
-        max_rows: 10
+        filePath,
+        maxRows: 10
       });
 
       const preview = await invoke<ImportPreview>('preview_import_data', {
-        file_path: filePath,
-        max_rows: 10
+        filePath,
+        maxRows: 10
       });
 
       console.log('[Import] Preview response:', preview);
@@ -257,12 +282,12 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
         const command = getImportCommand(filePath);
         const importArgs: Record<string, unknown> = {
-          file_path: filePath,
-          field_mapping: backendFieldMapping,
+          filePath,
+          fieldMapping: backendFieldMapping,
           encoding: preview.encoding,
         };
         if (command === 'import_excel_file') {
-          importArgs.sheet_name = null;
+          importArgs.sheetName = null;
         }
 
         const importedData = await invoke<ImportedData[]>(command, importArgs);
@@ -285,7 +310,8 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
         const tasksToAdd: VideoTask[] = validRows.map((item, index) => {
           const url = item.record_url || item.url || '';
-          const id = item.zl_id || item.id || `task_${Date.now()}_${index}`;
+          const idSeed = item.record_url || item.url || item.zl_id || item.id || `${index}`;
+          const id = generateTaskId(idSeed);
           const title =
             item.kc_name || item.course_name || item.name || `视频_${index + 1}`;
 
@@ -317,10 +343,19 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
         await addTasks(tasksToAdd);
 
+        if (refreshTasks) {
+          try {
+            await refreshTasks();
+          } catch (refreshError) {
+            console.warn('[Import] refreshTasks failed, fallback to local state', refreshError);
+          }
+        }
+
         const updatedTasks = useDownloadStore.getState().tasks;
         const newTaskIds = updatedTasks
           .filter(task => !previousTaskIds.has(task.id))
           .map(task => task.id);
+        const fallbackIds = tasksToAdd.map(task => task.id);
 
         updateStep('tasks-create', 'completed');
         setImportProgress(72);
@@ -333,10 +368,10 @@ export const ImportView: React.FC<ImportViewProps> = () => {
         updateStep('ui-update', 'processing');
         await new Promise(resolve => setTimeout(resolve, 150));
 
-        setLatestImportTaskIds(newTaskIds);
-        useDownloadStore.setState({ selectedTasks: newTaskIds });
+        const effectiveIds = newTaskIds.length > 0 ? newTaskIds : fallbackIds;
+        useDownloadStore.setState({ selectedTasks: effectiveIds });
 
-        const createdCount = newTaskIds.length;
+        const createdCount = newTaskIds.length > 0 ? newTaskIds.length : fallbackIds.length;
         const totalRows = validRows.length;
         const skippedCount = Math.max(totalRows - createdCount, 0);
 
@@ -360,6 +395,11 @@ export const ImportView: React.FC<ImportViewProps> = () => {
 
         setShowDetailedProgress(false);
 
+        // 重置过滤器，确保导入的任务在本地列表中可见
+        setFilterStatus('all');
+        setSearchQuery('');
+        setSortBy('created_at', 'desc');
+
         return tasksToAdd;
       } catch (error) {
         console.error('导入失败:', error);
@@ -377,7 +417,7 @@ export const ImportView: React.FC<ImportViewProps> = () => {
         setIsLoading(false);
       }
     },
-    [addTasks, currentStep, defaultOutputDirFromConfig, outputDir, resetProgress, triggerImportGuide, updateStep]
+    [addTasks, currentStep, defaultOutputDirFromConfig, outputDir, refreshTasks, resetProgress, triggerImportGuide, updateStep, setFilterStatus, setSearchQuery, setSortBy]
   );
 
 
@@ -494,24 +534,16 @@ export const ImportView: React.FC<ImportViewProps> = () => {
         }
       }));
 
-      // 添加到下载队列
       await addTasks(videoTasks);
-      
-      // 启动下载
-      for (const task of videoTasks) {
-        try {
-          await invoke('start_download', { task_id: task.id });
-        } catch (error) {
-          console.error(`Failed to start download for task ${task.id}:`, error);
-        }
-      }
+      enqueueDownloads(videoTasks.map(task => task.id));
 
-      notify.success('下载已开始', `成功添加 ${videoTasks.length} 个下载任务`);
+      notify.success('下载任务已入队', `成功添加 ${videoTasks.length} 个下载任务，将自动依次开始`);
       
-      // 跳转到下载管理页面
-      const { useUIStore } = await import('../../stores/uiStore');
-      useUIStore.getState().setCurrentView('downloads');
-      
+      // 重置过滤状态以显示新任务
+      setFilterStatus('all');
+      setSearchQuery('');
+      setSortBy('created_at', 'desc');
+
       // 重置状态
       setManualUrls([]);
       
@@ -566,6 +598,23 @@ export const ImportView: React.FC<ImportViewProps> = () => {
       notify.error('读取剪贴板失败', '请确保浏览器允许访问剪贴板');
     }
   };
+
+  const handleSelectImportedTasks = useCallback(() => {
+    if (latestImportedTasks.length === 0) return;
+    setSelectedTasks(latestImportedTasks.map(task => task.id));
+    notify.success('已选中本次导入的全部任务');
+  }, [latestImportedTasks, setSelectedTasks]);
+
+  const handleBulkDownloadImported = useCallback(() => {
+    if (latestImportedTasks.length === 0) {
+      notify.error('暂无可下载任务', '请先导入任务后再试');
+      return;
+    }
+    const ids = latestImportedTasks.map(task => task.id);
+    enqueueDownloads(ids);
+    setSelectedTasks(ids);
+    notify.success('批量任务已加入下载队列', `共 ${ids.length} 个任务将根据并发限制依次启动。`);
+  }, [enqueueDownloads, latestImportedTasks, setSelectedTasks]);
 
   return (
     <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -783,17 +832,17 @@ export const ImportView: React.FC<ImportViewProps> = () => {
                                 其中 {importResultSummary.skippedCount} 行因缺少有效链接或已存在于列表中而被忽略。
                               </p>
                             )}
-                            {latestImportTaskIds.length > 0 && (
+                            {recentImportTaskIds.length > 0 && (
                               <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                                已自动选中 {latestImportTaskIds.length} 个新任务，前往下载管理即可开始。
+                                已自动选中 {recentImportTaskIds.length} 个新任务，可以在下方的“最新导入”列表中继续批量操作。
                               </p>
                             )}
                             <div className="flex gap-3 justify-center">
                               <button
-                                onClick={() => setCurrentView('downloads')}
+                                onClick={() => setCurrentView('dashboard')}
                                 className="inline-flex items-center px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
                               >
-                                查看下载任务
+                                返回仪表板
                               </button>
                               <button
                                 onClick={() => {
@@ -803,7 +852,6 @@ export const ImportView: React.FC<ImportViewProps> = () => {
                                   setImportSuccess(false);
                                   setOutputDir('');
                                   setImportResultSummary(null);
-                                  setLatestImportTaskIds([]);
                                 }}
                                 className="inline-flex items-center px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
                               >
@@ -836,6 +884,100 @@ export const ImportView: React.FC<ImportViewProps> = () => {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {latestImportedTasks.length > 0 && (
+            <div className="mt-10">
+              <div className="bg-gray-900/30 dark:bg-gray-800 rounded-xl border border-gray-700 shadow-inner">
+                <div className="px-6 py-5 border-b border-gray-700 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-xl font-semibold text-white flex items-center gap-3">
+                      <TableCellsIcon className="w-5 h-5 text-indigo-400" />
+                      最新导入的视频列表
+                    </h3>
+                    <p className="text-sm text-gray-300 mt-1">
+                      共 {latestImportedTasks.length} 个任务，可直接在此批量开始下载或继续调整导入设置。
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={handleSelectImportedTasks}
+                      className="inline-flex items-center px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
+                    >
+                      <CheckCircleIcon className="w-4 h-4 mr-2" />
+                      全选本次导入
+                    </button>
+                    <button
+                      onClick={handleBulkDownloadImported}
+                      className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors text-sm"
+                    >
+                      <ArrowDownTrayIcon className="w-4 h-4 mr-2" />
+                      批量开始下载
+                    </button>
+                  </div>
+                  {pendingStartQueue.length > 0 && (
+                    <div className="w-full mt-3 flex items-center gap-2 text-xs text-indigo-100 bg-indigo-500/10 border border-indigo-500/30 rounded-lg px-3 py-2">
+                      <ArrowPathIcon className="w-4 h-4 text-indigo-200" />
+                      共有 {pendingStartQueue.length} 个任务正在排队，系统会在下载通道空闲时自动启动。
+                    </div>
+                  )}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-800 text-sm">
+                    <thead className="bg-gray-900/60">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          专栏名称
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          课程名称
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          专栏ID
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          课程ID
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          视频链接
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          进度 / 状态
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-gray-900/40 divide-y divide-gray-800 text-gray-100">
+                      {latestImportedTasks.map(task => (
+                        <tr key={task.id} className="hover:bg-gray-900/70 transition-colors">
+                          <td className="px-4 py-3">{task.video_info?.zl_name || '—'}</td>
+                          <td className="px-4 py-3">{task.video_info?.kc_name || task.title}</td>
+                          <td className="px-4 py-3 text-gray-300">{task.video_info?.zl_id || '—'}</td>
+                          <td className="px-4 py-3 text-gray-300">{task.video_info?.kc_id || '—'}</td>
+                          <td className="px-4 py-3 text-primary-300 truncate max-w-xs">
+                            {task.url}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center gap-2 text-sm">
+                              <span>{task.status === 'pending' ? '待下载' : task.status}</span>
+                              <span className="text-gray-400">
+                                {typeof task.progress === 'number'
+                                  ? `${task.progress.toFixed(1)}%`
+                                  : '—'}
+                              </span>
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-6 py-4 text-xs text-gray-400 border-t border-gray-800 flex flex-wrap items-center gap-2">
+                  <span>提示：</span>
+                  <span>• 可直接在此页面选择任务并批量开始下载。</span>
+                  <span>• 若需重新导入，可直接点击“选择文件”。</span>
+                </div>
+              </div>
             </div>
           )}
 

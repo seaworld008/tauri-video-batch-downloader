@@ -12,6 +12,7 @@
 //! - **错误恢复**: 容错处理，跳过损坏的行或单元格
 //! - **字段映射**: 灵活的列名映射，支持中英文表头
 
+use crate::core::models::ImportPreview;
 use anyhow::{anyhow, Result};
 use calamine::{open_workbook_auto, DataType, Reader, Sheets};
 use chardetng::EncodingDetector as ChardetngDetector;
@@ -22,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom},
-    path::{Path, PathBuf},
+    io::{BufRead, BufReader, Read, Seek},
+    path::Path,
 };
 use tracing::{debug, error, info, warn};
 
@@ -312,10 +313,10 @@ impl EncodingDetector {
 
         for ch in text.chars() {
             match ch {
+                '\u{0000}'..='\u{001F}' => control_count += 1, // 控制字符
                 '\u{0000}'..='\u{007F}' => ascii_count += 1,
                 '\u{4E00}'..='\u{9FFF}' => chinese_count += 1, // CJK统一汉字
                 '\u{3400}'..='\u{4DBF}' => chinese_count += 1, // CJK扩展A
-                '\u{0000}'..='\u{001F}' => control_count += 1, // 控制字符
                 _ => other_count += 1,
             }
         }
@@ -457,6 +458,55 @@ impl EncodingDetector {
     }
 }
 
+#[cfg(all(test, feature = "integration-tests"))]
+impl EncodingDetector {
+    pub(crate) fn buffer_size_for_tests(&self) -> usize {
+        self.buffer_size
+    }
+
+    pub(crate) fn deep_detection_for_tests(&self) -> bool {
+        self.deep_detection
+    }
+
+    pub(crate) fn priority_encodings_for_tests(&self) -> &[&'static Encoding] {
+        &self.priority_encodings
+    }
+
+    pub(crate) fn test_is_reasonable_text(&self, text: &str) -> bool {
+        self.is_reasonable_text(text)
+    }
+
+    pub(crate) fn test_statistical_chinese_detect(&self, data: &[u8]) -> &'static Encoding {
+        self.statistical_chinese_detect(data)
+    }
+
+    pub(crate) fn test_detect_bom(&self, data: &[u8]) -> Option<&'static Encoding> {
+        self.detect_bom(data)
+    }
+
+    pub(crate) fn test_is_gbk_range(&self, b1: u8, b2: u8) -> bool {
+        self.is_gbk_range(b1, b2)
+    }
+
+    pub(crate) fn test_is_big5_range(&self, b1: u8, b2: u8) -> bool {
+        self.is_big5_range(b1, b2)
+    }
+
+    pub(crate) fn test_is_shift_jis_range(&self, b1: u8, b2: u8) -> bool {
+        self.is_shift_jis_range(b1, b2)
+    }
+}
+
+#[cfg(all(test, feature = "integration-tests"))]
+impl FileParser {
+    pub(crate) fn test_detect_file_format<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+    ) -> Result<FileFormat> {
+        self.detect_file_format(file_path)
+    }
+}
+
 impl FileParser {
     /// 创建新的文件解析器
     pub fn new() -> Self {
@@ -510,6 +560,215 @@ impl FileParser {
                 Err(e)
             }
         }
+    }
+
+    /// �����ļ���Ԥ����Ϣ����ʵ����ͷ��Ԥ��������Ϣ
+    pub fn generate_preview<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+        max_rows: usize,
+    ) -> Result<ImportPreview> {
+        let path = file_path.as_ref();
+        let row_limit = if max_rows == 0 { 10 } else { max_rows };
+        match self.detect_file_format(path)? {
+            FileFormat::Csv => self.generate_csv_preview(path, row_limit),
+            FileFormat::Excel => self.generate_excel_preview(path, row_limit),
+        }
+    }
+
+    fn generate_csv_preview(&self, path: &Path, max_rows: usize) -> Result<ImportPreview> {
+        let (reader, encoding) = self.encoding_detector.detect_and_create_reader(path)?;
+        let delimiter = self.detect_csv_delimiter(reader, &self.config.csv_delimiter)?;
+        let (reader, _) = self.encoding_detector.detect_and_create_reader(path)?;
+
+        let mut csv_reader = ReaderBuilder::new()
+            .delimiter(delimiter)
+            .has_headers(true)
+            .flexible(true)
+            .trim(csv::Trim::All)
+            .from_reader(reader);
+
+        let original_headers = csv_reader.headers()?.clone();
+        let mut headers: Vec<String> = original_headers
+            .iter()
+            .enumerate()
+            .map(|(idx, header)| Self::normalize_header_name(header, idx))
+            .collect();
+
+        let mut field_mapping = HashMap::new();
+        if !original_headers.is_empty() {
+            if let Ok(mapping) = self.build_field_mapping(&original_headers) {
+                for (canonical, index) in mapping {
+                    if let Some(header) = original_headers.get(index) {
+                        let normalized = Self::normalize_header_name(header, index);
+                        field_mapping.insert(normalized, canonical);
+                    }
+                }
+            }
+        }
+
+        let mut rows = Vec::new();
+        let mut total_rows = 0usize;
+
+        for result in csv_reader.records() {
+            match result {
+                Ok(record) => {
+                    if self.config.skip_empty_rows && self.is_empty_record(&record) {
+                        continue;
+                    }
+
+                    if headers.is_empty() {
+                        headers = (0..record.len())
+                            .map(|idx| format!("Column {}", idx + 1))
+                            .collect();
+                    }
+
+                    if record.len() > headers.len() {
+                        for idx in headers.len()..record.len() {
+                            headers.push(format!("Column {}", idx + 1));
+                        }
+                    }
+
+                    total_rows += 1;
+                    if rows.len() < max_rows {
+                        let column_count = headers.len().max(record.len());
+                        rows.push(Self::string_record_to_row(&record, column_count));
+                    }
+                }
+                Err(e) => {
+                    warn!("CSV preview read error: {}", e);
+                    if self.config.strict_mode {
+                        return Err(anyhow!("CSV预览失败: {}", e));
+                    }
+                }
+            }
+        }
+
+        if headers.is_empty() {
+            headers = vec![
+                "ר��ID".to_string(),
+                "ר������".to_string(),
+                "�γ�ID".to_string(),
+                "�γ�����".to_string(),
+                "��Ƶ����".to_string(),
+            ];
+        }
+
+        Ok(ImportPreview {
+            headers,
+            rows,
+            total_rows,
+            encoding: encoding.name().to_string(),
+            field_mapping,
+        })
+    }
+
+    fn generate_excel_preview(&self, path: &Path, max_rows: usize) -> Result<ImportPreview> {
+        let mut workbook = open_workbook_auto(path).map_err(|e| anyhow!("�޷���Excel�ļ�: {}", e))?;
+        let sheet_names = workbook.sheet_names().to_owned();
+        if sheet_names.is_empty() {
+            return Err(anyhow!("Excel�ļ���û���ҵ�������"));
+        }
+
+        let sheet_name = &sheet_names[0];
+        let range = workbook
+            .worksheet_range(sheet_name)
+            .ok_or_else(|| anyhow!("�޷�������: {}", sheet_name))?
+            .map_err(|e| anyhow!("�޷���ȡ�������� '{}': {}", sheet_name, e))?;
+
+        let mut rows_iter = range.rows();
+        let header_row = rows_iter
+            .next()
+            .ok_or_else(|| anyhow!("Excel�ļ�ȱ��ͷ����"))?;
+
+        let mut headers: Vec<String> = header_row
+            .iter()
+            .enumerate()
+            .map(|(idx, cell)| self.normalize_excel_header(cell, idx))
+            .collect();
+
+        let mut field_mapping = HashMap::new();
+        if let Ok(mapping) = self.build_excel_field_mapping(header_row) {
+            for (canonical, index) in mapping {
+                if let Some(cell) = header_row.get(index) {
+                    let header_name = self.normalize_excel_header(cell, index);
+                    field_mapping.insert(header_name, canonical);
+                }
+            }
+        }
+
+        let mut rows = Vec::new();
+        let mut total_rows = 0usize;
+
+        for row in rows_iter {
+            if self.is_empty_excel_row(row) {
+                continue;
+            }
+
+            total_rows += 1;
+
+            if row.len() > headers.len() {
+                for idx in headers.len()..row.len() {
+                    headers.push(format!("Column {}", idx + 1));
+                }
+            }
+
+            if rows.len() < max_rows {
+                rows.push(self.excel_row_to_vec(row, headers.len()));
+            }
+        }
+
+        if headers.is_empty() {
+            headers = vec![
+                "ר��ID".to_string(),
+                "ר������".to_string(),
+                "�γ�ID".to_string(),
+                "�γ�����".to_string(),
+                "��Ƶ����".to_string(),
+            ];
+        }
+
+        Ok(ImportPreview {
+            headers,
+            rows,
+            total_rows,
+            encoding: "UTF-8".to_string(),
+            field_mapping,
+        })
+    }
+
+    fn normalize_header_name(header: &str, index: usize) -> String {
+        let trimmed = header.trim();
+        if trimmed.is_empty() {
+            format!("Column {}", index + 1)
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    fn normalize_excel_header(&self, cell: &DataType, index: usize) -> String {
+        let value = self.datatype_to_string(cell);
+        if value.trim().is_empty() {
+            format!("Column {}", index + 1)
+        } else {
+            value
+        }
+    }
+
+    fn string_record_to_row(record: &csv::StringRecord, column_count: usize) -> Vec<String> {
+        (0..column_count)
+            .map(|idx| record.get(idx).unwrap_or("").trim().to_string())
+            .collect()
+    }
+
+    fn excel_row_to_vec(&self, row: &[DataType], column_count: usize) -> Vec<String> {
+        (0..column_count)
+            .map(|idx| {
+                row.get(idx)
+                    .map(|cell| self.datatype_to_string(cell))
+                    .unwrap_or_else(|| String::new())
+            })
+            .collect()
     }
 
     /// 检测文件格式

@@ -142,6 +142,7 @@ zl_id,zl_name,record_url,kc_id,kc_name
 - 支持播放列表批量下载
 - 多清晰度选择 (720p, 1080p, 4K)
 - 字幕下载支持
+- 参阅 `docs/youtube_downloader_usage.md` 了解依赖、配置与常见问题
 
 ### M3U8 流媒体
 - 自动解析 HLS 播放列表

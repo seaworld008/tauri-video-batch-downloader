@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import toast from 'react-hot-toast';
 import { AppErrorHandler, handleError, withRetry, withTimeout } from '../utils/errorHandler';
 import { StateValidator, validateState, syncStates, shouldValidate } from '../utils/stateValidator';
+import { buildTaskIdPayload, buildTaskIdsPayload } from '../utils/tauriPayloads';
 import {
   validateVideoTask,
   validateImportedData,
@@ -26,6 +27,7 @@ import type {
   ImportedData,
   ProgressUpdate,
   DownloadStats,
+  AppConfig,
 } from '../schemas';
 import {
   TaskListSchema,
@@ -33,7 +35,11 @@ import {
   DownloadStatsSchema,
   validateRelatedData,
 } from '../schemas';
-import { createDefaultDownloadStats, ensureDownloadStats } from '../utils/downloadStats';
+import {
+  createDefaultDownloadStats,
+  ensureDownloadStats,
+  calculateStatsFromTasks,
+} from '../utils/downloadStats';
 const STATUS_TO_BACKEND: Record<TaskStatus, string> = {
   pending: 'Pending',
   downloading: 'Downloading',
@@ -118,6 +124,53 @@ const normalizeBackendTask = (task: any) => ({
   downloader_type: fromBackendDownloaderType(task?.downloader_type),
 });
 
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as any).message);
+  }
+  return String(error ?? '');
+};
+
+const isConcurrencyError = (error: unknown) =>
+  getErrorMessage(error).toLowerCase().includes('maximum concurrent downloads');
+
+const CONCURRENCY_NOTICE_INTERVAL = 4000;
+let lastConcurrencyNotice = 0;
+
+interface StartDownloadOptions {
+  enqueueOnLimit?: boolean;
+  suppressConcurrencyToast?: boolean;
+}
+
+const DEFAULT_DOWNLOAD_CONFIG: DownloadConfig = {
+  concurrent_downloads: 3,
+  retry_attempts: 3,
+  timeout_seconds: 30,
+  user_agent:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  proxy: undefined,
+  headers: {},
+  output_directory: './downloads',
+  auto_verify_integrity: false,
+  integrity_algorithm: 'sha256',
+  expected_hashes: {},
+};
+
+const mergeDownloadConfig = (config?: Partial<DownloadConfig>): DownloadConfig => ({
+  ...DEFAULT_DOWNLOAD_CONFIG,
+  ...config,
+  headers: {
+    ...DEFAULT_DOWNLOAD_CONFIG.headers,
+    ...(config?.headers ?? {}),
+  },
+  expected_hashes: {
+    ...DEFAULT_DOWNLOAD_CONFIG.expected_hashes,
+    ...(config?.expected_hashes ?? {}),
+  },
+});
+
 interface DownloadState {
   // \u6570\u636e\u72b6\u6001
 
@@ -169,7 +222,7 @@ interface DownloadState {
 
   // Actions - \u4e0b\u8f7d\u63a7\u5236
 
-  startDownload: (taskId: string) => Promise<void>;
+  startDownload: (taskId: string, options?: StartDownloadOptions) => Promise<'started' | 'queued'>;
 
   pauseDownload: (taskId: string) => Promise<void>;
 
@@ -183,28 +236,20 @@ interface DownloadState {
 
   retryFailedTasks: () => Promise<void>;
 
-  // Actions - \u6587\u4ef6\u5bfc\u5165
-
+  // Actions - 文件导入
   importFromFile: (filePath: string) => Promise<void>;
-
   importFromUrls: (urls: string[]) => Promise<void>;
 
-  // Actions - \u914d\u7f6e\u7ba1\u7406
-
-  updateConfig: (config: Partial<DownloadConfig>) => Promise<void>;
-
+  // Actions - 配置管理
+  updateConfig: (newConfig: Partial<DownloadConfig>) => Promise<void>;
+  setDownloadConfig: (newConfig: Partial<DownloadConfig>) => void;
   resetConfig: () => Promise<void>;
 
-  // Actions - UI \u72b6\u6001
-
+  // Actions - UI 状态
   setSelectedTasks: (taskIds: string[]) => void;
-
   toggleTaskSelection: (taskId: string) => void;
-
   selectAllTasks: () => void;
-
   clearSelection: () => void;
-
   // Actions - \u8fc7\u6ee4\u548c\u641c\u7d22
 
   setFilterStatus: (status: TaskStatus | 'all') => void;
@@ -254,6 +299,15 @@ interface DownloadState {
 
     corrupted: string[];
   };
+
+  pendingStartQueue: string[];
+  isProcessingQueue: boolean;
+  recentImportTaskIds: string[];
+  recentImportSnapshot: VideoTask[];
+  enqueueDownloads: (taskIds: string[]) => void;
+  processStartQueue: () => Promise<void>;
+  recordRecentImport: (taskIds: string[], snapshot: VideoTask[]) => void;
+  clearRecentImport: () => void;
 }
 
 export const useDownloadStore = create<DownloadState>()(
@@ -262,22 +316,7 @@ export const useDownloadStore = create<DownloadState>()(
 
     tasks: [],
 
-    config: {
-      concurrent_downloads: 3,
-
-      retry_attempts: 3,
-
-      timeout_seconds: 30,
-
-      user_agent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-
-      proxy: undefined,
-
-      headers: {},
-
-      output_directory: '',
-    },
+    config: mergeDownloadConfig(),
 
     stats: createDefaultDownloadStats(),
 
@@ -294,6 +333,10 @@ export const useDownloadStore = create<DownloadState>()(
     isLoading: false,
 
     selectedTasks: [],
+    pendingStartQueue: [],
+    isProcessingQueue: false,
+    recentImportTaskIds: [],
+    recentImportSnapshot: [],
 
     filterStatus: 'all',
 
@@ -413,24 +456,31 @@ export const useDownloadStore = create<DownloadState>()(
 
           throw new Error('Backend response format invalid: ' + errorDetails);
         }
+        let validatedBackendTasks: VideoTask[];
+
         if (!backendTasksSource) {
-          throw new Error('Could not extract task list from backend response');
-        }
-        const backendValidation = validateVideoTaskList(backendTasksSource, {
-          stopOnFirstError: false,
-        });
-
-        if (!backendValidation.success || backendValidation.validItems.length === 0) {
-          console.error('\u274c \u540e\u7aef\u8fd4\u56de\u7684\u4efb\u52a1\u6570\u636e\u65e0\u6548:', {
-            \u539f\u59cb\u54cd\u5e94: backendTasksSource,
-
-            \u9a8c\u8bc1\u9519\u8bef: backendValidation.invalidItems,
+          console.warn(
+            '[addTasks] Backend did not return a task list, falling back to locally validated tasks'
+          );
+          validatedBackendTasks = processedTasks;
+        } else {
+          const backendValidation = validateVideoTaskList(backendTasksSource, {
+            stopOnFirstError: false,
           });
 
-          throw new Error('\u540e\u7aef\u8fd4\u56de\u7684\u4efb\u52a1\u6570\u636e\u683c\u5f0f\u65e0\u6548');
+          if (!backendValidation.success || backendValidation.validItems.length === 0) {
+            console.warn(
+              '\u26a0\ufe0f \u540e\u7aef\u4efb\u52a1\u6570\u636e\u4e0d\u517c\u5bb9\uff0c\u4f7f\u7528\u672c\u5730\u6570\u636e\u63d0\u4ea4',
+              {
+                \u539f\u59cb\u54cd\u5e94: backendTasksSource,
+                \u9a8c\u8bc1\u9519\u8bef: backendValidation.invalidItems,
+              }
+            );
+            validatedBackendTasks = processedTasks;
+          } else {
+            validatedBackendTasks = backendValidation.validItems;
+          }
         }
-
-        const validatedBackendTasks = backendValidation.validItems;
 
         console.log('\u1f4e5 \u4ece\u540e\u7aef\u63a5\u6536\u7684\u4efb\u52a1:', {
           count: validatedBackendTasks.length,
@@ -471,11 +521,16 @@ export const useDownloadStore = create<DownloadState>()(
             validationErrors:
               inputValidation.invalidItems.length > 0
                 ? [
-                    `\u90e8\u5206\u4efb\u52a1\u9a8c\u8bc1\u5931\u8d25 (${inputValidation.invalidItems.length}/${inputValidation.totalItems})`,
-                  ]
+                  `\u90e8\u5206\u4efb\u52a1\u9a8c\u8bc1\u5931\u8d25 (${inputValidation.invalidItems.length}/${inputValidation.totalItems})`,
+                ]
                 : [],
           };
         });
+
+        get().recordRecentImport(
+          validatedBackendTasks.map(task => task.id),
+          validatedBackendTasks
+        );
 
         // \u786e\u4fdd\u7edf\u8ba1\u4fe1\u606f\u540c\u6b65\u66f4\u65b0
 
@@ -542,11 +597,8 @@ export const useDownloadStore = create<DownloadState>()(
           \u9a8c\u8bc1\u7edf\u8ba1: get().validationStats.getStats(),
         });
 
-        const appError = handleError('\u6dfb\u52a0\u4e0b\u8f7d\u4efb\u52a1', error);
-
-        // \u91cd\u65b0\u629b\u51fa\u683c\u5f0f\u5316\u540e\u7684\u9519\u8bef
-
-        throw appError;
+        handleError('\u6dfb\u52a0\u4e0b\u8f7d\u4efb\u52a1', error);
+        return;
       }
     },
 
@@ -556,7 +608,7 @@ export const useDownloadStore = create<DownloadState>()(
 
     removeTasks: async taskIds => {
       try {
-        await invoke('remove_download_tasks', { taskIds });
+        await invoke('remove_download_tasks', buildTaskIdsPayload(taskIds));
 
         set(state => ({
           tasks: state.tasks.filter(task => !taskIds.includes(task.id)),
@@ -600,25 +652,59 @@ export const useDownloadStore = create<DownloadState>()(
 
     // \u4e0b\u8f7d\u63a7\u5236
 
-    startDownload: async taskId => {
+    startDownload: async (taskId, options = {}) => {
+      const { enqueueOnLimit = true, suppressConcurrencyToast = false } = options;
       try {
-        await invoke('start_download', { taskId });
+        const state = get();
+        const maxConcurrent = state.config.concurrent_downloads ?? 3;
+        const activeDownloads = state.tasks.filter(t => t.status === 'downloading').length;
+
+        if (activeDownloads >= maxConcurrent) {
+          throw new Error('Maximum concurrent downloads reached');
+        }
+
+        await invoke('start_download', buildTaskIdPayload(taskId));
 
         set(state => ({
           tasks: state.tasks.map(task =>
             task.id === taskId ? { ...task, status: 'downloading' as TaskStatus } : task
           ),
         }));
-      } catch (error) {
-        handleError('\u542f\u52a8\u4e0b\u8f7d', error);
 
+        return 'started';
+      } catch (error) {
+        if (isConcurrencyError(error)) {
+          if (enqueueOnLimit) {
+            set(state => ({
+              pendingStartQueue: state.pendingStartQueue.includes(taskId)
+                ? state.pendingStartQueue
+                : [...state.pendingStartQueue, taskId],
+            }));
+          }
+
+          if (!suppressConcurrencyToast) {
+            const now = Date.now();
+            if (now - lastConcurrencyNotice > CONCURRENCY_NOTICE_INTERVAL) {
+              toast('当前下载达到最大并发，其余任务已自动排队等待。');
+              lastConcurrencyNotice = now;
+            }
+          }
+
+          if (enqueueOnLimit) {
+            void get().processStartQueue();
+          }
+
+          return 'queued';
+        }
+
+        handleError('启动下载', error);
         throw error;
       }
     },
 
     pauseDownload: async taskId => {
       try {
-        await invoke('pause_download', { taskId });
+        await invoke('pause_download', buildTaskIdPayload(taskId));
 
         set(state => ({
           tasks: state.tasks.map(task =>
@@ -634,7 +720,7 @@ export const useDownloadStore = create<DownloadState>()(
 
     resumeDownload: async taskId => {
       try {
-        await invoke('resume_download', { taskId });
+        await invoke('resume_download', buildTaskIdPayload(taskId));
 
         set(state => ({
           tasks: state.tasks.map(task =>
@@ -650,7 +736,7 @@ export const useDownloadStore = create<DownloadState>()(
 
     cancelDownload: async taskId => {
       try {
-        await invoke('cancel_download', { taskId });
+        await invoke('cancel_download', buildTaskIdPayload(taskId));
 
         set(state => ({
           tasks: state.tasks.map(task =>
@@ -682,20 +768,14 @@ export const useDownloadStore = create<DownloadState>()(
         return;
       }
 
-      try {
-        await Promise.all(pendingTasks.map(task => get().startDownload(task.id)));
+      get().enqueueDownloads(pendingTasks.map(task => task.id));
 
-        const message =
-          selectedTasks.length > 0
-            ? `\u5df2\u542f\u52a8 ${pendingTasks.length} \u4e2a\u9009\u4e2d\u7684\u4e0b\u8f7d\u4efb\u52a1`
-            : `\u5df2\u542f\u52a8 ${pendingTasks.length} \u4e2a\u4e0b\u8f7d\u4efb\u52a1`;
+      const message =
+        selectedTasks.length > 0
+          ? `\u5df2\u63d0\u4ea4 ${pendingTasks.length} \u4e2a\u9009\u4e2d\u4efb\u52a1\u5230\u961f\u5217`
+          : `\u5df2\u63d0\u4ea4 ${pendingTasks.length} \u4e2a\u4efb\u52a1\u5230\u961f\u5217`;
 
-        toast.success(message);
-      } catch (error) {
-        handleError('\u6279\u91cf\u542f\u52a8\u4e0b\u8f7d', error);
-
-        throw error;
-      }
+      toast.success(message);
     },
 
     pauseAllDownloads: async () => {
@@ -719,15 +799,87 @@ export const useDownloadStore = create<DownloadState>()(
 
       const failedTasks = tasks.filter(task => task.status === 'failed');
 
-      try {
-        await Promise.all(failedTasks.map(task => get().startDownload(task.id)));
+      get().enqueueDownloads(failedTasks.map(task => task.id));
+      toast.success(`\u5df2\u5c06 ${failedTasks.length} \u4e2a\u5931\u8d25\u4efb\u52a1\u91cd\u65b0\u63d0\u4ea4\u5230\u961f\u5217`);
+    },
 
-        toast.success(`\u5df2\u91cd\u8bd5 ${failedTasks.length} \u4e2a\u5931\u8d25\u4efb\u52a1`);
-      } catch (error) {
-        console.error('Failed to retry failed tasks:', error);
-
-        toast.error('\u91cd\u8bd5\u5931\u8d25\u4efb\u52a1\u5931\u8d25');
+    enqueueDownloads: taskIds => {
+      const uniqueIds = taskIds.filter(Boolean);
+      if (uniqueIds.length === 0) {
+        return;
       }
+
+      set(state => {
+        const existing = new Set(state.pendingStartQueue);
+        const additions = uniqueIds.filter(id => !existing.has(id));
+        if (additions.length === 0) {
+          return {};
+        }
+        return { pendingStartQueue: [...state.pendingStartQueue, ...additions] };
+      });
+
+      void get().processStartQueue();
+    },
+
+    processStartQueue: async () => {
+      if (get().isProcessingQueue) {
+        return;
+      }
+
+      set({ isProcessingQueue: true });
+      try {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const state = get();
+          const queue = state.pendingStartQueue;
+          if (queue.length === 0) {
+            break;
+          }
+
+          const maxConcurrent =
+            state.config.concurrent_downloads ?? DEFAULT_DOWNLOAD_CONFIG.concurrent_downloads;
+          const activeCount = state.tasks.filter(task => task.status === 'downloading').length;
+          const available = Math.max(maxConcurrent - activeCount, 0);
+
+          if (available <= 0) {
+            break;
+          }
+
+          const toStart = queue.slice(0, available);
+          set({ pendingStartQueue: queue.slice(available) });
+
+          for (const taskId of toStart) {
+            const result = await get().startDownload(taskId, {
+              enqueueOnLimit: false,
+              suppressConcurrencyToast: true,
+            });
+            if (result === 'queued') {
+              set(current => ({
+                pendingStartQueue: current.pendingStartQueue.includes(taskId)
+                  ? current.pendingStartQueue
+                  : [taskId, ...current.pendingStartQueue],
+              }));
+              return;
+            }
+          }
+        }
+      } finally {
+        set({ isProcessingQueue: false });
+      }
+    },
+
+    recordRecentImport: (taskIds, snapshot) => {
+      set({
+        recentImportTaskIds: taskIds,
+        recentImportSnapshot: snapshot,
+      });
+    },
+
+    clearRecentImport: () => {
+      set({
+        recentImportTaskIds: [],
+        recentImportSnapshot: [],
+      });
     },
 
     // \u6587\u4ef6\u5bfc\u5165 - \u589e\u5f3a\u7248\u672c\u5e26Zod\u9a8c\u8bc1
@@ -742,7 +894,7 @@ export const useDownloadStore = create<DownloadState>()(
       try {
         // \u6b65\u9aa41: \u83b7\u53d6\u539f\u59cb\u5bfc\u5165\u6570\u636e
 
-        const rawImportedData = await invoke<any[]>('import_csv_file', { file_path: filePath });
+        const rawImportedData = await invoke<any[]>('import_csv_file', { filePath });
 
         console.log('\u1f4c4 \u5bfc\u5165\u7684\u539f\u59cb\u6570\u636e:', {
           count: rawImportedData.length,
@@ -862,9 +1014,9 @@ export const useDownloadStore = create<DownloadState>()(
             };
           })
           .filter(task => task !== null) as Omit<
-          VideoTask,
-          'id' | 'status' | 'created_at' | 'updated_at'
-        >[];
+            VideoTask,
+            'id' | 'status' | 'created_at' | 'updated_at'
+          >[];
 
         console.log('\u1f504 \u5904\u7406\u540e\u7684\u4efb\u52a1:', { count: tasks.length, sample: tasks[0] });
 
@@ -963,27 +1115,40 @@ export const useDownloadStore = create<DownloadState>()(
 
     updateConfig: async newConfig => {
       try {
-        const updatedConfig = { ...get().config, ...newConfig };
+        const baseDownloadConfig = get().config ?? DEFAULT_DOWNLOAD_CONFIG;
 
-        await invoke('update_config', { config: updatedConfig });
+        const mergedDownloadConfig = mergeDownloadConfig({
+          ...baseDownloadConfig,
+          ...newConfig,
+        });
 
-        set({ config: updatedConfig });
+        await invoke('update_config', { config: mergedDownloadConfig });
+
+        set({ config: mergedDownloadConfig });
 
         toast.success('\u914d\u7f6e\u5df2\u66f4\u65b0');
       } catch (error) {
-        console.error('Failed to update config:', error);
-
-        toast.error(`\u66f4\u65b0\u914d\u7f6e\u5931\u8d25: ${error}`);
+        handleError('\u66f4\u65b0\u914d\u7f6e', error);
+        throw error;
       }
+    },
+
+    setDownloadConfig: (newConfig: Partial<DownloadConfig>) => {
+      const baseDownloadConfig = get().config ?? DEFAULT_DOWNLOAD_CONFIG;
+      const mergedDownloadConfig = mergeDownloadConfig({
+        ...baseDownloadConfig,
+        ...newConfig,
+      });
+      set({ config: mergedDownloadConfig });
     },
 
     resetConfig: async () => {
       try {
-        await invoke('reset_config');
+        const resetConfig = await invoke<AppConfig>('reset_config');
 
-        const defaultConfig = await invoke<DownloadConfig>('get_config');
+        const normalizedConfig = mergeDownloadConfig(resetConfig.download);
 
-        set({ config: defaultConfig });
+        set({ config: normalizedConfig });
 
         toast.success('\u914d\u7f6e\u5df2\u91cd\u7f6e');
       } catch (error) {
@@ -1054,6 +1219,19 @@ export const useDownloadStore = create<DownloadState>()(
         const validationDuration = performance.now() - validationStartTime;
 
         get().validationStats.recordValidation(validation.success, validationDuration);
+
+        const currentTasks = get().tasks;
+        if (normalizedRawTasks.length === 0 && currentTasks.length > 0) {
+          console.warn('[refreshTasks] Backend returned empty list - preserving local tasks');
+          set(state => ({
+            validationErrors: [
+              ...state.validationErrors,
+              '后端返回空任务列表，已保留本地任务',
+            ],
+            lastValidationTime: Date.now(),
+          }));
+          return;
+        }
 
         if (validation.validItems.length === 0 && normalizedRawTasks.length > 0) {
           console.error('\u274c \u4ece\u540e\u7aef\u83b7\u53d6\u7684\u4efb\u52a1\u6570\u636e\u5168\u90e8\u65e0\u6548:', {
@@ -1133,7 +1311,23 @@ export const useDownloadStore = create<DownloadState>()(
           return;
         }
 
-        set({ stats: ensureDownloadStats(statsResult.data) });
+        const ensuredStats = ensureDownloadStats(statsResult.data);
+        const localTasks = get().tasks;
+        const derivedStats = localTasks.length > 0 ? calculateStatsFromTasks(localTasks) : null;
+
+        const mergedStats = derivedStats
+          ? {
+            ...ensuredStats,
+            total_tasks: derivedStats.total_tasks,
+            completed_tasks: derivedStats.completed_tasks,
+            failed_tasks: derivedStats.failed_tasks,
+            active_downloads: derivedStats.active_downloads,
+            total_downloaded: derivedStats.total_downloaded,
+            average_speed: derivedStats.average_speed,
+          }
+          : ensuredStats;
+
+        set({ stats: mergedStats });
       } catch (error) {
         const validationDuration = performance.now() - validationStartTime;
 
@@ -1237,14 +1431,16 @@ export const useDownloadStore = create<DownloadState>()(
 
         console.log('\u1f680 \u5f00\u59cb\u521d\u59cb\u5316\u5e97\u4f53...');
 
-        const [rawTasks, rawConfig, rawStats] = await Promise.all([
+        const [rawTasks, rawAppConfig, rawStats] = await Promise.all([
 
           invoke<any[]>('get_download_tasks'),
 
-          invoke<any>('get_config'),
+          invoke<AppConfig>('get_config'),
 
           invoke<any>('get_download_stats'),
         ]);
+
+        const normalizedConfig = mergeDownloadConfig(rawAppConfig?.download);
         const normalizedInitialTasks = Array.isArray(rawTasks)
           ? rawTasks.map(normalizeBackendTask)
           : [];
@@ -1257,7 +1453,7 @@ export const useDownloadStore = create<DownloadState>()(
         const validations = validateRelatedData([
           { name: 'tasks', schema: TaskListSchema, data: normalizedInitialTasks },
 
-          { name: 'config', schema: DownloadConfigSchema, data: rawConfig },
+          { name: 'config', schema: DownloadConfigSchema, data: normalizedConfig },
 
           { name: 'stats', schema: DownloadStatsSchema, data: rawStats },
         ]);
@@ -1458,6 +1654,7 @@ export const initializeProgressListener = () => {
     // \u5237\u65b0\u7edf\u8ba1\u4fe1\u606f
 
     useDownloadStore.getState().refreshStats();
+    void useDownloadStore.getState().processStartQueue();
   });
 };
 

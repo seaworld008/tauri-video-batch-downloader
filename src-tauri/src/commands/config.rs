@@ -14,7 +14,7 @@ use crate::AppState;
 
 /// Get current application configuration
 #[tauri::command]
-pub async fn get_config(app: AppHandle, state: State<'_, AppState>) -> Result<AppConfig, String> {
+pub async fn get_config(_app: AppHandle, state: State<'_, AppState>) -> Result<AppConfig, String> {
     info!("⚙️ Getting application configuration");
 
     let config = state.config.read().await;
@@ -24,7 +24,7 @@ pub async fn get_config(app: AppHandle, state: State<'_, AppState>) -> Result<Ap
 /// Update application configuration
 #[tauri::command]
 pub async fn update_config(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     new_config: AppConfig,
 ) -> Result<(), String> {
@@ -44,7 +44,7 @@ pub async fn update_config(
 
 /// Reset configuration to default values
 #[tauri::command]
-pub async fn reset_config(app: AppHandle, state: State<'_, AppState>) -> Result<AppConfig, String> {
+pub async fn reset_config(_app: AppHandle, state: State<'_, AppState>) -> Result<AppConfig, String> {
     info!("🔄 Resetting configuration to defaults");
 
     match reset_config_impl(&state).await {
@@ -62,7 +62,7 @@ pub async fn reset_config(app: AppHandle, state: State<'_, AppState>) -> Result<
 /// Export configuration to file
 #[tauri::command]
 pub async fn export_config(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     file_path: String,
 ) -> Result<(), String> {
@@ -83,7 +83,7 @@ pub async fn export_config(
 /// Import configuration from file
 #[tauri::command]
 pub async fn import_config(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     file_path: String,
 ) -> Result<AppConfig, String> {
@@ -312,8 +312,6 @@ fn validate_config(config: &AppConfig) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::models::DownloadConfig;
-
     #[test]
     fn test_validate_valid_config() {
         let config = AppConfig::default();

@@ -7,11 +7,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::core::models::{AppError, AppResult};
+use crate::core::models::AppResult;
 
 /// Enhanced progress statistics with detailed metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +81,7 @@ impl Default for ProgressStatistics {
 #[derive(Debug, Clone)]
 struct SpeedMeasurement {
     /// Timestamp in nanoseconds (using coarsetime)
-    timestamp_nanos: u64,
+    _timestamp_nanos: u64,
     /// Downloaded bytes at this measurement
     bytes: u64,
     /// Calculated speed in bytes per second
@@ -163,7 +163,7 @@ impl TaskProgressTracker {
             .unwrap_or_default()
             .as_nanos() as u64;
         let measurement = SpeedMeasurement {
-            timestamp_nanos,
+            _timestamp_nanos: timestamp_nanos,
             bytes: downloaded_bytes,
             speed: current_speed,
         };

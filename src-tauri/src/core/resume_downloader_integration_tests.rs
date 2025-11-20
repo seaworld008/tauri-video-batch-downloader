@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::TaskStatus;
+    use super::super::downloader::BandwidthController;
     use super::super::resume_downloader::{ResumeDownloader, ResumeDownloaderConfig};
     use reqwest::Client;
     use std::time::Duration;
@@ -27,7 +27,7 @@ mod tests {
         config.retry_delay = Duration::from_millis(100);
 
         let client = Client::new();
-        let downloader = ResumeDownloader::new(config, client).unwrap();
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
 
         (downloader, temp_dir)
     }
@@ -46,7 +46,7 @@ mod tests {
 
         // 执行下载
         let result = downloader
-            .download_with_resume(&task_id, test_url, &output_path)
+            .download_with_resume(&task_id, test_url, &output_path, None, None)
             .await;
 
         match result {
@@ -298,7 +298,13 @@ mod tests {
         let task_id = Uuid::new_v4().to_string();
 
         let result = downloader
-            .download_with_resume(&task_id, "https://httpbin.org/bytes/1024", invalid_path)
+            .download_with_resume(
+                &task_id,
+                "https://httpbin.org/bytes/1024",
+                invalid_path,
+                None,
+                None,
+            )
             .await;
 
         // 这应该会因为路径无效而失败

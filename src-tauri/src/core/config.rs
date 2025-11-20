@@ -5,7 +5,6 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{error, info, warn};
 
 use super::models::DownloadConfig;
 
@@ -541,7 +540,7 @@ impl AppConfig {
             }
 
             if let Some(port) = self.advanced.proxy_port {
-                if port == 0 || port > 65535 {
+                if port == 0 {
                     anyhow::bail!("Proxy port should be between 1 and 65535");
                 }
             }

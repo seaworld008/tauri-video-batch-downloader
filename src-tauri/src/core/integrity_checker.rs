@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -18,9 +18,9 @@ use tracing::{debug, error, info, warn};
 // Hash algorithm imports from RustCrypto
 use blake2::{Blake2b512, Blake2s256, Digest as Blake2Digest};
 use digest::DynDigest;
-use md5::{Digest as Md5Digest, Md5};
-use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::{Digest as Sha2Digest, Sha256, Sha512};
+use md5::Md5;
+use sha1::Sha1;
+use sha2::{Sha256, Sha512};
 
 use crate::core::models::{AppError, AppResult};
 
@@ -719,7 +719,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_hash_algorithms() {

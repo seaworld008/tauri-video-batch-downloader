@@ -75,8 +75,8 @@ pub struct SupportedFormats {
 /// Import tasks from any supported file format (CSV/Excel)
 #[tauri::command]
 pub async fn import_file(
-    app: AppHandle,
-    state: State<'_, AppState>,
+    _app: AppHandle,
+    _state: State<'_, AppState>,
     file_path: String,
     strict_mode: Option<bool>,
     max_rows: Option<usize>,
@@ -103,7 +103,7 @@ pub async fn import_file(
 /// Import tasks from a file and enqueue them immediately in the download manager
 #[tauri::command]
 pub async fn import_tasks_and_enqueue(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     file_path: String,
     _encoding: Option<String>,
@@ -120,7 +120,7 @@ pub async fn import_tasks_and_enqueue(
     });
 
     let import_result = import_file(
-        app,
+        _app,
         state.clone(),
         file_path.clone(),
         Some(false),
@@ -274,7 +274,7 @@ pub async fn import_csv_file(
     app: AppHandle,
     state: State<'_, AppState>,
     file_path: String,
-    encoding: Option<String>,
+    _encoding: Option<String>,
     field_mapping: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<ImportedData>, String> {
     info!("📄 Importing CSV file (legacy): {}", file_path);
@@ -494,67 +494,13 @@ async fn preview_import_data_impl(
 ) -> AppResult<ImportPreview> {
     let max_rows = max_rows.unwrap_or(10);
 
-    // Create parser configuration for preview
     let mut config = FileParserConfig::default();
-    config.max_rows = max_rows;
     config.strict_mode = false; // Use lenient mode for preview
 
-    // Create parser and get preview data
     let parser = FileParser::with_config(config);
-    let (video_records, stats) = parser
-        .parse_file(file_path)
-        .await
-        .map_err(|e| AppError::Parse(format!("Failed to preview file: {}", e)))?;
-
-    // Extract headers from first record or use default field names
-    let headers = if video_records.is_empty() {
-        vec![
-            "column_id".to_string(),
-            "column_name".to_string(),
-            "course_id".to_string(),
-            "course_name".to_string(),
-            "video_url".to_string(),
-        ]
-    } else {
-        // Use field names from the parser's field mapping
-        vec![
-            "专栏ID".to_string(),
-            "专栏名称".to_string(),
-            "课程ID".to_string(),
-            "课程名称".to_string(),
-            "视频链接".to_string(),
-        ]
-    };
-
-    // Convert VideoRecords to preview rows
-    let rows: Vec<Vec<String>> = video_records
-        .iter()
-        .map(|record| {
-            vec![
-                record.column_id.clone(),
-                record.column_name.clone(),
-                record.course_id.clone(),
-                record.course_name.clone(),
-                record.video_url.clone(),
-            ]
-        })
-        .collect();
-
-    // Generate field mapping for UI
-    let mut field_mapping = std::collections::HashMap::new();
-    field_mapping.insert("专栏ID".to_string(), "id".to_string());
-    field_mapping.insert("专栏名称".to_string(), "name".to_string());
-    field_mapping.insert("课程ID".to_string(), "course_id".to_string());
-    field_mapping.insert("课程名称".to_string(), "course_name".to_string());
-    field_mapping.insert("视频链接".to_string(), "url".to_string());
-
-    Ok(ImportPreview {
-        headers,
-        rows,
-        total_rows: stats.total_rows,
-        encoding: stats.detected_encoding,
-        field_mapping,
-    })
+    parser
+        .generate_preview(file_path, max_rows)
+        .map_err(|e| AppError::Parse(format!("Failed to preview file: {}", e)))
 }
 
 // Helper functions
@@ -629,13 +575,17 @@ mod tests {
             course_id: "456".to_string(),
             course_name: "Test Course".to_string(),
             video_url: "https://example.com/video.mp4".to_string(),
+            source_row: 1,
         };
 
         let imported_data = convert_video_record_to_imported_data(video_record);
 
-        assert_eq!(imported_data.id, "123");
-        assert_eq!(imported_data.name, "Test Column");
-        assert_eq!(imported_data.url, "https://example.com/video.mp4");
+        assert_eq!(imported_data.id.as_deref(), Some("123"));
+        assert_eq!(imported_data.name.as_deref(), Some("Test Column"));
+        assert_eq!(
+            imported_data.url.as_deref(),
+            Some("https://example.com/video.mp4")
+        );
         assert_eq!(imported_data.course_id, Some("456".to_string()));
         assert_eq!(imported_data.course_name, Some("Test Course".to_string()));
     }
@@ -648,13 +598,17 @@ mod tests {
             course_id: "".to_string(),   // Empty course_id
             course_name: "".to_string(), // Empty course_name
             video_url: "https://example.com/video.mp4".to_string(),
+            source_row: 1,
         };
 
         let imported_data = convert_video_record_to_imported_data(video_record);
 
-        assert_eq!(imported_data.id, "123");
-        assert_eq!(imported_data.name, "Test Column");
-        assert_eq!(imported_data.url, "https://example.com/video.mp4");
+        assert_eq!(imported_data.id.as_deref(), Some("123"));
+        assert_eq!(imported_data.name.as_deref(), Some("Test Column"));
+        assert_eq!(
+            imported_data.url.as_deref(),
+            Some("https://example.com/video.mp4")
+        );
         assert_eq!(imported_data.course_id, None); // Should be None for empty string
         assert_eq!(imported_data.course_name, None); // Should be None for empty string
     }
@@ -673,13 +627,13 @@ mod tests {
         apply_custom_field_mapping(&mut field_mapping, custom_mapping);
 
         assert!(field_mapping
-            .column_id_aliases
+            .column_id_names
             .contains(&"custom_id".to_string()));
         assert!(field_mapping
-            .column_id_aliases
+            .column_id_names
             .contains(&"my_id".to_string()));
         assert!(field_mapping
-            .video_url_aliases
+            .video_url_names
             .contains(&"download_link".to_string()));
     }
 }

@@ -47,7 +47,7 @@ export const ImportView: React.FC<ImportViewProps> = () => {
     setIsLoading(true);
     try {
       const preview = await invoke<ImportPreview>('preview_import_data', {
-        file_path: filePath,
+        filePath,
         encoding: 'utf-8'
       });
       
@@ -104,8 +104,8 @@ export const ImportView: React.FC<ImportViewProps> = () => {
     setIsLoading(true);
     try {
       const importedData = await invoke<ImportedData[]>('import_csv_file', {
-        file_path: selectedFile,
-        field_mapping: fieldMapping,
+        filePath: selectedFile,
+        fieldMapping: fieldMapping,
         encoding: importPreview.encoding
       });
 

@@ -138,20 +138,6 @@ Thumbs.db
 
 # Tauri
 /src-tauri/target
-/src-tauri/Cargo.lock
-
-# Build artifacts
-/dist
-/build
-
-# Application data
-/downloads
-/logs
-*.db
-*.sqlite
-*.sqlite3
-
-# Configuration files with sensitive data
 config.local.json
 settings.local.json
 .env.local

@@ -4,6 +4,7 @@
 //! system including real-time updates, statistical analysis, and event emission.
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
     use super::super::manager::{DownloadEvent, DownloadManager};
     use super::super::models::{AppResult, DownloadConfig, TaskStatus, VideoTask};

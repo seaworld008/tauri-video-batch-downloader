@@ -7,9 +7,12 @@
 //! - 支持AES加密的HLS流
 //! - 实时进度跟踪
 
-use anyhow::{bail, Context, Result};
-use futures_util::StreamExt;
-use regex::Regex;
+use crate::core::downloader::DownloadStats;
+use aes::Aes128;
+use anyhow::{anyhow, bail, Result};
+use cbc::Decryptor;
+use cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+use hex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,13 +23,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use url::Url;
-use uuid::Uuid;
-
-use crate::core::downloader::DownloadStats;
-use crate::core::models::*;
 
 /// M3U8下载器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +96,8 @@ pub struct M3U8Segment {
     pub downloaded: bool,
     /// 本地文件路径
     pub local_path: Option<PathBuf>,
+    /// 片段加密信息
+    pub encryption: Option<M3U8Encryption>,
 }
 
 /// M3U8加密信息
@@ -176,13 +177,23 @@ impl M3U8Downloader {
         tokio::fs::create_dir_all(&task_temp_dir).await?;
 
         // 处理加密（如果有）
-        let mut encryption_key = None;
-        if let Some(ref encryption) = playlist.encryption {
-            encryption_key = self.fetch_encryption_key(encryption).await?;
-            tracing::info!("获取到加密密钥");
+        let mut playlist = playlist;
+        if let Some(ref mut encryption) = playlist.encryption {
+            if encryption.method.to_uppercase() != "NONE" {
+                if let Some(key) = self.fetch_encryption_key(encryption).await? {
+                    encryption.key_data = Some(key.clone());
+                    for segment in &mut playlist.segments {
+                        if let Some(ref mut seg_enc) = segment.encryption {
+                            if seg_enc.method.to_uppercase() != "NONE" {
+                                seg_enc.key_data = Some(key.clone());
+                            }
+                        }
+                    }
+                    tracing::info!("已获取 AES-128 密钥并同步到所有片段");
+                }
+            }
         }
 
-        // 注册活跃下载
         let cancel_flag = Arc::new(AtomicBool::new(false));
         {
             let mut downloads = self.active_downloads.write().await;
@@ -191,13 +202,7 @@ impl M3U8Downloader {
 
         // 下载所有片段
         let result = self
-            .download_segments(
-                task_id,
-                &playlist,
-                &task_temp_dir,
-                cancel_flag.clone(),
-                encryption_key,
-            )
+            .download_segments(task_id, &playlist, &task_temp_dir, cancel_flag.clone())
             .await;
 
         // 清理活跃下载记录
@@ -208,22 +213,25 @@ impl M3U8Downloader {
 
         match result {
             Ok(segment_files) => {
-                tracing::info!("所有片段下载完成，开始合并");
+                tracing::info!("分片下载完成，开始合并");
 
-                // 合并片段为最终文件
                 self.merge_segments(&segment_files, output_path).await?;
 
-                // 清理临时文件（如果配置要求）
                 if !self.config.keep_temp_files {
                     self.cleanup_temp_files(&task_temp_dir).await?;
+                } else {
+                    tracing::info!("根据配置保留临时分片目录: {}", task_temp_dir.display());
                 }
 
                 tracing::info!("M3U8下载完成: {}", output_path);
                 Ok(())
             }
             Err(e) => {
-                // 清理临时文件
-                self.cleanup_temp_files(&task_temp_dir).await.ok();
+                if !self.config.keep_temp_files {
+                    self.cleanup_temp_files(&task_temp_dir).await.ok();
+                } else {
+                    tracing::warn!("下载失败，临时分片保留在: {}", task_temp_dir.display());
+                }
                 Err(e)
             }
         }
@@ -267,6 +275,8 @@ impl M3U8Downloader {
         let mut i = 0;
         let mut segment_index = 0;
         let mut current_segment_duration = 0.0;
+        let mut pending_byte_range: Option<(u64, u64)> = None;
+        let mut last_byte_range_end: Option<u64> = None;
         let mut current_encryption: Option<M3U8Encryption> = None;
 
         while i < lines.len() {
@@ -292,6 +302,27 @@ impl M3U8Downloader {
                     // 解析加密信息
                     current_encryption = self.parse_encryption_line(line)?;
                     playlist.encryption = current_encryption.clone();
+                } else if line.starts_with("#EXT-X-BYTERANGE:") {
+                    let value = line.replace("#EXT-X-BYTERANGE:", "");
+                    let mut parts = value.split('@');
+                    let length = parts
+                        .next()
+                        .unwrap_or("0")
+                        .trim()
+                        .parse::<u64>()
+                        .unwrap_or(0);
+                    if length == 0 {
+                        tracing::warn!("检测到长度为 0 的 EXT-X-BYTERANGE: {}", line);
+                        pending_byte_range = None;
+                    } else {
+                        let start = parts
+                            .next()
+                            .map(|s| s.trim().parse::<u64>().unwrap_or(0))
+                            .or_else(|| last_byte_range_end.map(|end| end + 1))
+                            .unwrap_or(0);
+                        let end = start.saturating_add(length.saturating_sub(1));
+                        pending_byte_range = Some((start, end));
+                    }
                 } else if line.contains("#EXT-X-ENDLIST") {
                     // 非Live流
                     playlist.is_live = false;
@@ -307,13 +338,19 @@ impl M3U8Downloader {
                 self.resolve_relative_url(&playlist.base_url, line)?
             };
 
+            let byte_range = pending_byte_range.take();
+            if let Some((_, end)) = byte_range {
+                last_byte_range_end = Some(end);
+            }
+
             let segment = M3U8Segment {
                 index: segment_index,
                 url: segment_url,
                 duration: current_segment_duration,
-                byte_range: None, // TODO: 支持字节范围
+                byte_range,
                 downloaded: false,
                 local_path: None,
+                encryption: current_encryption.clone(),
             };
 
             playlist.segments.push(segment);
@@ -411,7 +448,6 @@ impl M3U8Downloader {
         playlist: &M3U8Playlist,
         temp_dir: &Path,
         cancel_flag: Arc<AtomicBool>,
-        _encryption_key: Option<Vec<u8>>, // TODO: 实现解密
     ) -> Result<Vec<PathBuf>> {
         tracing::info!("开始下载 {} 个片段", playlist.segments.len());
 
@@ -420,6 +456,19 @@ impl M3U8Downloader {
 
         let total_segments = playlist.segments.len();
         let downloaded_count = Arc::new(AtomicU64::new(0));
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
+        let total_bytes_hint = if playlist.segments.iter().all(|seg| seg.byte_range.is_some()) {
+            let mut sum = 0u64;
+            for segment in &playlist.segments {
+                if let Some((start, end)) = segment.byte_range {
+                    sum = sum.saturating_add(end.saturating_sub(start).saturating_add(1));
+                }
+            }
+            Some(sum)
+        } else {
+            None
+        };
+        let start_time = Instant::now();
 
         for (index, segment) in playlist.segments.iter().enumerate() {
             let segment_file = temp_dir.join(format!("segment_{:06}.ts", index));
@@ -431,46 +480,101 @@ impl M3U8Downloader {
             let config = self.config.clone();
             let cancel_flag = Arc::clone(&cancel_flag);
             let downloaded_count = Arc::clone(&downloaded_count);
+            let downloaded_bytes = Arc::clone(&downloaded_bytes);
             let progress_tx = self.progress_tx.clone();
             let task_id = task_id.to_string();
+            let byte_range = segment.byte_range;
+            let encryption = segment.encryption.clone();
+            let segment_index = segment.index;
+            let total_bytes_hint = total_bytes_hint;
+            let start_time = start_time;
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
 
-                // 检查取消标志
                 if cancel_flag.load(Ordering::Relaxed) {
                     return Err(anyhow::anyhow!("下载被取消"));
                 }
 
-                // 下载片段
-                Self::download_segment_static(&client, &config, &segment_url, &segment_file)
-                    .await?;
+                tracing::debug!(
+                    "开始下载片段 #{}/{}: {}",
+                    segment_index,
+                    total_segments,
+                    segment_url
+                );
 
-                // 更新进度
+                let bytes_written = Self::download_segment_static(
+                    &client,
+                    &config,
+                    &segment_url,
+                    &segment_file,
+                    byte_range,
+                    segment_index,
+                    encryption,
+                )
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "片段 #{}/{} ({}) 下载失败: {}",
+                        segment_index,
+                        total_segments,
+                        segment_url,
+                        e
+                    )
+                })?;
+
                 let current_downloaded = downloaded_count.fetch_add(1, Ordering::Relaxed) + 1;
-                let progress = current_downloaded as f64 / total_segments as f64;
+                let total_written =
+                    downloaded_bytes.fetch_add(bytes_written, Ordering::Relaxed) + bytes_written;
+                let elapsed = start_time.elapsed();
+                let speed = if elapsed.as_secs_f64() > 0.0 {
+                    total_written as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
+
+                let (progress, total_bytes_stat, eta) = if let Some(total_hint) = total_bytes_hint {
+                    let pct = (total_written as f64 / total_hint as f64).min(1.0);
+                    let eta = if speed > 0.0 && total_written < total_hint {
+                        Some(((total_hint - total_written) as f64 / speed) as u64)
+                    } else {
+                        None
+                    };
+                    (pct, Some(total_hint), eta)
+                } else {
+                    (
+                        current_downloaded as f64 / total_segments as f64,
+                        None,
+                        None,
+                    )
+                };
 
                 if let Some(ref tx) = progress_tx {
                     let stats = DownloadStats {
-                        speed: 0.0,                                         // TODO: 计算下载速度
-                        downloaded_bytes: current_downloaded * 1024 * 1024, // 粗略估算
-                        total_bytes: Some(total_segments as u64 * 1024 * 1024),
+                        speed,
+                        downloaded_bytes: total_written,
+                        total_bytes: total_bytes_stat,
                         progress,
-                        eta: None,
+                        eta,
                         start_time: chrono::Utc::now(),
                         last_update: chrono::Utc::now(),
                     };
-                    tx.send((task_id, stats)).ok();
+                    tx.send((task_id.clone(), stats)).ok();
                 }
 
-                tracing::debug!("片段 {}/{} 下载完成", current_downloaded, total_segments);
+                tracing::debug!(
+                    "片段 {}/{} 下载完成 (累计 {} bytes)",
+                    current_downloaded,
+                    total_segments,
+                    total_written
+                );
+
                 Ok(())
             });
 
             handles.push(handle);
         }
 
-        // 等待所有片段下载完成
         for handle in handles {
             handle.await??;
         }
@@ -485,12 +589,24 @@ impl M3U8Downloader {
         config: &M3U8DownloaderConfig,
         segment_url: &str,
         output_file: &Path,
-    ) -> Result<()> {
+        byte_range: Option<(u64, u64)>,
+        segment_index: usize,
+        encryption: Option<M3U8Encryption>,
+    ) -> Result<u64> {
         let mut retry_count = 0;
 
         while retry_count <= config.retry_attempts {
-            match Self::download_segment_attempt(client, segment_url, output_file).await {
-                Ok(_) => return Ok(()),
+            match Self::download_segment_attempt(
+                client,
+                segment_url,
+                output_file,
+                byte_range,
+                segment_index,
+                encryption.clone(),
+            )
+            .await
+            {
+                Ok(bytes) => return Ok(bytes),
                 Err(e) => {
                     retry_count += 1;
                     if retry_count <= config.retry_attempts {
@@ -516,25 +632,98 @@ impl M3U8Downloader {
         client: &Client,
         segment_url: &str,
         output_file: &Path,
-    ) -> Result<()> {
-        let response = client.get(segment_url).send().await?;
+        byte_range: Option<(u64, u64)>,
+        segment_index: usize,
+        encryption: Option<M3U8Encryption>,
+    ) -> Result<u64> {
+        let mut request = client.get(segment_url);
+        if let Some((start, end)) = byte_range {
+            request = request.header("Range", format!("bytes={}-{}", start, end));
+        }
+
+        let response = request.send().await?;
 
         if !response.status().is_success() {
+            if let Some((start, end)) = byte_range {
+                tracing::error!(
+                    "片段请求失败: {} [{}-{}] - {}",
+                    segment_url,
+                    start,
+                    end,
+                    response.status()
+                );
+            } else {
+                tracing::error!("片段请求失败: {} - {}", segment_url, response.status());
+            }
             bail!("下载片段失败: {} - {}", segment_url, response.status());
         }
 
-        let mut file = File::create(output_file).await?;
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
+        let mut data = response.bytes().await?.to_vec();
+        if let Some(enc) = encryption {
+            if enc.method.to_uppercase() == "AES-128" {
+                Self::decrypt_segment_data(&mut data, &enc, segment_index)?;
+            }
         }
 
+        let mut file = File::create(output_file).await?;
+        file.write_all(&data).await?;
         file.flush().await?;
         file.sync_all().await?;
 
+        Ok(data.len() as u64)
+    }
+
+    /// 解密单个 TS 片段
+    fn decrypt_segment_data(
+        data: &mut Vec<u8>,
+        encryption: &M3U8Encryption,
+        segment_index: usize,
+    ) -> Result<()> {
+        let key = encryption
+            .key_data
+            .as_ref()
+            .ok_or_else(|| anyhow!("片段解密缺少 AES-128 密钥数据"))?;
+        if key.len() != 16 {
+            bail!("AES-128 密钥长度必须为 16 字节，当前为 {}", key.len());
+        }
+
+        let iv = Self::derive_iv_bytes(encryption, segment_index)?;
+        let decryptor =
+            Decryptor::<Aes128>::new_from_slices(key, &iv).map_err(|e| anyhow!(e.to_string()))?;
+        let decrypted = decryptor
+            .decrypt_padded_vec_mut::<Pkcs7>(data)
+            .map_err(|_| anyhow!("AES-128 解密失败"))?;
+        data.clear();
+        data.extend_from_slice(&decrypted);
         Ok(())
+    }
+
+    /// 计算 AES-128 IV
+    fn derive_iv_bytes(encryption: &M3U8Encryption, segment_index: usize) -> Result<[u8; 16]> {
+        if let Some(ref iv) = encryption.iv {
+            if let Some(parsed) = Self::parse_iv(iv) {
+                return Ok(parsed);
+            }
+            tracing::warn!("IV 格式解析失败，自动使用默认值");
+        }
+
+        let mut iv = [0u8; 16];
+        iv[8..].copy_from_slice(&(segment_index as u64).to_be_bytes());
+        Ok(iv)
+    }
+
+    fn parse_iv(iv: &str) -> Option<[u8; 16]> {
+        let mut trimmed = iv.trim();
+        if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+            trimmed = &trimmed[2..];
+        }
+        let decoded = hex::decode(trimmed).ok()?;
+        if decoded.len() != 16 {
+            return None;
+        }
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(&decoded);
+        Some(arr)
     }
 
     /// 合并片段为最终文件

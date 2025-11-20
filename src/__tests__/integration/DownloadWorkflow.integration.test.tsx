@@ -189,7 +189,7 @@ describe('下载流程集成测试 - Store Level', () => {
       switch (cmd) {
         case 'start_download':
           downloadStarted = true
-          expect((args as any).taskId).toBe('task-1')
+          expect((args as any).task_id).toBe('task-1')
           return Promise.resolve()
         default:
           return Promise.resolve()
@@ -279,7 +279,7 @@ describe('下载流程集成测试 - Store Level', () => {
     mockIPC((cmd, args) => {
       switch (cmd) {
         case 'remove_download_tasks':
-          removedTaskIds = (args as any).taskIds
+          removedTaskIds = (args as any).task_ids
           return Promise.resolve()
         case 'get_download_stats':
           return { ...mockStats, total_tasks: mockStats.total_tasks - removedTaskIds.length }

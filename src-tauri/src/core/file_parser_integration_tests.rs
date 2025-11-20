@@ -8,6 +8,7 @@
 //! - 实际使用场景模拟
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod integration_tests {
     use crate::core::file_parser::*;
     use anyhow::Result;

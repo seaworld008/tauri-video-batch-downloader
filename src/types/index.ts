@@ -72,24 +72,72 @@ export interface DownloadConfig {
   proxy?: string;
   headers: Record<string, string>;
   output_directory: string;
+  auto_verify_integrity: boolean;
+  integrity_algorithm?: string | null;
+  expected_hashes: Record<string, string>;
 }
 
 // 应用配置接口
 export interface AppConfig {
   download: DownloadConfig;
-  ui: {
-    theme: 'light' | 'dark' | 'system';
-    language: string;
-    show_completed_tasks: boolean;
-    auto_start_downloads: boolean;
-    show_notifications: boolean;
-  };
-  advanced: {
-    enable_logging: boolean;
-    log_level: 'error' | 'warn' | 'info' | 'debug';
-    max_log_files: number;
-    cleanup_on_exit: boolean;
-  };
+  ui: UIConfig;
+  system: SystemConfig;
+  youtube: YoutubeConfig;
+  advanced: AdvancedConfig;
+}
+
+export interface UIConfig {
+  theme: 'light' | 'dark' | 'system';
+  language: string;
+  window_width: number;
+  window_height: number;
+  window_x: number | null;
+  window_y: number | null;
+  show_completed_tasks: boolean;
+  auto_start_downloads: boolean;
+  show_notifications: boolean;
+  notification_sound: boolean;
+  minimize_to_tray: boolean;
+  start_minimized: boolean;
+}
+
+export interface SystemConfig {
+  auto_update: boolean;
+  check_update_on_startup: boolean;
+  hardware_acceleration: boolean;
+  max_memory_usage_mb: number | null;
+  temp_directory: string | null;
+  log_level: string | null;
+}
+
+export interface YoutubeConfig {
+  default_quality?: string | null;
+  default_format?: string | null;
+  extract_audio: boolean;
+  audio_format?: string | null;
+  download_subtitles: boolean;
+  subtitle_languages: string[];
+  download_thumbnail: boolean;
+  download_description: boolean;
+  playlist_reverse: boolean;
+  playlist_max_items?: number | null;
+}
+
+export interface AdvancedConfig {
+  enable_logging: boolean;
+  log_level: 'error' | 'warn' | 'info' | 'debug';
+  max_log_files: number;
+  cleanup_on_exit: boolean;
+  enable_proxy: boolean;
+  proxy_type: 'http' | 'https' | 'socks4' | 'socks5';
+  proxy_host?: string;
+  proxy_port?: number;
+  proxy_username?: string;
+  proxy_password?: string;
+  custom_user_agents: Record<string, string>;
+  rate_limit_mbps?: number;
+  enable_statistics: boolean;
+  statistics_retention_days: number;
 }
 
 // 系统信息接口
@@ -163,7 +211,7 @@ export interface ImportPreview {
 }
 
 // UI 视图类型
-export type ViewType = 'dashboard' | 'downloads' | 'import' | 'settings' | 'performance' | 'about';
+export type ViewType = 'dashboard' | 'import' | 'settings' | 'about';
 
 // 通知类型
 export type NotificationType = 'success' | 'error' | 'warning' | 'info';

@@ -7,7 +7,13 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
+    use crate::core::{
+        error_handling::ErrorCategory,
+        file_parser::{FieldMapping, FileParser, FileParserConfig},
+        integrity_checker::HashAlgorithm,
+        manager::DownloadManager,
+        models::{AppResult, DownloadConfig, TaskStatus},
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::Duration;

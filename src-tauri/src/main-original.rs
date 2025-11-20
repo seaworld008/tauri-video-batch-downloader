@@ -8,7 +8,6 @@ use tracing::{info, error};
 
 mod commands;
 mod core;
-mod downloaders;
 mod parsers;
 mod utils;
 
@@ -97,12 +96,17 @@ fn main() {
             pause_download,
             resume_download,
             cancel_download,
+            pause_all_downloads,
+            resume_all_downloads,
+            cancel_all_downloads,
             remove_download,
             remove_download_tasks,
             get_download_tasks,
             get_download_stats,
             clear_completed_tasks,
             retry_failed_tasks,
+            set_rate_limit,
+            get_rate_limit,
             
             // 导入相关命令
             import_file,

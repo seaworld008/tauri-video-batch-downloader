@@ -2,8 +2,7 @@
 //!
 //! Provides utilities for character encoding detection and conversion.
 
-use anyhow::Result;
-use encoding_rs::{Encoding, GB18030, GBK, UTF_8};
+use encoding_rs::{Encoding, GBK, UTF_8};
 
 /// Detect video type from URL
 pub fn detect_video_type(url: &str) -> &str {

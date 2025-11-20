@@ -3,16 +3,13 @@
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        config::AppConfig,
+    use crate::core::{
         manager::DownloadManager,
         models::{
-            AppError, AppResult, DownloadConfig, DownloadStats, DownloaderType, ProgressUpdate,
-            TaskStatus, VideoTask,
+            DownloadConfig, DownloaderType, ProgressUpdate, TaskStatus, VideoTask,
         },
     };
     use std::collections::HashMap;
-    use std::time::Duration;
     use uuid::Uuid;
 
     /// 创建测试用的下载配置

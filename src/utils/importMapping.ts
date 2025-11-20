@@ -12,7 +12,7 @@ const ID_KEYWORDS = ['id', 'code', 'number', '编号', '识别'];
 const NAME_KEYWORDS = ['name', 'title', '名', '称', '标题'];
 const VIDEO_KEYWORDS = ['video', '视频'];
 
-const normalize = (value: string): string => value.replace(/[\s_\-]+/g, '').toLowerCase();
+const normalize = (value: string): string => value.replace(/[\s_-]+/g, '').toLowerCase();
 
 const containsAny = (value: string, keywords: string[]): boolean =>
   keywords.some(keyword => value.includes(keyword));

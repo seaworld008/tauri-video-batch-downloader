@@ -4,10 +4,8 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::manager::{DownloadEvent, DownloadManager};
+    use super::super::manager::DownloadManager;
     use crate::core::models::{AppResult, DownloadConfig, TaskStatus};
-    use std::time::Duration;
-    use tokio::time::timeout;
 
     /// 创建测试用的下载配置
     fn create_test_config() -> DownloadConfig {

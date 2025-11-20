@@ -7,25 +7,88 @@
 //! - 速度监控
 //! - 错误重试
 
-use anyhow::{Context, Result};
+#[derive(Clone)]
+pub struct BandwidthController {
+    limit: Arc<RwLock<Option<u64>>>,
+    state: Arc<Mutex<BandwidthState>>,
+}
+
+#[derive(Debug)]
+struct BandwidthState {
+    window_start: Instant,
+    bytes_in_window: u64,
+}
+
+impl BandwidthState {
+    fn new() -> Self {
+        Self {
+            window_start: Instant::now(),
+            bytes_in_window: 0,
+        }
+    }
+}
+
+impl BandwidthController {
+    fn from_parts(limit: Arc<RwLock<Option<u64>>>, state: Arc<Mutex<BandwidthState>>) -> Self {
+        Self { limit, state }
+    }
+
+    pub fn new() -> Self {
+        Self::from_parts(
+            Arc::new(RwLock::new(None)),
+            Arc::new(Mutex::new(BandwidthState::new())),
+        )
+    }
+
+    pub fn limit_handle(&self) -> Arc<RwLock<Option<u64>>> {
+        Arc::clone(&self.limit)
+    }
+
+    pub async fn throttle(&self, bytes: u64) {
+        let limit_value = *self.limit.read().await;
+        if let Some(limit) = limit_value {
+            if limit == 0 {
+                return;
+            }
+            let mut state = self.state.lock().await;
+            let elapsed = state.window_start.elapsed();
+            if elapsed >= Duration::from_secs(1) {
+                state.window_start = Instant::now();
+                state.bytes_in_window = 0;
+            }
+            state.bytes_in_window += bytes;
+            if state.bytes_in_window > limit {
+                let excess = state.bytes_in_window - limit;
+                let sleep_secs = excess as f64 / limit as f64;
+                drop(state);
+                sleep(Duration::from_secs_f64(sleep_secs)).await;
+            }
+        }
+    }
+}
+
+use anyhow::Result;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, RwLock, Semaphore};
+use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::core::m3u8_downloader::{M3U8Downloader, M3U8DownloaderConfig};
 use crate::core::models::*;
-use crate::core::resume_downloader::{ResumeDownloader, ResumeDownloaderConfig};
+use crate::core::resume_downloader::{
+    ResumeDownloader, ResumeDownloaderConfig, ResumeProgressCallback,
+};
 
 /// HTTP下载器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,11 +211,13 @@ pub struct HttpDownloader {
     is_paused: Arc<AtomicBool>,
     resume_downloader: Arc<ResumeDownloader>,
     m3u8_downloader: Arc<M3U8Downloader>,
+    bandwidth_controller: BandwidthController,
 }
 
 impl HttpDownloader {
     /// 创建新的下载器实例
     pub fn new(config: DownloaderConfig) -> Result<Self> {
+        let bandwidth_controller = BandwidthController::new();
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout))
             .user_agent(&config.user_agent)
@@ -172,7 +237,8 @@ impl HttpDownloader {
         };
 
         // 创建ResumeDownloader实例
-        let resume_downloader = ResumeDownloader::new(resume_config, client.clone())?;
+        let resume_downloader =
+            ResumeDownloader::new(resume_config, client.clone(), bandwidth_controller.clone())?;
 
         // 创建M3U8Downloader配置
         let m3u8_config = M3U8DownloaderConfig {
@@ -197,7 +263,12 @@ impl HttpDownloader {
             is_paused: Arc::new(AtomicBool::new(false)),
             resume_downloader: Arc::new(resume_downloader),
             m3u8_downloader: Arc::new(m3u8_downloader),
+            bandwidth_controller,
         })
+    }
+
+    pub fn bandwidth_controller(&self) -> BandwidthController {
+        self.bandwidth_controller.clone()
     }
 
     /// 设置进度回调
@@ -288,11 +359,15 @@ impl HttpDownloader {
             }
             Ok(None) => {
                 tracing::warn!("无法获取文件大小，使用传统下载方法");
-                return self.download_with_resume(task, cancel_flag).await;
+                return self
+                    .download_with_resume_downloader(task, cancel_flag)
+                    .await;
             }
             Err(e) => {
                 tracing::warn!("获取文件大小失败，使用传统下载方法: {}", e);
-                return self.download_with_resume(task, cancel_flag).await;
+                return self
+                    .download_with_resume_downloader(task, cancel_flag)
+                    .await;
             }
         };
 
@@ -321,22 +396,58 @@ impl HttpDownloader {
         let full_path = Path::new(&task.output_path).join(&task.filename);
         let output_path_str = full_path.to_string_lossy().to_string();
 
-        // TODO: 在这里可以设置进度回调，将ResumeDownloader的进度转换为DownloadTask的格式
-        // 目前先使用基本的下载功能
+        tracing::info!("ʹ��ResumeDownloader��ʼ����: {}", task.filename);
 
-        tracing::info!("使用ResumeDownloader开始下载: {}", task.filename);
-
-        // 检查取消标志
         if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
-            return Err(anyhow::anyhow!("下载被取消"));
+            return Err(anyhow::anyhow!("���ر�ȡ��"));
         }
 
-        // 调用ResumeDownloader的下载方法
-        self.resume_downloader
-            .download_with_resume(&task.id, &task.url, Path::new(&output_path_str), None)
-            .await?;
+        let (delta_tx, mut delta_rx) = mpsc::unbounded_channel::<u64>();
+        let progress_callback: ResumeProgressCallback = {
+            let delta_tx = delta_tx.clone();
+            Arc::new(move |_, delta, _| {
+                let _ = delta_tx.send(delta);
+            })
+        };
 
-        tracing::info!("ResumeDownloader下载完成: {}", task.filename);
+        let task_id = task.id.clone();
+        let task_url = task.url.clone();
+
+        let mut resume_future = Box::pin(self.resume_downloader.download_with_resume(
+            &task_id,
+            &task_url,
+            Path::new(&output_path_str),
+            task.stats.total_bytes,
+            Some(progress_callback),
+        ));
+
+        let start_time = Instant::now();
+        let mut downloaded = task.stats.downloaded_bytes;
+        let total_hint = task.stats.total_bytes;
+
+        loop {
+            tokio::select! {
+                Some(delta) = delta_rx.recv() => {
+                    downloaded = downloaded.saturating_add(delta);
+                    let total = total_hint.unwrap_or(downloaded);
+                    self.update_progress(task, downloaded, total, start_time).await;
+                }
+                result = &mut resume_future => {
+                    let resume_info = result?;
+                    let final_total = if resume_info.total_size == 0 {
+                        total_hint.unwrap_or(downloaded)
+                    } else {
+                        resume_info.total_size
+                    };
+                    downloaded = resume_info.downloaded_total.max(downloaded);
+                    self.update_progress(task, downloaded, final_total, start_time).await;
+                    task.stats.total_bytes = Some(final_total);
+                    break;
+                }
+            }
+        }
+
+        tracing::info!("ResumeDownloader�������: {}", task.filename);
         Ok(())
     }
 
@@ -481,6 +592,7 @@ impl HttpDownloader {
 
             let chunk = chunk?;
             file.write_all(&chunk).await?;
+            self.bandwidth_controller.throttle(chunk.len() as u64).await;
             downloaded += chunk.len() as u64;
 
             // 更新进度（限制更新频率）
@@ -584,7 +696,7 @@ impl HttpDownloader {
             let callback = progress_callback.clone();
 
             let handle = tokio::spawn(async move {
-                let mut result = downloader.download(task).await?;
+                let result = downloader.download(task).await?;
 
                 // 调用进度回调
                 if let Some(cb) = callback {
@@ -632,6 +744,7 @@ impl Clone for HttpDownloader {
             is_paused: Arc::clone(&self.is_paused),
             resume_downloader: Arc::clone(&self.resume_downloader),
             m3u8_downloader: Arc::clone(&self.m3u8_downloader),
+            bandwidth_controller: self.bandwidth_controller.clone(),
         }
     }
 }
@@ -639,7 +752,6 @@ impl Clone for HttpDownloader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
     use tempfile::tempdir;
     use tokio::time::{sleep, Duration};
 
