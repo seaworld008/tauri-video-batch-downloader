@@ -48,7 +48,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
     pending: tasks.filter(t => t.status === 'pending' || t.status === 'paused').length
   }), [tasks]);
 
-  const handleStartWithConfirmation = async (startAction: () => Promise<void>) => {
+  const handleStartWithConfirmation = React.useCallback(async (startAction: () => Promise<void>) => {
     const currentDir = config.download.output_directory;
 
     // 检查是否需要确认
@@ -67,7 +67,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
     }
 
     await startAction();
-  };
+  }, [config.download.output_directory, updateDownloadConfig]);
 
   // 批量操作处理 - 使用 useCallback 避免每次渲染创建新函数
   const handleBatchAction = React.useCallback(async (action: 'start' | 'pause' | 'delete') => {
@@ -107,7 +107,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
         }
         break;
     }
-  }, [hasSelection, tasks, selectedTasks, startAllDownloads, pauseAllDownloads, removeTasks, clearSelection, startDownload, pauseDownload, config.download.output_directory, updateDownloadConfig]);
+  }, [hasSelection, tasks, selectedTasks, startAllDownloads, pauseAllDownloads, removeTasks, clearSelection, startDownload, pauseDownload, handleStartWithConfirmation]);
 
   return (
     <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-10 shadow-sm">
