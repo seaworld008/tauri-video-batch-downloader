@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::AtomicBool,
+    atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::{Duration, SystemTime};
@@ -219,6 +219,21 @@ pub struct ResumeDownloader {
 }
 
 impl ResumeDownloader {
+    /// 判断是否需要中断（暂停/取消）
+    fn should_interrupt(
+        cancel_flag: &Option<Arc<AtomicBool>>,
+        pause_flag: &Option<Arc<AtomicBool>>,
+    ) -> bool {
+        cancel_flag
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+            || pause_flag
+                .as_ref()
+                .map(|flag| flag.load(Ordering::Relaxed))
+                .unwrap_or(false)
+    }
+
     /// 创建新的断点续传下载器
     pub fn new(
         config: ResumeDownloaderConfig,
@@ -314,6 +329,8 @@ impl ResumeDownloader {
         file_path: &Path,
         total_size: Option<u64>,
         progress_callback: Option<ResumeProgressCallback>,
+        cancel_flag: Option<Arc<AtomicBool>>,
+        pause_flag: Option<Arc<AtomicBool>>,
     ) -> Result<ResumeInfo> {
         // 尝试加载已有的断点信息
         let mut resume_info = self.load_resume_info(task_id).await?.unwrap_or_else(|| {
@@ -332,6 +349,10 @@ impl ResumeDownloader {
             } else {
                 bail!("无法获取文件大小，不支持断点续传");
             }
+        }
+
+        if Self::should_interrupt(&cancel_flag, &pause_flag) {
+            bail!("下载被取消");
         }
 
         // 检测服务器支持能力
@@ -355,8 +376,20 @@ impl ResumeDownloader {
         }
 
         // 开始下载
-        self.download_chunks(url, &mut resume_info, progress_callback.clone())
-            .await?;
+        self.download_chunks(
+            url,
+            &mut resume_info,
+            progress_callback.clone(),
+            cancel_flag.clone(),
+            pause_flag.clone(),
+        )
+        .await?;
+
+        if Self::should_interrupt(&cancel_flag, &pause_flag) {
+            // 保存当前进度，保证后续能继续
+            self.save_resume_info(&resume_info).await.ok();
+            bail!("下载被取消");
+        }
 
         // 合并分片
         if resume_info.server_capabilities.supports_ranges && resume_info.chunks.len() > 1 {
@@ -401,6 +434,8 @@ impl ResumeDownloader {
         url: &str,
         resume_info: &mut ResumeInfo,
         progress_callback: Option<ResumeProgressCallback>,
+        cancel_flag: Option<Arc<AtomicBool>>,
+        pause_flag: Option<Arc<AtomicBool>>,
     ) -> Result<()> {
         let pending_chunks: Vec<usize> = resume_info
             .pending_chunks()
@@ -409,6 +444,10 @@ impl ResumeDownloader {
             .collect();
 
         let bandwidth_controller = self.bandwidth_controller.clone();
+
+        if Self::should_interrupt(&cancel_flag, &pause_flag) {
+            return Err(anyhow::anyhow!("下载被取消"));
+        }
 
         if pending_chunks.is_empty() {
             tracing::info!("所有分片已完成");
@@ -431,6 +470,12 @@ impl ResumeDownloader {
         let mut handles = Vec::new();
 
         for chunk_index in pending_chunks {
+            if Self::should_interrupt(&cancel_flag, &pause_flag) {
+                // 在退出前保存进度，便于下次继续
+                self.save_resume_info(resume_info).await.ok();
+                return Err(anyhow::anyhow!("下载被取消"));
+            }
+
             let semaphore = Arc::clone(&semaphore);
             let url = url.to_string();
             let client = self.client.clone();
@@ -440,9 +485,15 @@ impl ResumeDownloader {
             let total_size = resume_info_clone.total_size;
             let progress_callback = progress_callback.clone();
             let controller = bandwidth_controller.clone();
+            let cancel_flag = cancel_flag.clone();
+            let pause_flag = pause_flag.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
+
+                if ResumeDownloader::should_interrupt(&cancel_flag, &pause_flag) {
+                    return Err(anyhow::anyhow!("下载被取消"));
+                }
 
                 Self::download_chunk_static(
                     &client,
@@ -454,6 +505,8 @@ impl ResumeDownloader {
                     total_size,
                     progress_callback,
                     controller.clone(),
+                    cancel_flag.clone(),
+                    pause_flag.clone(),
                 )
                 .await
             });
@@ -501,6 +554,8 @@ impl ResumeDownloader {
         total_size: u64,
         progress_callback: Option<ResumeProgressCallback>,
         bandwidth_controller: BandwidthController,
+        cancel_flag: Option<Arc<AtomicBool>>,
+        pause_flag: Option<Arc<AtomicBool>>,
     ) -> Result<ChunkInfo> {
         let mut chunk = resume_info
             .chunks
@@ -512,9 +567,17 @@ impl ResumeDownloader {
             return Ok(chunk);
         }
 
+        if Self::should_interrupt(&cancel_flag, &pause_flag) {
+            return Err(anyhow::anyhow!("下载被取消"));
+        }
+
         let mut retry_count = 0;
 
         while retry_count <= config.max_retries {
+            if Self::should_interrupt(&cancel_flag, &pause_flag) {
+                return Err(anyhow::anyhow!("下载被取消"));
+            }
+
             match Self::download_chunk_attempt(
                 client,
                 config,
@@ -525,6 +588,8 @@ impl ResumeDownloader {
                 total_size,
                 progress_callback.clone(),
                 bandwidth_controller.clone(),
+                cancel_flag.clone(),
+                pause_flag.clone(),
             )
             .await
             {
@@ -568,8 +633,14 @@ impl ResumeDownloader {
         total_size: u64,
         progress_callback: Option<ResumeProgressCallback>,
         bandwidth_controller: BandwidthController,
+        cancel_flag: Option<Arc<AtomicBool>>,
+        pause_flag: Option<Arc<AtomicBool>>,
     ) -> Result<()> {
         chunk.status = ChunkStatus::Downloading;
+
+        if Self::should_interrupt(&cancel_flag, &pause_flag) {
+            bail!("下载被取消");
+        }
 
         // 计算实际需要下载的范围
         let range_start = chunk.start + chunk.downloaded;
@@ -605,6 +676,9 @@ impl ResumeDownloader {
         let mut downloaded_in_this_attempt = 0u64;
 
         while let Some(chunk_data) = stream.next().await {
+            if Self::should_interrupt(&cancel_flag, &pause_flag) {
+                bail!("下载被取消");
+            }
             let chunk_data = chunk_data?;
             file.write_all(&chunk_data).await?;
             bandwidth_controller.throttle(chunk_data.len() as u64).await;

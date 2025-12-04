@@ -46,11 +46,11 @@ mod tests {
 
         // 执行下载
         let result = downloader
-            .download_with_resume(&task_id, test_url, &output_path, None, None)
+            .download_with_resume(&task_id, test_url, &output_path, None, None, None, None)
             .await;
 
         match result {
-            Ok(()) => {
+            Ok(_) => {
                 // 验证文件存在且有内容
                 let metadata = fs::metadata(&output_path).await.unwrap();
                 assert!(metadata.len() > 0, "下载的文件应该有内容");
@@ -302,6 +302,8 @@ mod tests {
                 &task_id,
                 "https://httpbin.org/bytes/1024",
                 invalid_path,
+                None,
+                None,
                 None,
                 None,
             )

@@ -83,6 +83,8 @@ pub struct ProgressUpdate {
     pub speed: f64,
 
     pub eta: Option<u64>,
+
+    pub progress: f64,
 }
 
 /// Video information structure matching Go version

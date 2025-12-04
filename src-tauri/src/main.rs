@@ -1,9 +1,10 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use serde_json::json;
 use std::sync::Arc;
 use tauri::{Manager, State};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
 mod commands;
@@ -12,15 +13,20 @@ mod parsers;
 mod utils;
 
 use commands::*;
-use core::downloader::{DownloaderConfig, HttpDownloader};
-use core::{AppConfig, DownloadManager};
+use core::{
+    downloader::{DownloaderConfig, HttpDownloader},
+    runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
+    AppConfig, DownloadManager,
+};
 
 /// 简化的应用程序状态，防止初始化失败
-#[derive(Clone)]
 pub struct AppState {
     pub download_manager: Arc<RwLock<DownloadManager>>,
     pub http_downloader: Arc<RwLock<HttpDownloader>>,
     pub config: Arc<RwLock<AppConfig>>,
+    pub download_runtime: DownloadRuntimeHandle,
+    /// Router receiver - needs to be spawned in Tauri runtime during setup
+    router_rx: std::sync::Mutex<Option<mpsc::Receiver<core::runtime::RuntimeCommand>>>,
 }
 
 impl AppState {
@@ -49,6 +55,12 @@ impl AppState {
         // 简化DownloadManager创建
         let download_manager = DownloadManager::new(download_config.clone())
             .map_err(|e| format!("DownloadManager creation failed: {}", e))?;
+        let download_manager = Arc::new(RwLock::new(download_manager));
+
+        // 创建 runtime handle 但不立即 spawn router（等待 Tauri runtime）
+        let (download_runtime, router_rx) =
+            create_download_runtime_handle(download_manager.clone());
+        info!("📡 Download runtime handle created (router will be spawned in Tauri setup)");
 
         // 根据实际配置生成HTTP下载器参数
         let downloader_config = DownloaderConfig {
@@ -72,9 +84,11 @@ impl AppState {
         }
 
         Ok(Self {
-            download_manager: Arc::new(RwLock::new(download_manager)),
+            download_manager,
             http_downloader: Arc::new(RwLock::new(http_downloader)),
             config: Arc::new(RwLock::new(config)),
+            download_runtime,
+            router_rx: std::sync::Mutex::new(Some(router_rx)),
         })
     }
 
@@ -119,6 +133,9 @@ impl AppState {
             // 这里应该有一个更简单的构造函数，先假设能处理
             DownloadManager::new(config.download.clone()).expect("Minimal config should work")
         });
+        let download_manager = Arc::new(RwLock::new(download_manager));
+        let (download_runtime, router_rx) =
+            create_download_runtime_handle(download_manager.clone());
 
         let downloader_config = DownloaderConfig {
             max_concurrent: 1,
@@ -135,14 +152,32 @@ impl AppState {
         });
 
         Self {
-            download_manager: Arc::new(RwLock::new(download_manager)),
+            download_manager,
             http_downloader: Arc::new(RwLock::new(http_downloader)),
             config: Arc::new(RwLock::new(config)),
+            download_runtime,
+            router_rx: std::sync::Mutex::new(Some(router_rx)),
         }
+    }
+
+    /// Take the router receiver for spawning in Tauri runtime
+    pub fn take_router_rx(&self) -> Option<mpsc::Receiver<core::runtime::RuntimeCommand>> {
+        self.router_rx
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take())
     }
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(err) = windows_webview::ensure_webview2_runtime() {
+            eprintln!("Failed to initialize WebView2 runtime: {}", err);
+            return;
+        }
+    }
+
     // 初始化日志系统
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -165,9 +200,11 @@ fn main() {
             pause_download,
             resume_download,
             cancel_download,
+            debug_download_test,
             pause_all_downloads,
             resume_all_downloads,
             cancel_all_downloads,
+            start_all_pending_downloads,
             remove_download,
             remove_download_tasks,
             get_download_tasks,
@@ -214,6 +251,16 @@ fn main() {
             let app_state: State<AppState> = app.state();
             let app_handle = app.handle();
 
+            // 🔑 关键：在 Tauri runtime 中 spawn router loop
+            // 这必须在任何下载命令之前完成
+            let download_manager_for_router = app_state.download_manager.clone();
+            if let Some(router_rx) = app_state.take_router_rx() {
+                info!("🔄 Spawning download runtime router in Tauri runtime");
+                spawn_router_loop(download_manager_for_router, router_rx);
+            } else {
+                warn!("⚠️ Router receiver already taken or not available");
+            }
+
             // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
             let bootstrap_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -228,48 +275,149 @@ fn main() {
                 }
             });
 
-            // 异步启动下载管理器，但不阻塞主线程
-            info!("🚀 启动下载管理器...");
+            // Create event channel for DownloadManager
+            let (sender, mut receiver) = mpsc::unbounded_channel::<core::manager::DownloadEvent>();
+
+            let download_manager_for_events = app_state.download_manager.clone();
+            // Spawn event handler to bridge DownloadManager events to Tauri events
+            let app_handle_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                info!("🔌 Event bridge started - listening for DownloadManager events");
+                let mut progress_event_count = 0u64;
+                while let Some(event) = receiver.recv().await {
+                    if let Err(sync_err) = {
+                        let mut manager = download_manager_for_events.write().await;
+                        manager.apply_event_side_effects(&event).await
+                    } {
+                        error!("[EVENT_BRIDGE] Failed to sync manager state: {}", sync_err);
+                    }
+
+                    match event {
+                        core::manager::DownloadEvent::TaskProgress {
+                            task_id,
+                            progress,
+                        } => {
+                            progress_event_count += 1;
+                            // Log every progress event initially, then every 20th for debugging
+                            if progress_event_count <= 5 || progress_event_count % 20 == 0 {
+                                info!(
+                                    "[EVENT_BRIDGE] TaskProgress #{} for task {}: progress={:.1}%, speed={:.0} B/s, downloaded={}",
+                                    progress_event_count, task_id, progress.progress * 100.0, progress.speed, progress.downloaded_size
+                                );
+                            }
+                            if let Err(e) = app_handle_clone.emit_all("download_progress", &progress) {
+                                error!("[EVENT_BRIDGE] Failed to emit download_progress: {}", e);
+                            }
+                        }
+                        core::manager::DownloadEvent::TaskStarted { task_id } => {
+                            info!("[EVENT_BRIDGE] TaskStarted for task {}", task_id);
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Downloading",
+                                "error_message": null
+                            });
+                            if let Err(e) = app_handle_clone.emit_all("task_status_changed", payload) {
+                                error!("[EVENT_BRIDGE] Failed to emit task_status_changed: {}", e);
+                            }
+                        }
+                        core::manager::DownloadEvent::TaskCompleted {
+                            task_id,
+                            file_path: _,
+                        } => {
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Completed",
+                                "error_message": null
+                            });
+                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                        }
+                        core::manager::DownloadEvent::TaskFailed { task_id, error } => {
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Failed",
+                                "error_message": error
+                            });
+                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                        }
+                        core::manager::DownloadEvent::TaskPaused { task_id } => {
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Paused",
+                                "error_message": null
+                            });
+                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                        }
+                        core::manager::DownloadEvent::TaskResumed { task_id } => {
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Downloading",
+                                "error_message": null
+                            });
+                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                        }
+                        core::manager::DownloadEvent::TaskCancelled { task_id } => {
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Cancelled",
+                                "error_message": null
+                            });
+                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                        }
+                        core::manager::DownloadEvent::StatsUpdated { stats } => {
+                            let _ = app_handle_clone.emit_all("download_stats", stats);
+                        }
+                        _ => {}
+                    }
+                }
+                warn!("🔌 Event bridge stopped");
+            });
+
+            // 🔑 异步启动下载管理器
+            // 使用 spawn 而不是 block_on，避免在 setup 中阻塞
+            info!("🚀 启动下载管理器 (异步)...");
             let download_manager = app_state.download_manager.clone();
+            let app_handle_for_manager = app_handle.clone();
 
             tauri::async_runtime::spawn(async move {
+                info!("[MANAGER_INIT] Starting manager initialization in async task");
+
                 match tokio::time::timeout(
-                    std::time::Duration::from_secs(10), // 10秒超时
+                    std::time::Duration::from_secs(10),
                     async {
+                        info!("[MANAGER_INIT] Acquiring write lock...");
                         let mut manager = download_manager.write().await;
-                        manager.start().await
+                        info!("[MANAGER_INIT] Write lock acquired, calling start()...");
+                        manager.start_with_sender(sender).await
                     },
                 )
                 .await
                 {
                     Ok(Ok(_)) => {
-                        info!("✅ Download manager started successfully");
-                        if let Err(e) = app_handle.emit_all("download_manager_ready", true) {
-                            error!("Failed to emit download_manager_ready event: {}", e);
+                        info!("✅ [MANAGER_INIT] Download manager started successfully");
+                        if let Err(e) = app_handle_for_manager.emit_all("download_manager_ready", true) {
+                            error!("[MANAGER_INIT] Failed to emit download_manager_ready event: {}", e);
+                        } else {
+                            info!("[MANAGER_INIT] ✅ download_manager_ready event emitted");
                         }
                     }
                     Ok(Err(e)) => {
-                        error!("❌ Download manager failed to start: {}", e);
-                        // 不再阻止应用启动，只是发出警告
-                        if let Err(emit_err) = app_handle.emit_all(
-                            "download_manager_warning",
+                        error!("❌ [MANAGER_INIT] Download manager failed to start: {}", e);
+                        let _ = app_handle_for_manager.emit_all(
+                            "download_manager_error",
                             format!("Download manager failed: {}", e),
-                        ) {
-                            error!("Failed to emit warning event: {}", emit_err);
-                        }
+                        );
                     }
                     Err(_) => {
-                        error!("❌ Download manager startup timed out");
-                        if let Err(emit_err) = app_handle.emit_all(
-                            "download_manager_warning",
+                        error!("❌ [MANAGER_INIT] Download manager startup timed out");
+                        let _ = app_handle_for_manager.emit_all(
+                            "download_manager_error",
                             "Download manager startup timed out".to_string(),
-                        ) {
-                            error!("Failed to emit timeout warning: {}", emit_err);
-                        }
+                        );
                     }
                 }
             });
 
+            // 后台维持并发数：持续填充空槽位（仅后端调度）
             // 立即发送应用准备就绪信号
             if let Err(e) = app.emit_all("app_ready", true) {
                 error!("Failed to emit app_ready event: {}", e);
@@ -296,6 +444,216 @@ fn main() {
         .expect("error while running tauri application");
 }
 
+#[cfg(target_os = "windows")]
+mod windows_webview {
+    use std::{
+        env,
+        ffi::{CString, OsStr},
+        fs, mem,
+        os::windows::ffi::OsStrExt,
+        path::{Path, PathBuf},
+        process::Command,
+        thread,
+        time::Duration,
+    };
+    use winapi::{
+        shared::winerror::SUCCEEDED,
+        um::{
+            combaseapi::CoTaskMemFree,
+            libloaderapi::{FreeLibrary, GetProcAddress, LoadLibraryW},
+            winuser::{
+                MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK,
+                MB_TOPMOST, MB_YESNO,
+            },
+        },
+    };
+
+    const INSTALLER_URL: &str = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
+
+    pub fn ensure_webview2_runtime() -> Result<(), String> {
+        if runtime_installed() {
+            return Ok(());
+        }
+
+        let install = prompt_yes_no(
+            "Microsoft Edge WebView2 Runtime 未检测到。该组件是运行本软件必须的，是否立即自动安装？",
+        );
+
+        if !install {
+            return Err("用户拒绝安装 Microsoft Edge WebView2 Runtime，应用无法启动。".to_string());
+        }
+
+        install_runtime().map_err(|err| {
+            show_error(&format!(
+                "自动安装 WebView2 失败：{}。请手动访问 https://go.microsoft.com/fwlink/p/?LinkId=2124703 安装后重新启动。",
+                err
+            ));
+            err
+        })?;
+
+        show_info("WebView2 运行时安装完成，应用即将启动。");
+
+        Ok(())
+    }
+
+    fn runtime_installed() -> bool {
+        attempt_loader_version_check().unwrap_or(false) || runtime_paths_present()
+    }
+
+    fn attempt_loader_version_check() -> Result<bool, String> {
+        unsafe {
+            let loader = LoadLibraryW(to_wide("WebView2Loader.dll").as_ptr());
+            if loader.is_null() {
+                return Ok(false);
+            }
+
+            let proc_name = CString::new("GetAvailableCoreWebView2BrowserVersionString")
+                .map_err(|err| err.to_string())?;
+            let proc = GetProcAddress(loader, proc_name.as_ptr());
+            if proc.is_null() {
+                FreeLibrary(loader);
+                return Ok(false);
+            }
+
+            type GetVersionFn = unsafe extern "system" fn(*const u16, *mut *mut u16) -> i32;
+            let func: GetVersionFn = mem::transmute(proc);
+
+            let mut version_ptr: *mut u16 = std::ptr::null_mut();
+            let hr = func(std::ptr::null(), &mut version_ptr);
+
+            let success = SUCCEEDED(hr) && !version_ptr.is_null();
+            if !version_ptr.is_null() {
+                CoTaskMemFree(version_ptr as *mut _);
+            }
+            FreeLibrary(loader);
+            Ok(success)
+        }
+    }
+
+    fn runtime_paths_present() -> bool {
+        runtime_candidate_paths()
+            .into_iter()
+            .any(|path| path.exists() && path.is_dir())
+    }
+
+    fn runtime_candidate_paths() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Ok(program_files_x86) = env::var("ProgramFiles(x86)") {
+            paths.push(
+                Path::new(&program_files_x86)
+                    .join("Microsoft")
+                    .join("EdgeWebView")
+                    .join("Application"),
+            );
+        }
+        if let Ok(program_files) = env::var("ProgramFiles") {
+            paths.push(
+                Path::new(&program_files)
+                    .join("Microsoft")
+                    .join("EdgeWebView")
+                    .join("Application"),
+            );
+        }
+        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+            paths.push(
+                Path::new(&local_app_data)
+                    .join("Microsoft")
+                    .join("EdgeWebView")
+                    .join("Application"),
+            );
+        }
+        paths
+    }
+
+    fn install_runtime() -> Result<(), String> {
+        let installer_path = download_bootstrapper()?;
+        let status = Command::new(&installer_path)
+            .args(["/install", "/silent", "/norestart"])
+            .status()
+            .map_err(|err| format!("无法启动 WebView2 安装程序: {}", err))?;
+
+        if !status.success() {
+            return Err(format!(
+                "WebView2 安装程序返回错误状态: {:?}",
+                status.code()
+            ));
+        }
+
+        // 等待安装完成并重新检测
+        for _ in 0..10 {
+            if runtime_installed() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+
+        Err("安装程序运行后仍未检测到 WebView2。".to_string())
+    }
+
+    fn download_bootstrapper() -> Result<PathBuf, String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|err| format!("无法初始化下载客户端: {}", err))?;
+
+        let response = client
+            .get(INSTALLER_URL)
+            .send()
+            .and_then(|resp| resp.error_for_status())
+            .map_err(|err| format!("下载 WebView2 安装程序失败: {}", err))?;
+
+        let bytes = response
+            .bytes()
+            .map_err(|err| format!("读取安装程序内容失败: {}", err))?;
+
+        let installer_path = env::temp_dir().join("MicrosoftEdgeWebView2Setup.exe");
+        fs::write(&installer_path, &bytes)
+            .map_err(|err| format!("写入安装程序到临时目录失败: {}", err))?;
+
+        Ok(installer_path)
+    }
+
+    fn prompt_yes_no(message: &str) -> bool {
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                to_wide(message).as_ptr(),
+                to_wide("Video Downloader Pro").as_ptr(),
+                MB_ICONQUESTION | MB_TOPMOST | MB_YESNO,
+            ) == IDYES
+        }
+    }
+
+    fn show_info(message: &str) {
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                to_wide(message).as_ptr(),
+                to_wide("Video Downloader Pro").as_ptr(),
+                MB_ICONINFORMATION | MB_TOPMOST | MB_OK,
+            );
+        }
+    }
+
+    fn show_error(message: &str) {
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                to_wide(message).as_ptr(),
+                to_wide("Video Downloader Pro").as_ptr(),
+                MB_ICONERROR | MB_TOPMOST | MB_OK,
+            );
+        }
+    }
+
+    fn to_wide(value: &str) -> Vec<u16> {
+        OsStr::new(value)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +666,3 @@ mod tests {
         assert!(!state.config.try_read().is_err());
     }
 }
-
-

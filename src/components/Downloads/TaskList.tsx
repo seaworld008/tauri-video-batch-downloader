@@ -14,7 +14,25 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
 
   // 排序任务
   const sortedTasks = React.useMemo(() => {
+    const statusPriority = {
+      downloading: 0,
+      paused: 1,
+      failed: 2,
+      pending: 3,
+      completed: 4,
+      cancelled: 5,
+    };
+
     return [...tasks].sort((a, b) => {
+      // 首先按状态优先级排序
+      const priorityA = statusPriority[a.status] ?? 99;
+      const priorityB = statusPriority[b.status] ?? 99;
+
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+
+      // 同状态下按选定字段排序
       let aValue: any = a[sortBy];
       let bValue: any = b[sortBy];
 
@@ -48,14 +66,14 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
     setSortBy(field);
   };
 
-  const SortableHeader: React.FC<{ 
-    field: keyof VideoTask; 
+  const SortableHeader: React.FC<{
+    field: keyof VideoTask;
     children: React.ReactNode;
     className?: string;
   }> = ({ field, children, className = '' }) => (
     <button
       onClick={() => handleSort(field)}
-      className={`flex items-center space-x-1 font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 ${className}`}
+      className={`flex items-center space-x-1 font-bold text-gray-800 dark:text-gray-200 hover:text-gray-900 dark:hover:text-gray-100 ${className}`}
     >
       <span>{children}</span>
       {sortBy === field && (
@@ -67,7 +85,7 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
   );
 
   return (
-    <div 
+    <div
       className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden"
       role="region"
       aria-label="下载任务列表"
@@ -88,25 +106,25 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
               }}
             />
           </div>
-          
+
           <div className="col-span-4">
             <SortableHeader field="title">任务名称</SortableHeader>
           </div>
-          
+
           <div className="col-span-2">
             <SortableHeader field="status">状态</SortableHeader>
           </div>
-          
+
           <div className="col-span-2">
             <SortableHeader field="progress">进度</SortableHeader>
           </div>
-          
+
           <div className="col-span-2">
             <SortableHeader field="updated_at">更新时间</SortableHeader>
           </div>
-          
+
           <div className="col-span-1">
-            <span className="font-medium text-gray-700 dark:text-gray-300">操作</span>
+            <span className="font-bold text-gray-800 dark:text-gray-200">操作</span>
           </div>
         </div>
       </div>
@@ -136,7 +154,7 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
                 transform: `translateY(${virtualItem.start}px)`,
               }}
             >
-              <TaskItem 
+              <TaskItem
                 task={sortedTasks[virtualItem.index]}
                 isVirtualized
               />
@@ -147,11 +165,12 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
 
       {/* 底部信息 */}
       <div className="bg-gray-50 dark:bg-gray-900/50 px-6 py-3 border-t border-gray-200 dark:border-gray-700">
-        <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
+        <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 font-medium">
           <span>共 {sortedTasks.length} 个任务</span>
           <div className="flex items-center space-x-4">
             <span>已完成: {sortedTasks.filter(t => t.status === 'completed').length}</span>
             <span>进行中: {sortedTasks.filter(t => t.status === 'downloading').length}</span>
+            <span>已暂停: {sortedTasks.filter(t => t.status === 'paused').length}</span>
             <span>失败: {sortedTasks.filter(t => t.status === 'failed').length}</span>
           </div>
         </div>

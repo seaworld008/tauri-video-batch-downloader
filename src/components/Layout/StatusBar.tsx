@@ -3,8 +3,10 @@ import { useDownloadStore } from '../../stores/downloadStore';
 import { useSystemInfo } from '../../hooks/useSystemInfo';
 
 export const StatusBar: React.FC = () => {
-  const { stats } = useDownloadStore();
+  const { stats, tasks } = useDownloadStore();
   const { systemInfo, isLoading } = useSystemInfo();
+
+  const pausedCount = tasks.filter(t => t.status === 'paused').length;
 
   return (
     <div className="h-8 bg-gray-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-4 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
@@ -19,6 +21,13 @@ export const StatusBar: React.FC = () => {
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
             <span>{stats.active_downloads} 个任务正在下载</span>
+          </div>
+        )}
+
+        {pausedCount > 0 && (
+          <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+            <span>{pausedCount} 个任务已暂停</span>
           </div>
         )}
 

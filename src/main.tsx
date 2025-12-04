@@ -71,7 +71,7 @@ const queryClient = new QueryClient({
 });
 
 // 初始化进度监听器
-initializeProgressListener();
+void initializeProgressListener();
 
 // 渲染应用
 ReactDOM.createRoot(document.getElementById('root')!).render(

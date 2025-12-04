@@ -45,6 +45,7 @@ export interface ProgressUpdate {
   total_size?: number;
   speed: number;
   eta?: number;
+  progress?: number;
 }
 
 // 导入的数据接口 - 与Go版本Video结构保持一致

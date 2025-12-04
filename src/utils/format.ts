@@ -10,15 +10,27 @@
  * @returns 格式化后的字符串，如 "1.23 MB"
  */
 export function formatBytes(bytes: number, decimals: number = 2): string {
-  if (bytes <= 0) return '0 B';
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return '--';
+  }
+
+  if (bytes === 0) {
+    return '0 B';
+  }
+
+  if (bytes > 0 && bytes < 1) {
+    return '<1 B';
+  }
 
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB'];
 
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const rawIndex = Math.log(bytes) / Math.log(k);
+  const index = Math.min(sizes.length - 1, Math.max(0, Math.floor(rawIndex)));
+  const value = bytes / Math.pow(k, index);
 
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  return `${parseFloat(value.toFixed(dm))} ${sizes[index]}`;
 }
 
 /**
@@ -153,6 +165,10 @@ export function formatRelativeTime(dateString: string): string {
  * @returns 格式化后的速度字符串，如 "1.23 MB/s"
  */
 export function formatSpeed(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return '0 B/s';
+  }
+
   return `${formatBytes(bytesPerSecond)}/s`;
 }
 

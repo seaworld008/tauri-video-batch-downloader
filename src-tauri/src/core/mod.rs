@@ -14,6 +14,7 @@ pub mod models;
 pub mod monitoring;
 pub mod progress_tracker;
 pub mod resume_downloader;
+pub mod runtime;
 pub mod youtube_downloader;
 
 #[cfg(all(test, feature = "integration-tests"))]

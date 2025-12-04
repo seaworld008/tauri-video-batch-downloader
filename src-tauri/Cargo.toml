@@ -21,7 +21,7 @@ futures = "0.3"
 async-trait = "0.1"
 
 # HTTP 客户端和下载
-reqwest = { version = "0.11", features = ["stream", "json", "rustls-tls"] }
+reqwest = { version = "0.11", features = ["stream", "json", "rustls-tls", "blocking"] }
 bytes = "1.5"
 
 # 错误处理
@@ -96,20 +96,8 @@ tempfile = "3.8"
 tokio-test = "0.4"
 
 [[bin]]
-name = "app"
-path = "src/main.rs"
-
-[[bin]]
-name = "app-simple"
-path = "src/main-simple.rs"
-
-[[bin]]
-name = "app-minimal"
-path = "src/main-minimal.rs"
-
-[[bin]]
 name = "video-downloader-pro"
-path = "src/main-fixed.rs"
+path = "src/main.rs"
 
 [features]
 default = ["custom-protocol"]
@@ -117,7 +105,7 @@ custom-protocol = ["tauri/custom-protocol"]
 integration-tests = []
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "processthreadsapi"] }
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "libloaderapi", "combaseapi"] }
 
 [profile.release]
 panic = "abort"

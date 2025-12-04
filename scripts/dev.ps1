@@ -1,43 +1,43 @@
-# 智能开发启动脚本
-# 优雅处理端口冲突和进程管理
+# Smart Development Startup Script
+# Handles port conflicts and process management gracefully
 
 param(
-    [switch]$Clean,     # 清理后重启
-    [switch]$Build,     # 构建模式
-    [switch]$Kill,      # 强制终止
-    [switch]$Check      # 仅检查状态
+    [switch]$Clean,     # Clean and restart
+    [switch]$Build,     # Build mode
+    [switch]$Kill,      # Force kill
+    [switch]$Check      # Check status only
 )
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
-# 配置
+# Configuration
 $VITE_PORT = 1420
 $HMR_PORT = 1421
 $PROJECT_NAME = "video-downloader-pro"
 
-# 颜色输出函数
+# Color Output Functions
 function Write-ColorText($Text, $Color = "White") {
     Write-Host $Text -ForegroundColor $Color
 }
 
 function Write-Success($Text) {
-    Write-ColorText "✅ $Text" "Green"
+    Write-ColorText "OK: $Text" "Green"
 }
 
 function Write-Warning($Text) {
-    Write-ColorText "⚠️ $Text" "Yellow"
+    Write-ColorText "WARN: $Text" "Yellow"
 }
 
 function Write-Error($Text) {
-    Write-ColorText "❌ $Text" "Red"
+    Write-ColorText "ERROR: $Text" "Red"
 }
 
 function Write-Info($Text) {
-    Write-ColorText "ℹ️ $Text" "Cyan"
+    Write-ColorText "INFO: $Text" "Cyan"
 }
 
-# 检查端口占用
+# Check if port is in use
 function Test-PortInUse($Port) {
     try {
         $connection = Test-NetConnection -ComputerName "localhost" -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue
@@ -47,7 +47,7 @@ function Test-PortInUse($Port) {
     }
 }
 
-# 查找占用端口的进程
+# Find process using port
 function Get-PortProcess($Port) {
     try {
         $netstat = netstat -ano | Select-String ":$Port "
@@ -62,25 +62,25 @@ function Get-PortProcess($Port) {
     return $null
 }
 
-# 优雅停止进程
+# Gracefully stop process
 function Stop-GracefulProcess($ProcessName) {
     $processes = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
     if ($processes) {
-        Write-Info "找到 $($processes.Count) 个 $ProcessName 进程"
+        Write-Info "Found $($processes.Count) processes for $ProcessName"
         foreach ($proc in $processes) {
             try {
-                # 首先尝试优雅关闭
+                # Try graceful close first
                 $proc.CloseMainWindow() | Out-Null
                 Start-Sleep -Seconds 2
                 
-                # 检查是否已关闭
+                # Check if exited
                 if (!$proc.HasExited) {
-                    Write-Warning "进程 $($proc.Id) 未响应，强制终止..."
+                    Write-Warning "Process $($proc.Id) not responding, killing..."
                     $proc.Kill()
                 }
-                Write-Success "进程 $($proc.Id) 已停止"
+                Write-Success "Process $($proc.Id) stopped"
             } catch {
-                Write-Warning "无法停止进程 $($proc.Id): $_"
+                Write-Warning "Could not stop process $($proc.Id): $_"
             }
         }
         Start-Sleep -Seconds 1
@@ -89,29 +89,29 @@ function Stop-GracefulProcess($ProcessName) {
     return $false
 }
 
-# 清理开发环境
+# Clear dev environment
 function Clear-DevEnvironment {
-    Write-Info "🧹 清理开发环境..."
+    Write-Info "Cleaning dev environment..."
     
-    # 停止相关进程
+    # Stop related processes
     $processNames = @("node", "vite", "tauri", "cargo")
     foreach ($name in $processNames) {
         if (Stop-GracefulProcess $name) {
-            Write-Success "已停止 $name 进程"
+            Write-Success "Stopped $name process"
         }
     }
     
-    # 清理端口
+    # Clear ports
     $ports = @($VITE_PORT, $HMR_PORT)
     foreach ($port in $ports) {
         $process = Get-PortProcess $port
         if ($process) {
-            Write-Warning "端口 $port 仍被进程 $($process.ProcessName) ($($process.Id)) 占用"
+            Write-Warning "Port $port still used by $($process.ProcessName) ($($process.Id))"
             try {
                 Stop-Process -Id $process.Id -Force
-                Write-Success "已释放端口 $port"
+                Write-Success "Released port $port"
             } catch {
-                Write-Error "无法释放端口 $port"
+                Write-Error "Could not release port $port"
             }
         }
     }
@@ -119,126 +119,126 @@ function Clear-DevEnvironment {
     Start-Sleep -Seconds 2
 }
 
-# 检查系统环境
+# Check system environment
 function Test-SystemEnvironment {
-    Write-Info "🔍 检查系统环境..."
+    Write-Info "Checking system environment..."
     
     $issues = @()
     
-    # 检查 Node.js
+    # Check Node.js
     try {
         $nodeVersion = node --version 2>$null
         if ($nodeVersion) {
             Write-Success "Node.js: $nodeVersion"
         } else {
-            $issues += "Node.js 未安装"
+            $issues += "Node.js not installed"
         }
     } catch {
-        $issues += "Node.js 不可用"
+        $issues += "Node.js unavailable"
     }
     
-    # 检查 pnpm
+    # Check pnpm
     try {
         $pnpmVersion = pnpm --version 2>$null
         if ($pnpmVersion) {
             Write-Success "pnpm: v$pnpmVersion"
         } else {
-            $issues += "pnpm 未安装"
+            $issues += "pnpm not installed"
         }
     } catch {
-        $issues += "pnpm 不可用"
+        $issues += "pnpm unavailable"
     }
     
-    # 检查 Rust
+    # Check Rust
     try {
         $rustVersion = rustc --version 2>$null
         if ($rustVersion) {
             Write-Success "Rust: $rustVersion"
         } else {
-            $issues += "Rust 未安装"
+            $issues += "Rust not installed"
         }
     } catch {
-        $issues += "Rust 不可用"
+        $issues += "Rust unavailable"
     }
     
-    # 检查端口状态
+    # Check ports
     if (Test-PortInUse $VITE_PORT) {
         $process = Get-PortProcess $VITE_PORT
         if ($process) {
-            Write-Warning "端口 $VITE_PORT 被占用 ($($process.ProcessName))"
-            $issues += "端口冲突"
+            Write-Warning "Port $VITE_PORT in use by ($($process.ProcessName))"
+            $issues += "Port conflict"
         }
     } else {
-        Write-Success "端口 $VITE_PORT 可用"
+        Write-Success "Port $VITE_PORT available"
     }
     
     return $issues
 }
 
-# 启动开发服务器
+# Start dev server
 function Start-DevServer {
-    Write-Info "🚀 启动开发服务器..."
+    Write-Info "Starting dev server..."
     
-    # 检查依赖是否安装
+    # Check dependencies
     if (!(Test-Path "node_modules")) {
-        Write-Info "📦 安装依赖..."
+        Write-Info "Installing dependencies..."
         pnpm install
         if ($LASTEXITCODE -ne 0) {
-            Write-Error "依赖安装失败"
+            Write-Error "Dependency install failed"
             exit 1
         }
     }
     
-    # 设置环境变量
+    # Set Env
     $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
     
-    Write-Info "启动 Tauri 开发模式..."
-    Write-Info "前端服务器: http://localhost:$VITE_PORT"
-    Write-Info "按 Ctrl+C 停止服务器"
+    Write-Info "Starting Tauri dev mode..."
+    Write-Info "Frontend: http://localhost:$VITE_PORT"
+    Write-Info "Press Ctrl+C to stop"
     
     try {
-        # 使用 Start-Process 在新窗口中运行，以便更好地处理信号
+        # Use Start-Process for new window
         pnpm dev
     } catch {
-        Write-Error "开发服务器启动失败: $_"
+        Write-Error "Dev server failed to start: $_"
         exit 1
     }
 }
 
-# 主逻辑
+# Main Logic
 function Main {
-    Write-ColorText "🎯 Video Downloader Pro - 开发助手" "Magenta"
+    Write-ColorText "Target: Video Downloader Pro - Dev Helper" "Magenta"
     Write-ColorText "=" * 50 "Gray"
     
-    # 处理参数
+    # Handle Params
     if ($Kill) {
-        Write-Warning "强制终止所有相关进程..."
+        Write-Warning "Force killing processes..."
         Clear-DevEnvironment
-        Write-Success "已清理完成"
+        Write-Success "Cleanup done"
         return
     }
     
     if ($Check) {
         $issues = Test-SystemEnvironment
         if ($issues.Count -eq 0) {
-            Write-Success "环境检查通过"
+            Write-Success "Environment check passed"
         } else {
-            Write-Error "发现问题:"
+            Write-Error "Issues found:"
             $issues | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
         }
         return
     }
     
     if ($Build) {
-        Write-Info "🔨 构建生产版本..."
+        Write-Info "Building production version..."
         pnpm build
         return
     }
     
-    # 环境检查
+    # Env Check
     $issues = Test-SystemEnvironment
-    if ($issues -contains "端口冲突") {
-        Write-Warning "检测到端口冲突，正在清理..."
+    if ($issues -contains "Port conflict") {
+        Write-Warning "Port conflict detected, cleaning..."
         Clear-DevEnvironment
     }
     
@@ -246,22 +246,22 @@ function Main {
         Clear-DevEnvironment
     }
     
-    if ($issues.Count -gt 0 -and !($issues -contains "端口冲突")) {
-        Write-Error "环境检查失败，请解决以下问题后重试:"
+    if ($issues.Count -gt 0 -and !($issues -contains "Port conflict")) {
+        Write-Error "Environment check failed, fix these:"
         $issues | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
         return
     }
     
-    # 启动开发服务器
+    # Start
     Start-DevServer
 }
 
-# 处理 Ctrl+C 信号
+# Handle Ctrl+C
 $null = Register-ObjectEvent -InputObject ([System.Console]) -EventName CancelKeyPress -Action {
-    Write-Host "`n🛑 正在优雅关闭..." -ForegroundColor Yellow
+    Write-Host "`nSTOP: Gracefully closing..." -ForegroundColor Yellow
     Clear-DevEnvironment
     exit 0
 }
 
-# 运行主逻辑
+# Run Main
 Main

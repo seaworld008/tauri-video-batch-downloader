@@ -169,22 +169,17 @@ export const VideoTaskSchema = applyVideoTaskValidations(VideoTaskBaseSchema);
 
 /**
  * 进度更新 Schema
+ * 放宽验证规则以提高健壮性，允许一些边缘情况
  */
 export const ProgressUpdateSchema = z.object({
   task_id: z.string().min(1, "任务ID不能为空"),
   downloaded_size: z.number().nonnegative(),
-  total_size: z.number().nonnegative().optional(),
-  speed: z.number().nonnegative(),
-  eta: z.number().nonnegative().optional()
-}).refine(data => {
-  // 确保下载大小不超过总大小
-  if (data.total_size && data.downloaded_size > data.total_size) {
-    return false;
-  }
-  return true;
-}, {
-  message: "下载进度数据不一致"
+  total_size: z.number().nonnegative().nullable().optional(),
+  speed: z.number(), // 允许任何数值，负数会在前端被规范化为0
+  eta: z.number().nullable().optional(),
+  progress: z.number().min(0).max(1.01).optional() // 允许略微超过1的值（浮点精度问题）
 });
+// 移除 refine 验证，因为在断点续传等场景下 downloaded_size 可能暂时超过 total_size
 
 /**
  * 导入数据 Schema - 支持CSV/Excel导入

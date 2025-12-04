@@ -1,0 +1,650 @@
+    Checking video-downloader-pro v1.0.0 (D:\develop-file\2-python-dev\03-video-downloader-tauri\video-downloader-tauri\src-tauri)
+warning: unused variable: `app`
+  --> src\main-minimal.rs:16:17
+   |
+16 |         .setup(|app| {
+   |                 ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: `video-downloader-pro` (bin "app-minimal") generated 1 warning
+warning: unused import: `csv_parser::*`
+  --> src\parsers\mod.rs:10:9
+   |
+10 | pub use csv_parser::*;
+   |         ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `excel_parser::*`
+  --> src\parsers\mod.rs:11:9
+   |
+11 | pub use excel_parser::*;
+   |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `m3u8_parser::*`
+  --> src\parsers\mod.rs:12:9
+   |
+12 | pub use m3u8_parser::*;
+   |         ^^^^^^^^^^^^^^
+
+warning: unused import: `encoding::*`
+  --> src\utils\mod.rs:11:9
+   |
+11 | pub use encoding::*;
+   |         ^^^^^^^^^^^
+
+warning: unused import: `file_utils::*`
+  --> src\utils\mod.rs:12:9
+   |
+12 | pub use file_utils::*;
+   |         ^^^^^^^^^^^^^
+
+warning: unused import: `network::*`
+  --> src\utils\mod.rs:13:9
+   |
+13 | pub use network::*;
+   |         ^^^^^^^^^^
+
+warning: unused import: `validation::*`
+  --> src\utils\mod.rs:14:9
+   |
+14 | pub use validation::*;
+   |         ^^^^^^^^^^^^^
+
+warning: fields `url`, `title`, `output_path`, and `video_info` are never read
+   --> src\commands\download.rs:324:9
+    |
+323 | pub struct CreateTaskRequest {
+    |            ----------------- fields in this struct
+324 |     pub url: String,
+    |         ^^^
+325 |     pub title: String,
+    |         ^^^^^
+326 |     pub output_path: String,
+    |         ^^^^^^^^^^^
+...
+329 |     pub video_info: Option<crate::core::models::VideoInfo>,
+    |         ^^^^^^^^^^
+    |
+    = note: `CreateTaskRequest` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `get_supported_formats` is never used
+   --> src\commands\import.rs:368:14
+    |
+368 | pub async fn get_supported_formats() -> Result<SupportedFormats, String> {
+    |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_RETRY_ATTEMPTS` is never used
+  --> src\core\error_handling.rs:25:11
+   |
+25 | pub const MAX_RETRY_ATTEMPTS: u32 = 10;
+   |           ^^^^^^^^^^^^^^^^^^
+
+warning: field `backoff_multiplier` is never read
+   --> src\core\error_handling.rs:191:9
+    |
+183 | pub struct RetryPolicy {
+    |            ----------- field in this struct
+...
+191 |     pub backoff_multiplier: f64,
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `RetryPolicy` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `max_attempts` and `backoff_multiplier` are never read
+   --> src\core\error_handling.rs:263:9
+    |
+262 | pub struct CategoryRetryPolicy {
+    |            ------------------- fields in this struct
+263 |     pub max_attempts: u32,
+    |         ^^^^^^^^^^^^
+264 |     pub base_delay: Duration,
+265 |     pub backoff_multiplier: f64,
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `CategoryRetryPolicy` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `failure_count`, `success_count`, `last_failure_time`, and `config` are never read
+   --> src\core\error_handling.rs:286:5
+    |
+282 | pub struct CircuitBreaker {
+    |            -------------- fields in this struct
+...
+286 |     failure_count: Arc<Mutex<u32>>,
+    |     ^^^^^^^^^^^^^
+287 |     /// Success count since half-open state
+288 |     success_count: Arc<Mutex<u32>>,
+    |     ^^^^^^^^^^^^^
+289 |     /// Timestamp of last state change
+290 |     last_failure_time: Arc<Mutex<Option<Instant>>>,
+    |     ^^^^^^^^^^^^^^^^^
+291 |     /// Configuration
+292 |     config: CircuitBreakerConfig,
+    |     ^^^^^^
+    |
+    = note: `CircuitBreaker` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `failure_threshold`, `success_threshold`, `recovery_timeout`, and `failure_window` are never read
+   --> src\core\error_handling.rs:299:9
+    |
+297 | pub struct CircuitBreakerConfig {
+    |            -------------------- fields in this struct
+298 |     /// Number of failures to trigger open state
+299 |     pub failure_threshold: u32,
+    |         ^^^^^^^^^^^^^^^^^
+300 |     /// Number of successes needed to close from half-open
+301 |     pub success_threshold: u32,
+    |         ^^^^^^^^^^^^^^^^^
+302 |     /// Timeout before attempting half-open state
+303 |     pub recovery_timeout: Duration,
+    |         ^^^^^^^^^^^^^^^^
+304 |     /// Time window for failure counting
+305 |     pub failure_window: Duration,
+    |         ^^^^^^^^^^^^^^
+    |
+    = note: `CircuitBreakerConfig` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `call`, `should_attempt_call`, `record_success`, `record_failure`, and `failure_count` are never used
+   --> src\core\error_handling.rs:332:18
+    |
+319 | impl CircuitBreaker {
+    | ------------------- methods in this implementation
+...
+332 |     pub async fn call<F, T, E>(&self, f: F) -> Result<T, CircuitBreakerError<E>>
+    |                  ^^^^
+...
+363 |     async fn should_attempt_call(&self) -> Result<bool, CircuitBreakerError<()>> {
+    |              ^^^^^^^^^^^^^^^^^^^
+...
+395 |     async fn record_success(&self) {
+    |              ^^^^^^^^^^^^^^
+...
+423 |     async fn record_failure(&self) {
+    |              ^^^^^^^^^^^^^^
+...
+452 |     pub async fn failure_count(&self) -> u32 {
+    |                  ^^^^^^^^^^^^^
+
+warning: enum `CircuitBreakerError` is never used
+   --> src\core\error_handling.rs:459:10
+    |
+459 | pub enum CircuitBreakerError<E> {
+    |          ^^^^^^^^^^^^^^^^^^^
+
+warning: function `authentication_error` is never used
+   --> src\core\error_handling.rs:732:12
+    |
+732 |     pub fn authentication_error(message: impl Into<String>, is_retryable: bool) -> DownloadError {
+    |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `data_integrity_error` is never used
+   --> src\core\error_handling.rs:789:12
+    |
+789 |     pub fn data_integrity_error(
+    |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `system_error` is never used
+   --> src\core\error_handling.rs:823:12
+    |
+823 |     pub fn system_error(
+    |            ^^^^^^^^^^^^
+
+warning: field `deep_detection` is never read
+   --> src\core\file_parser.rs:111:5
+    |
+107 | pub struct EncodingDetector {
+    |            ---------------- field in this struct
+...
+111 |     deep_detection: bool,
+    |     ^^^^^^^^^^^^^^
+
+warning: methods `with_buffer_size`, `with_deep_detection`, and `with_priority_encodings` are never used
+   --> src\core\file_parser.rs:202:12
+    |
+195 | impl EncodingDetector {
+    | --------------------- methods in this implementation
+...
+202 |     pub fn with_buffer_size(mut self, size: usize) -> Self {
+    |            ^^^^^^^^^^^^^^^^
+...
+208 |     pub fn with_deep_detection(mut self, enabled: bool) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+214 |     pub fn with_priority_encodings(mut self, encodings: Vec<&'static Encoding>) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `parse` is never used
+    --> src\core\file_parser.rs:1435:18
+     |
+1433 | impl FileParser {
+     | --------------- associated function in this implementation
+1434 |     /// 蹇€熻В鏋愭枃浠讹紙浣跨敤榛樿閰嶇疆锛?1435 |     pub async fn parse<P: AsRef<Path>>(file_path: P) -> Result<(Vec<VideoRecord>, ParseStats)> {
+     |                  ^^^^^
+
+warning: fields `concurrent` and `max_concurrent` are never read
+   --> src\core\integrity_checker.rs:173:9
+    |
+169 | pub struct IntegrityConfig {
+    |            --------------- fields in this struct
+...
+173 |     pub concurrent: bool,
+    |         ^^^^^^^^^^
+174 |     /// Maximum number of concurrent hash computations
+175 |     pub max_concurrent: usize,
+    |         ^^^^^^^^^^^^^^
+    |
+    = note: `IntegrityConfig` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `active_checks` is never read
+   --> src\core\integrity_checker.rs:224:5
+    |
+218 | pub struct IntegrityChecker {
+    |            ---------------- field in this struct
+...
+224 |     active_checks: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    |     ^^^^^^^^^^^^^
+    |
+    = note: `IntegrityChecker` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: multiple associated items are never used
+   --> src\core\integrity_checker.rs:238:12
+    |
+227 | impl IntegrityChecker {
+    | --------------------- associated items in this implementation
+...
+238 |     pub fn with_config(config: IntegrityConfig) -> Self {
+    |            ^^^^^^^^^^^
+...
+247 |     pub fn set_progress_callback(&mut self, sender: mpsc::UnboundedSender<IntegrityProgress>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+341 |     pub async fn verify_integrity(
+    |                  ^^^^^^^^^^^^^^^^
+...
+372 |     pub async fn compute_multi_hash(
+    |                  ^^^^^^^^^^^^^^^^^^
+...
+599 |     fn clone_for_task(&self) -> Self {
+    |        ^^^^^^^^^^^^^^
+...
+608 |     pub fn recommend_algorithm(file_size: u64, security_priority: bool) -> HashAlgorithm {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+629 |     pub async fn cancel_all(&self) {
+    |                  ^^^^^^^^^^
+...
+638 |     pub async fn active_check_count(&self) -> usize {
+    |                  ^^^^^^^^^^^^^^^^^^
+
+warning: function `detect_algorithm_from_hash` is never used
+   --> src\core\integrity_checker.rs:648:12
+    |
+648 |     pub fn detect_algorithm_from_hash(hash: &str) -> Option<HashAlgorithm> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_valid_hash` is never used
+   --> src\core\integrity_checker.rs:671:12
+    |
+671 |     pub fn is_valid_hash(hash: &str) -> bool {
+    |            ^^^^^^^^^^^^^
+
+warning: function `format_result` is never used
+   --> src\core\integrity_checker.rs:677:12
+    |
+677 |     pub fn format_result(result: &IntegrityResult) -> String {
+    |            ^^^^^^^^^^^^^
+
+warning: function `humanize_bytes` is never used
+   --> src\core\integrity_checker.rs:699:8
+    |
+699 |     fn humanize_bytes(bytes: u64) -> String {
+    |        ^^^^^^^^^^^^^^
+
+warning: field `url` is never read
+  --> src\core\m3u8_downloader.rs:67:9
+   |
+65 | pub struct M3U8Playlist {
+   |            ------------ field in this struct
+66 |     /// 鎾斁鍒楄〃URL
+67 |     pub url: String,
+   |         ^^^
+   |
+   = note: `M3U8Playlist` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `duration`, `downloaded`, and `local_path` are never read
+  --> src\core\m3u8_downloader.rs:92:9
+   |
+86 | pub struct M3U8Segment {
+   |            ----------- fields in this struct
+...
+92 |     pub duration: f64,
+   |         ^^^^^^^^
+...
+96 |     pub downloaded: bool,
+   |         ^^^^^^^^^^
+97 |     /// 鏈湴鏂囦欢璺緞
+98 |     pub local_path: Option<PathBuf>,
+   |         ^^^^^^^^^^
+   |
+   = note: `M3U8Segment` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `is_paused` is never read
+   --> src\core\m3u8_downloader.rs:123:5
+    |
+117 | pub struct M3U8Downloader {
+    |            -------------- field in this struct
+...
+123 |     is_paused: Arc<AtomicBool>,
+    |     ^^^^^^^^^
+
+warning: methods `set_progress_callback`, `pause_download`, `resume_download`, and `cancel_download` are never used
+   --> src\core\m3u8_downloader.rs:150:12
+    |
+126 | impl M3U8Downloader {
+    | ------------------- methods in this implementation
+...
+150 |     pub fn set_progress_callback(&mut self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+781 |     pub async fn pause_download(&self, task_id: &str) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^
+...
+788 |     pub async fn resume_download(&self, task_id: &str) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^
+...
+795 |     pub async fn cancel_download(&self, task_id: &str) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^
+
+warning: type alias `EventReceiver` is never used
+   --> src\core\manager.rs:170:10
+    |
+170 | pub type EventReceiver = mpsc::UnboundedReceiver<DownloadEvent>;
+    |          ^^^^^^^^^^^^^
+
+warning: methods `add_point`, `get_range`, and `clear_old_data` are never used
+   --> src\core\monitoring.rs:208:12
+    |
+200 | impl<T> TimeSeries<T> {
+    | --------------------- methods in this implementation
+...
+208 |     pub fn add_point(&mut self, timestamp: u64, value: T) {
+    |            ^^^^^^^^^
+...
+222 |     pub fn get_range(
+    |            ^^^^^^^^^
+...
+233 |     pub fn clear_old_data(&mut self, cutoff_timestamp: u64) {
+    |            ^^^^^^^^^^^^^^
+
+warning: fields `config`, `monitoring_tasks`, `system_info`, `network_baseline`, `performance_baseline`, and `is_running` are never read
+   --> src\core\monitoring.rs:323:5
+    |
+321 | pub struct MonitoringSystem {
+    |            ---------------- fields in this struct
+322 |     /// Configuration for the monitoring system
+323 |     config: MonitoringConfig,
+    |     ^^^^^^
+...
+335 |     monitoring_tasks: Vec<tokio::task::JoinHandle<()>>,
+    |     ^^^^^^^^^^^^^^^^
+336 |     /// System information provider
+337 |     system_info: Arc<Mutex<System>>,
+    |     ^^^^^^^^^^^
+338 |     /// Network statistics baseline
+339 |     network_baseline: Arc<RwLock<Option<(u64, u64, Instant)>>>, // rx_bytes, tx_bytes, timestamp
+    |     ^^^^^^^^^^^^^^^^
+340 |     /// Performance baseline for calculations
+341 |     performance_baseline: Arc<RwLock<Option<PerformanceBaseline>>>,
+    |     ^^^^^^^^^^^^^^^^^^^^
+342 |     /// Running flag
+343 |     is_running: Arc<RwLock<bool>>,
+    |     ^^^^^^^^^^
+
+warning: multiple associated items are never used
+    --> src\core\monitoring.rs:376:18
+     |
+355  | impl MonitoringSystem {
+     | --------------------- associated items in this implementation
+...
+376  |     pub async fn start(&mut self) -> AppResult<()> {
+     |                  ^^^^^
+...
+425  |     pub async fn stop(&mut self) -> AppResult<()> {
+     |                  ^^^^
+...
+450  |     async fn start_system_metrics_monitoring(&self) -> tokio::task::JoinHandle<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+482  |     async fn start_download_stats_monitoring(&self) -> tokio::task::JoinHandle<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+514  |     async fn start_performance_monitoring(&self) -> tokio::task::JoinHandle<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+545  |     async fn start_dashboard_broadcasting(&self) -> tokio::task::JoinHandle<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+607  |     async fn start_data_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+...
+663  |     async fn collect_system_metrics(
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+766  |     async fn collect_download_statistics() -> AppResult<DownloadStatistics> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+800  |     async fn collect_performance_metrics(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1074 |     pub async fn record_error_event(
+     |                  ^^^^^^^^^^^^^^^^^^
+...
+1107 |     pub async fn get_system_metrics_history(
+     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1121 |     pub async fn get_download_stats_history(
+     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1135 |     pub async fn get_performance_metrics_history(
+     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1201 |     pub fn get_config(&self) -> &MonitoringConfig {
+     |            ^^^^^^^^^^
+...
+1206 |     pub async fn update_config(&mut self, new_config: MonitoringConfig) -> AppResult<()> {
+     |                  ^^^^^^^^^^^^^
+
+warning: struct `PrometheusExporter` is never constructed
+    --> src\core\monitoring.rs:1429:12
+     |
+1429 | pub struct PrometheusExporter {
+     |            ^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new` and `export_metrics` are never used
+    --> src\core\monitoring.rs:1434:12
+     |
+1433 | impl PrometheusExporter {
+     | ----------------------- associated items in this implementation
+1434 |     pub fn new(monitoring_system: Arc<MonitoringSystem>) -> Self {
+     |            ^^^
+...
+1438 |     pub async fn export_metrics(&self) -> AppResult<String> {
+     |                  ^^^^^^^^^^^^^^
+
+warning: field `progress_receiver` is never read
+   --> src\core\progress_tracker.rs:387:5
+    |
+381 | pub struct ProgressTrackingManager {
+    |            ----------------------- field in this struct
+...
+387 |     progress_receiver: Arc<RwLock<Option<mpsc::UnboundedReceiver<EnhancedProgressStats>>>>,
+    |     ^^^^^^^^^^^^^^^^^
+    |
+    = note: `ProgressTrackingManager` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: method `take_progress_receiver` is never used
+   --> src\core\progress_tracker.rs:457:18
+    |
+390 | impl ProgressTrackingManager {
+    | ---------------------------- method in this implementation
+...
+457 |     pub async fn take_progress_receiver(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `remaining` is never used
+  --> src\core\resume_downloader.rs:68:12
+   |
+49 | impl ChunkInfo {
+   | -------------- method in this implementation
+...
+68 |     pub fn remaining(&self) -> u64 {
+   |            ^^^^^^^^^
+
+warning: methods `progress` and `update_chunk_progress` are never used
+   --> src\core\resume_downloader.rs:148:12
+    |
+126 | impl ResumeInfo {
+    | --------------- methods in this implementation
+...
+148 |     pub fn progress(&self) -> f64 {
+    |            ^^^^^^^^
+...
+164 |     pub fn update_chunk_progress(&mut self, chunk_index: usize, downloaded: u64) {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `cleanup_task` is never used
+   --> src\core\resume_downloader.rs:803:18
+    |
+221 | impl ResumeDownloader {
+    | --------------------- method in this implementation
+...
+803 |     pub async fn cleanup_task(&self, task_id: &str) -> Result<()> {
+    |                  ^^^^^^^^^^^^
+
+warning: methods `download_video_simple`, `download_audio`, `download_thumbnail`, `get_config`, and `update_config` are never used
+    --> src\core\youtube_downloader.rs:444:18
+     |
+252  | impl YoutubeDownloader {
+     | ---------------------- methods in this implementation
+...
+444  |     pub async fn download_video_simple(
+     |                  ^^^^^^^^^^^^^^^^^^^^^
+...
+460  |     pub async fn download_audio(
+     |                  ^^^^^^^^^^^^^^
+...
+480  |     pub async fn download_thumbnail(&self, url: &str, output_filename: &str) -> AppResult<PathBuf> {
+     |                  ^^^^^^^^^^^^^^^^^^
+...
+1069 |     pub fn get_config(&self) -> &YoutubeDownloaderConfig {
+     |            ^^^^^^^^^^
+...
+1074 |     pub async fn update_config(&mut self, new_config: YoutubeDownloaderConfig) -> AppResult<()> {
+     |                  ^^^^^^^^^^^^^
+
+warning: function `parse_csv_from_reader` is never used
+  --> src\parsers\csv_parser.rs:14:8
+   |
+14 | pub fn parse_csv_from_reader<R: BufRead>(reader: R) -> Result<Vec<CsvRecord>> {
+   |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_excel_file` is never used
+  --> src\parsers\excel_parser.rs:15:8
+   |
+15 | pub fn parse_excel_file<P: AsRef<Path>>(path: P) -> Result<Vec<ExcelRecord>> {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `datatype_to_string` is never used
+  --> src\parsers\excel_parser.rs:33:4
+   |
+33 | fn datatype_to_string(data: &DataType) -> String {
+   |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_m3u8_content` is never used
+  --> src\parsers\m3u8_parser.rs:22:8
+   |
+22 | pub fn parse_m3u8_content(content: &str, base_url: Option<&str>) -> Result<M3u8Playlist> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `resolve_url` is never used
+  --> src\parsers\m3u8_parser.rs:73:4
+   |
+73 | fn resolve_url(base: &str, relative: &str) -> Result<String> {
+   |    ^^^^^^^^^^^
+
+warning: function `detect_video_type` is never used
+ --> src\utils\encoding.rs:8:8
+  |
+8 | pub fn detect_video_type(url: &str) -> &str {
+  |        ^^^^^^^^^^^^^^^^^
+
+warning: function `detect_encoding` is never used
+  --> src\utils\encoding.rs:19:8
+   |
+19 | pub fn detect_encoding(data: &[u8]) -> &'static Encoding {
+   |        ^^^^^^^^^^^^^^^
+
+warning: function `ensure_dir_exists` is never used
+ --> src\utils\file_utils.rs:8:8
+  |
+8 | pub fn ensure_dir_exists(path: &Path) -> Result<()> {
+  |        ^^^^^^^^^^^^^^^^^
+
+warning: function `get_file_extension` is never used
+  --> src\utils\file_utils.rs:17:8
+   |
+17 | pub fn get_file_extension(filename: &str) -> Option<&str> {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: constant `DEFAULT_TIMEOUT` is never used
+ --> src\utils\network.rs:7:11
+  |
+7 | pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+  |           ^^^^^^^^^^^^^^^
+
+warning: function `get_user_agent` is never used
+  --> src\utils\network.rs:10:8
+   |
+10 | pub fn get_user_agent() -> &'static str {
+   |        ^^^^^^^^^^^^^^
+
+warning: function `check_connectivity` is never used
+  --> src\utils\network.rs:15:14
+   |
+15 | pub async fn check_connectivity(url: &str) -> Result<bool> {
+   |              ^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_url` is never used
+ --> src\utils\validation.rs:7:8
+  |
+7 | pub fn validate_url(url: &str) -> Result<Url> {
+  |        ^^^^^^^^^^^^
+
+warning: function `is_valid_video_url` is never used
+  --> src\utils\validation.rs:12:8
+   |
+12 | pub fn is_valid_video_url(url: &str) -> bool {
+   |        ^^^^^^^^^^^^^^^^^^
+
+warning: `video-downloader-pro` (bin "app") generated 59 warnings (7 duplicates)
+error[E0061]: this method takes 1 argument but 0 arguments were supplied
+   --> src\main-fixed.rs:240:33
+    |
+240 |                         manager.start().await
+    |                                 ^^^^^-- argument #1 of type `UnboundedSender<DownloadEvent>` is missing
+    |
+note: method defined here
+   --> src\core\manager.rs:334:18
+    |
+334 |     pub async fn start(&mut self, sender: EventSender) -> AppResult<()> {
+    |                  ^^^^^            -------------------
+help: provide the argument
+    |
+240 |                         manager.start(/* UnboundedSender<DownloadEvent> */).await
+    |                                       ++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0061`.
+warning: `video-downloader-pro` (bin "video-downloader-pro") generated 7 warnings
+error: could not compile `video-downloader-pro` (bin "video-downloader-pro") due to 1 previous error; 7 warnings emitted

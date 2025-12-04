@@ -44,7 +44,10 @@ pub async fn update_config(
 
 /// Reset configuration to default values
 #[tauri::command]
-pub async fn reset_config(_app: AppHandle, state: State<'_, AppState>) -> Result<AppConfig, String> {
+pub async fn reset_config(
+    _app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppConfig, String> {
     info!("🔄 Resetting configuration to defaults");
 
     match reset_config_impl(&state).await {

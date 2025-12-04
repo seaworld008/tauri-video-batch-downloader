@@ -15,7 +15,7 @@ function App() {
 
   useEffect(() => {
     // 初始化进度监听器
-    initializeProgressListener();
+    void initializeProgressListener();
 
     const initializeApp = async () => {
       try {

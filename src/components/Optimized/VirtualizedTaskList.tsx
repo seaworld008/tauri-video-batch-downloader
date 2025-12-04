@@ -10,7 +10,7 @@
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
-import type { VideoTask } from '../../types';
+import type { VideoTask, TaskStatus } from '../../types';
 
 interface VirtualizedTaskListProps {
   overscan?: number; // 缓冲区项目数量
@@ -23,6 +23,15 @@ interface VirtualItem {
   top: number;
   height: number;
 }
+
+const STATUS_PRIORITY: Record<TaskStatus, number> = {
+  downloading: 0,
+  paused: 1,
+  failed: 2,
+  pending: 3,
+  completed: 4,
+  cancelled: 5,
+};
 
 // 工具函数
 function formatSpeed(bytesPerSecond: number): string {
@@ -139,11 +148,13 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     filterStatus,
     searchQuery,
     selectedTasks,
-    toggleTaskSelection
+    toggleTaskSelection,
+    sortBy,
+    sortDirection
   } = useDownloadStore();
 
   // 本地计算过滤列表 (如果 Store 没有直接提供)
-  const displayedTasks = useMemo(() => {
+  const filteredTasks = useMemo(() => {
     let result = tasks;
 
     // 状态过滤
@@ -159,6 +170,36 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
 
     return result;
   }, [tasks, filterStatus, searchQuery]);
+
+  const sortedTasks = useMemo(() => {
+    const result = [...filteredTasks];
+
+    return result.sort((a, b) => {
+      const priorityDiff =
+        (STATUS_PRIORITY[a.status] ?? Number.MAX_SAFE_INTEGER) -
+        (STATUS_PRIORITY[b.status] ?? Number.MAX_SAFE_INTEGER);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+
+      let aValue: any = (a as any)[sortBy];
+      let bValue: any = (b as any)[sortBy];
+
+      if (sortBy === 'created_at' || sortBy === 'updated_at') {
+        aValue = new Date(aValue).getTime();
+        bValue = new Date(bValue).getTime();
+      }
+
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        aValue = aValue.toLowerCase();
+        bValue = bValue.toLowerCase();
+      }
+
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredTasks, sortBy, sortDirection]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -196,30 +237,30 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
   const visibleRange = useMemo(() => {
     const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
     const endIndex = Math.min(
-      displayedTasks.length - 1,
+      sortedTasks.length - 1,
       Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
     );
 
     return { startIndex, endIndex };
-  }, [scrollTop, itemHeight, containerHeight, overscan, displayedTasks.length]);
+  }, [scrollTop, itemHeight, containerHeight, overscan, sortedTasks.length]);
 
   // 生成虚拟项目列表
   const virtualItems = useMemo<VirtualItem[]>(() => {
     const items: VirtualItem[] = [];
     for (let i = visibleRange.startIndex; i <= visibleRange.endIndex; i++) {
-      if (i < displayedTasks.length) {
+      if (i < sortedTasks.length) {
         items.push({
           index: i,
-          task: displayedTasks[i],
+          task: sortedTasks[i],
           top: i * itemHeight,
           height: itemHeight
         });
       }
     }
     return items;
-  }, [visibleRange, displayedTasks, itemHeight]);
+  }, [visibleRange, sortedTasks, itemHeight]);
 
-  const totalHeight = displayedTasks.length * itemHeight;
+  const totalHeight = sortedTasks.length * itemHeight;
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
@@ -261,7 +302,7 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
             />
           ))}
 
-          {displayedTasks.length === 0 && (
+          {sortedTasks.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center text-gray-400">
               <p>没有符合条件的任务</p>
             </div>

@@ -40,7 +40,7 @@
 - **Windows 10/11**, macOS 10.15+, 或 Ubuntu 18.04+
 - **Node.js 18+** 和 **pnpm 8+**
 - **Rust 1.70+** 和 **Cargo**
-- **WebView2** (Windows) 或系统 WebKit
+- **WebView2** (Windows) 或系统 WebKit（Windows 10/11 安装包已内置并在启动时自动检测，详见 `docs/windows-compatibility.md`）
 
 ### 安装依赖
 ```bash

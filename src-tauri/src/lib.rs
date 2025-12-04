@@ -16,6 +16,7 @@ pub use core::{
     m3u8_downloader::M3U8Downloader,
     manager::DownloadManager,
     models::{DownloadConfig, ImportedData, ProgressUpdate, TaskStatus, VideoTask},
+    runtime::{spawn_download_runtime, DownloadRuntimeHandle},
     youtube_downloader::YoutubeDownloader,
 };
 
@@ -29,6 +30,7 @@ pub struct AppState {
     pub download_manager: Arc<tokio::sync::RwLock<DownloadManager>>,
     pub http_downloader: Arc<tokio::sync::RwLock<HttpDownloader>>,
     pub config: Arc<tokio::sync::RwLock<AppConfig>>,
+    pub download_runtime: DownloadRuntimeHandle,
 }
 
 impl AppState {
@@ -57,12 +59,16 @@ impl AppState {
             config.system = Some(core::config::SystemConfig::default());
         }
 
+        let download_manager = Arc::new(tokio::sync::RwLock::new(DownloadManager::new(
+            download_config,
+        )?));
+        let download_runtime = spawn_download_runtime(download_manager.clone());
+
         Ok(Self {
-            download_manager: Arc::new(tokio::sync::RwLock::new(DownloadManager::new(
-                download_config,
-            )?)),
+            download_manager,
             http_downloader: Arc::new(tokio::sync::RwLock::new(http_downloader)),
             config: Arc::new(tokio::sync::RwLock::new(config)),
+            download_runtime,
         })
     }
 
@@ -76,10 +82,7 @@ impl AppState {
                     );
                     let default_cfg = AppConfig::default();
                     if let Err(save_err) = default_cfg.save() {
-                        tracing::warn!(
-                            "Failed to persist default configuration: {}",
-                            save_err
-                        );
+                        tracing::warn!("Failed to persist default configuration: {}", save_err);
                     }
                     default_cfg
                 } else {
@@ -93,10 +96,7 @@ impl AppState {
                 );
                 let default_cfg = AppConfig::default();
                 if let Err(save_err) = default_cfg.save() {
-                    tracing::warn!(
-                        "Failed to persist default configuration: {}",
-                        save_err
-                    );
+                    tracing::warn!("Failed to persist default configuration: {}", save_err);
                 }
                 default_cfg
             }
@@ -141,6 +141,3 @@ mod tests {
         assert!(!NAME.is_empty());
     }
 }
-
-
-

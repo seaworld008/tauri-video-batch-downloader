@@ -13,6 +13,7 @@ use anyhow::{anyhow, bail, Result};
 use cbc::Decryptor;
 use cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use hex;
+use parking_lot::RwLock as ParkingRwLock;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -118,8 +119,8 @@ pub struct M3U8Downloader {
     config: M3U8DownloaderConfig,
     client: Client,
     active_downloads: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+    progress_tx: Arc<ParkingRwLock<Option<mpsc::UnboundedSender<(String, DownloadStats)>>>>,
     semaphore: Arc<Semaphore>,
-    progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
     is_paused: Arc<AtomicBool>,
 }
 
@@ -140,15 +141,15 @@ impl M3U8Downloader {
             config,
             client,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            progress_tx: Arc::new(ParkingRwLock::new(None)),
             semaphore,
-            progress_tx: None,
             is_paused: Arc::new(AtomicBool::new(false)),
         })
     }
 
     /// 设置进度回调
-    pub fn set_progress_callback(&mut self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
-        self.progress_tx = Some(tx);
+    pub fn set_progress_callback(&self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
+        *self.progress_tx.write() = Some(tx);
     }
 
     /// 下载M3U8流
@@ -159,7 +160,6 @@ impl M3U8Downloader {
         output_path: &str,
     ) -> Result<()> {
         tracing::info!("开始下载M3U8流: {}", m3u8_url);
-
         // 解析M3U8播放列表
         let playlist = self.parse_m3u8_playlist(m3u8_url).await?;
         tracing::info!(
@@ -202,7 +202,13 @@ impl M3U8Downloader {
 
         // 下载所有片段
         let result = self
-            .download_segments(task_id, &playlist, &task_temp_dir, cancel_flag.clone())
+            .download_segments(
+                task_id,
+                &playlist,
+                &task_temp_dir,
+                cancel_flag.clone(),
+                Arc::clone(&self.is_paused),
+            )
             .await;
 
         // 清理活跃下载记录
@@ -448,6 +454,7 @@ impl M3U8Downloader {
         playlist: &M3U8Playlist,
         temp_dir: &Path,
         cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<Vec<PathBuf>> {
         tracing::info!("开始下载 {} 个片段", playlist.segments.len());
 
@@ -471,6 +478,9 @@ impl M3U8Downloader {
         let start_time = Instant::now();
 
         for (index, segment) in playlist.segments.iter().enumerate() {
+            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!("下载被取消"));
+            }
             let segment_file = temp_dir.join(format!("segment_{:06}.ts", index));
             segment_files.push(segment_file.clone());
 
@@ -481,18 +491,20 @@ impl M3U8Downloader {
             let cancel_flag = Arc::clone(&cancel_flag);
             let downloaded_count = Arc::clone(&downloaded_count);
             let downloaded_bytes = Arc::clone(&downloaded_bytes);
-            let progress_tx = self.progress_tx.clone();
             let task_id = task_id.to_string();
+            let progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>> =
+                { self.progress_tx.read().clone() };
             let byte_range = segment.byte_range;
             let encryption = segment.encryption.clone();
             let segment_index = segment.index;
             let total_bytes_hint = total_bytes_hint;
             let start_time = start_time;
+            let pause_flag = Arc::clone(&pause_flag);
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
 
-                if cancel_flag.load(Ordering::Relaxed) {
+                if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
                     return Err(anyhow::anyhow!("下载被取消"));
                 }
 
@@ -511,6 +523,8 @@ impl M3U8Downloader {
                     byte_range,
                     segment_index,
                     encryption,
+                    cancel_flag.clone(),
+                    pause_flag.clone(),
                 )
                 .await
                 .map_err(|e| {
@@ -534,13 +548,19 @@ impl M3U8Downloader {
                 };
 
                 let (progress, total_bytes_stat, eta) = if let Some(total_hint) = total_bytes_hint {
-                    let pct = (total_written as f64 / total_hint as f64).min(1.0);
-                    let eta = if speed > 0.0 && total_written < total_hint {
+                    let mut pct = (total_written as f64 / total_hint as f64).min(1.0);
+                    let mut remaining_eta = if speed > 0.0 && total_written < total_hint {
                         Some(((total_hint - total_written) as f64 / speed) as u64)
                     } else {
                         None
                     };
-                    (pct, Some(total_hint), eta)
+                    let mut total_for_event = total_hint;
+                    if total_written > total_hint {
+                        total_for_event = total_written;
+                        pct = 1.0;
+                        remaining_eta = None;
+                    }
+                    (pct, Some(total_for_event), remaining_eta)
                 } else {
                     (
                         current_downloaded as f64 / total_segments as f64,
@@ -559,7 +579,7 @@ impl M3U8Downloader {
                         start_time: chrono::Utc::now(),
                         last_update: chrono::Utc::now(),
                     };
-                    tx.send((task_id.clone(), stats)).ok();
+                    let _ = tx.send((task_id.clone(), stats));
                 }
 
                 tracing::debug!(
@@ -592,10 +612,15 @@ impl M3U8Downloader {
         byte_range: Option<(u64, u64)>,
         segment_index: usize,
         encryption: Option<M3U8Encryption>,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<u64> {
         let mut retry_count = 0;
 
         while retry_count <= config.retry_attempts {
+            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!("下载被取消"));
+            }
             match Self::download_segment_attempt(
                 client,
                 segment_url,
@@ -603,6 +628,8 @@ impl M3U8Downloader {
                 byte_range,
                 segment_index,
                 encryption.clone(),
+                cancel_flag.clone(),
+                pause_flag.clone(),
             )
             .await
             {
@@ -635,7 +662,12 @@ impl M3U8Downloader {
         byte_range: Option<(u64, u64)>,
         segment_index: usize,
         encryption: Option<M3U8Encryption>,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<u64> {
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            bail!("下载被取消");
+        }
         let mut request = client.get(segment_url);
         if let Some((start, end)) = byte_range {
             request = request.header("Range", format!("bytes={}-{}", start, end));
@@ -659,6 +691,9 @@ impl M3U8Downloader {
         }
 
         let mut data = response.bytes().await?.to_vec();
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            bail!("下载被取消");
+        }
         if let Some(enc) = encryption {
             if enc.method.to_uppercase() == "AES-128" {
                 Self::decrypt_segment_data(&mut data, &enc, segment_index)?;

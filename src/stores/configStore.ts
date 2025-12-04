@@ -136,12 +136,16 @@ export const useConfigStore = create<ConfigState>()(
         try {
           set({ isLoading: true });
           const config = await invoke<AppConfig>('get_config');
-          set({ config: mergeConfigWithDefaults(config), isLoading: false });
+          const mergedConfig = mergeConfigWithDefaults(config);
+          set({ config: mergedConfig, isLoading: false });
+          useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
         } catch (error) {
           set({ isLoading: false });
           handleError('加载配置', error, false); // 不显示Toast，因为会使用默认配置
           // 如果加载失败，使用默认配置
-          set({ config: mergeConfigWithDefaults() });
+          const fallbackConfig = mergeConfigWithDefaults();
+          set({ config: fallbackConfig });
+          useDownloadStore.getState().setDownloadConfig(fallbackConfig.download);
         }
       },
 
@@ -173,8 +177,9 @@ export const useConfigStore = create<ConfigState>()(
               ...(newConfig.advanced ?? {}),
             },
           });
-          await invoke('update_config', { newConfig: mergedConfig });
-          set({ config: mergedConfig });
+        await invoke('update_config', { newConfig: mergedConfig, new_config: mergedConfig });
+        set({ config: mergedConfig });
+        useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
           toast.success('配置已更新');
         } catch (error) {
           handleError('更新配置', error);
@@ -189,14 +194,14 @@ export const useConfigStore = create<ConfigState>()(
           download: { ...currentConfig.download, ...newDownloadConfig },
         };
         await get().updateConfig(updatedConfig);
-        // Sync to downloadStore
-        useDownloadStore.getState().setDownloadConfig(newDownloadConfig);
       },
 
       resetConfig: async () => {
         try {
           const resetConfig = await invoke<AppConfig>('reset_config');
-          set({ config: mergeConfigWithDefaults(resetConfig) });
+          const normalizedConfig = mergeConfigWithDefaults(resetConfig);
+          set({ config: normalizedConfig });
+          useDownloadStore.getState().setDownloadConfig(normalizedConfig.download);
           toast.success('配置已重置为默认值');
         } catch (error) {
           handleError('重置配置', error);

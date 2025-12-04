@@ -1,9 +1,70 @@
 //! Download management commands
 
 use serde::Deserialize;
-use tauri::{command, State};
+use tauri::{command, Manager, State};
 
 use crate::{core::models::*, AppState};
+
+/// 调试命令：测试下载系统是否工作
+#[command]
+pub async fn debug_download_test(
+    task_id: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    tracing::info!("🧪 [DEBUG_TEST] Starting debug test for task: {}", task_id);
+
+    // 1. 检查 manager 是否可访问
+    let manager_check = {
+        let manager = state.download_manager.read().await;
+        format!("Manager is_running: {}", manager.is_running())
+    };
+    tracing::info!("🧪 [DEBUG_TEST] {}", manager_check);
+
+    // 2. 检查 event_sender 是否设置
+    let event_sender_check = {
+        let manager = state.download_manager.read().await;
+        if manager.has_event_sender() {
+            "event_sender: SET ✅".to_string()
+        } else {
+            "event_sender: NOT SET ❌".to_string()
+        }
+    };
+    tracing::info!("🧪 [DEBUG_TEST] {}", event_sender_check);
+
+    // 3. 检查任务是否存在
+    let task_check = {
+        let manager = state.download_manager.read().await;
+        let tasks = manager.get_tasks().await;
+        match tasks.iter().find(|t| t.id == task_id) {
+            Some(task) => format!("Task found: status={:?}, url={}", task.status, task.url),
+            None => format!("Task NOT FOUND ❌ (total tasks: {})", tasks.len()),
+        }
+    };
+    tracing::info!("🧪 [DEBUG_TEST] {}", task_check);
+
+    // 4. 尝试发送一个测试事件到前端
+    let emit_result = app_handle.emit_all(
+        "debug_test_event",
+        serde_json::json!({
+            "message": "Debug test from backend",
+            "task_id": task_id
+        }),
+    );
+    let emit_check = match emit_result {
+        Ok(_) => "Emit test: SUCCESS ✅".to_string(),
+        Err(e) => format!("Emit test: FAILED ❌ - {}", e),
+    };
+    tracing::info!("🧪 [DEBUG_TEST] {}", emit_check);
+
+    // 返回所有检查结果
+    let result = format!(
+        "Debug Results:\n{}\n{}\n{}\n{}",
+        manager_check, event_sender_check, task_check, emit_check
+    );
+
+    Ok(result)
+}
 
 #[command]
 pub async fn add_download_tasks(
@@ -19,8 +80,8 @@ pub async fn add_download_tasks(
     for task in tasks {
         // 尝试添加任务到管理器，处理重复项
         match manager.add_video_task(task.clone()).await {
-            Ok(()) => {
-                created_tasks.push(task);
+            Ok(stored) => {
+                created_tasks.push(stored);
             }
             Err(AppError::Config(msg)) if msg.contains("Duplicate task") => {
                 skipped_duplicates.push(task.title.clone());
@@ -62,18 +123,35 @@ pub async fn add_download_tasks(
 
 #[command]
 pub async fn start_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    tracing::info!("Starting download for task: {}", task_id);
+    tracing::info!(
+        "[START_DOWNLOAD_CMD] Starting download for task: {}",
+        task_id
+    );
 
-    // 使用DownloadManager的异步start_download方法
-    let mut manager = state.download_manager.write().await;
+    // 直接调用 DownloadManager，不经过 runtime 层
+    let result = {
+        let mut manager = state.download_manager.write().await;
+        tracing::info!(
+            "[START_DOWNLOAD_CMD] Got write lock, calling start_download_impl for: {}",
+            task_id
+        );
+        manager.start_download_impl(&task_id).await
+    };
 
-    match manager.start_download(&task_id).await {
+    match result {
         Ok(_) => {
-            tracing::info!("Download started for task: {}", task_id);
+            tracing::info!(
+                "[START_DOWNLOAD_CMD] ✅ Download started successfully for task: {}",
+                task_id
+            );
             Ok(())
         }
         Err(e) => {
-            tracing::error!("Failed to start download: {}", e);
+            tracing::error!(
+                "[START_DOWNLOAD_CMD] ❌ Failed to start download for {}: {}",
+                task_id,
+                e
+            );
             Err(format!("Failed to start download: {}", e))
         }
     }
@@ -81,17 +159,25 @@ pub async fn start_download(task_id: String, state: State<'_, AppState>) -> Resu
 
 #[command]
 pub async fn pause_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    tracing::info!("Pausing download for task: {}", task_id);
+    tracing::info!("[PAUSE_CMD] Received pause request for task: {}", task_id);
 
-    let mut manager = state.download_manager.write().await;
+    // 直接调用 DownloadManager
+    let result = {
+        let mut manager = state.download_manager.write().await;
+        tracing::info!(
+            "[PAUSE_CMD] Got write lock, calling pause_download_impl for: {}",
+            task_id
+        );
+        manager.pause_download_impl(&task_id).await
+    };
 
-    match manager.pause_download(&task_id).await {
+    match result {
         Ok(_) => {
-            tracing::info!("Download paused for task: {}", task_id);
+            tracing::info!("[PAUSE_CMD] ✅ Successfully paused task: {}", task_id);
             Ok(())
         }
         Err(e) => {
-            tracing::error!("Failed to pause download: {}", e);
+            tracing::error!("[PAUSE_CMD] ❌ Failed to pause task {}: {}", task_id, e);
             Err(format!("Failed to pause download: {}", e))
         }
     }
@@ -99,17 +185,21 @@ pub async fn pause_download(task_id: String, state: State<'_, AppState>) -> Resu
 
 #[command]
 pub async fn resume_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    tracing::info!("Resuming download for task: {}", task_id);
+    tracing::info!("[RESUME_CMD] Resuming download for task: {}", task_id);
 
-    let mut manager = state.download_manager.write().await;
+    // 直接调用 DownloadManager
+    let result = {
+        let mut manager = state.download_manager.write().await;
+        manager.resume_download_impl(&task_id).await
+    };
 
-    match manager.resume_download(&task_id).await {
+    match result {
         Ok(_) => {
-            tracing::info!("Download resumed for task: {}", task_id);
+            tracing::info!("[RESUME_CMD] ✅ Download resumed for task: {}", task_id);
             Ok(())
         }
         Err(e) => {
-            tracing::error!("Failed to resume download: {}", e);
+            tracing::error!("[RESUME_CMD] ❌ Failed to resume download: {}", e);
             Err(format!("Failed to resume download: {}", e))
         }
     }
@@ -117,13 +207,17 @@ pub async fn resume_download(task_id: String, state: State<'_, AppState>) -> Res
 
 #[command]
 pub async fn cancel_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    tracing::info!("Cancelling download for task: {}", task_id);
+    tracing::info!("[CANCEL_CMD] Cancelling download for task: {}", task_id);
 
-    let mut manager = state.download_manager.write().await;
+    // 直接调用 DownloadManager
+    let result = {
+        let mut manager = state.download_manager.write().await;
+        manager.cancel_download_impl(&task_id).await
+    };
 
-    match manager.cancel_download(&task_id).await {
+    match result {
         Ok(_) => {
-            tracing::info!("Download cancelled for task: {}", task_id);
+            tracing::info!("[CANCEL_CMD] ✅ Download cancelled for task: {}", task_id);
             Ok(())
         }
         Err(e) => {
@@ -135,30 +229,44 @@ pub async fn cancel_download(task_id: String, state: State<'_, AppState>) -> Res
 
 #[command]
 pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
-    tracing::info!("Pausing all active downloads");
+    tracing::info!("[PAUSE_ALL_CMD] Pausing all active downloads");
     let mut manager = state.download_manager.write().await;
-    manager.pause_all_downloads().await.map_err(|e| {
-        tracing::error!("Failed to pause all downloads: {}", e);
+    manager.pause_all_downloads_impl().await.map_err(|e| {
+        tracing::error!("[PAUSE_ALL_CMD] ❌ Failed to pause all downloads: {}", e);
         e.to_string()
     })
 }
 
 #[command]
 pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
-    tracing::info!("Resuming all paused downloads");
+    tracing::info!("[RESUME_ALL_CMD] Resuming all paused downloads");
     let mut manager = state.download_manager.write().await;
-    manager.resume_all_downloads().await.map_err(|e| {
-        tracing::error!("Failed to resume all downloads: {}", e);
+    manager.resume_all_downloads_impl().await.map_err(|e| {
+        tracing::error!("[RESUME_ALL_CMD] ❌ Failed to resume all downloads: {}", e);
+        e.to_string()
+    })
+}
+
+/// Start all pending/paused/failed downloads respecting concurrency limit
+#[command]
+pub async fn start_all_pending_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::info!("[START_ALL_CMD] Starting all pending/paused/failed downloads");
+    let mut manager = state.download_manager.write().await;
+    manager.start_all_pending_impl().await.map_err(|e| {
+        tracing::error!(
+            "[START_ALL_CMD] ❌ Failed to start all pending downloads: {}",
+            e
+        );
         e.to_string()
     })
 }
 
 #[command]
 pub async fn cancel_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
-    tracing::info!("Cancelling all in-flight downloads");
+    tracing::info!("[CANCEL_ALL_CMD] Cancelling all in-flight downloads");
     let mut manager = state.download_manager.write().await;
-    manager.cancel_all_downloads().await.map_err(|e| {
-        tracing::error!("Failed to cancel all downloads: {}", e);
+    manager.cancel_all_downloads_impl().await.map_err(|e| {
+        tracing::error!("[CANCEL_ALL_CMD] ❌ Failed to cancel all downloads: {}", e);
         e.to_string()
     })
 }

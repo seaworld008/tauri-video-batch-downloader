@@ -32,7 +32,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
     setFilterStatus,
     searchQuery,
     setSearchQuery,
-    refreshTasks
+    refreshTasks,
+    refreshStats,
+    forceSync
   } = useDownloadStore();
 
   const { config, updateDownloadConfig } = useConfigStore();
@@ -45,7 +47,8 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
     downloading: tasks.filter(t => t.status === 'downloading').length,
     completed: tasks.filter(t => t.status === 'completed').length,
     failed: tasks.filter(t => t.status === 'failed').length,
-    pending: tasks.filter(t => t.status === 'pending' || t.status === 'paused').length
+    paused: tasks.filter(t => t.status === 'paused').length,
+    pending: tasks.filter(t => t.status === 'pending').length
   }), [tasks]);
 
   const handleStartWithConfirmation = React.useCallback(async (startAction: () => Promise<void>) => {
@@ -79,7 +82,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
             await startAllDownloads();
           });
           break;
-        case 'pause': pauseAllDownloads(); break;
+        case 'pause':
+          await pauseAllDownloads();
+          break;
       }
       return;
     }
@@ -89,17 +94,17 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
 
     switch (action) {
       case 'start':
-        await handleStartWithConfirmation(async () => {
-          await Promise.all(selectedItems
-            .filter(t => ['pending', 'paused', 'failed'].includes(t.status))
-            .map(t => startDownload(t.id)));
-        });
-        break;
+            await handleStartWithConfirmation(async () => {
+              await Promise.all(selectedItems
+                .filter(t => ['pending', 'paused', 'failed'].includes(t.status))
+                .map(t => startDownload(t.id)));
+            });
+          break;
       case 'pause':
-        await Promise.all(selectedItems
-          .filter(t => t.status === 'downloading')
-          .map(t => pauseDownload(t.id)));
-        break;
+            await Promise.all(selectedItems
+              .filter(t => t.status === 'downloading')
+              .map(t => pauseDownload(t.id)));
+          break;
       case 'delete':
         if (confirm(`确定要删除选中的 ${selectedTasks.length} 个任务吗？`)) {
           await removeTasks(selectedTasks);
@@ -150,7 +155,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
           </div>
 
           {/* 右侧：操作按钮组 */}
-          <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2">
             <button
               onClick={() => handleBatchAction('start')}
               disabled={hasSelection ? false : stats.pending === 0}
@@ -182,7 +187,10 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
             <div className="h-6 w-px bg-gray-200 dark:bg-gray-700 mx-1" />
 
             <button
-              onClick={() => refreshTasks()}
+              onClick={async () => {
+                await forceSync();
+                await refreshStats();
+              }}
               className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               title="刷新列表"
             >
@@ -214,6 +222,13 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
             color="yellow"
           />
           <FilterTab
+            active={filterStatus === 'paused'}
+            onClick={() => setFilterStatus('paused')}
+            label="已暂停"
+            count={stats.paused}
+            color="orange"
+          />
+          <FilterTab
             active={filterStatus === 'completed'}
             onClick={() => setFilterStatus('completed')}
             label="已完成"
@@ -238,7 +253,7 @@ interface FilterTabProps {
   onClick: () => void;
   label: string;
   count: number;
-  color?: 'blue' | 'green' | 'yellow' | 'red' | 'gray';
+  color?: 'blue' | 'green' | 'yellow' | 'red' | 'orange' | 'gray';
 }
 
 const FilterTab: React.FC<FilterTabProps> = ({ active, onClick, label, count, color = 'gray' }) => {
@@ -247,6 +262,7 @@ const FilterTab: React.FC<FilterTabProps> = ({ active, onClick, label, count, co
     green: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 ring-1 ring-green-500/20',
     yellow: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 ring-1 ring-yellow-500/20',
     red: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 ring-1 ring-red-500/20',
+    orange: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 ring-1 ring-orange-500/20',
     gray: 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100 ring-1 ring-gray-500/20'
   };
 

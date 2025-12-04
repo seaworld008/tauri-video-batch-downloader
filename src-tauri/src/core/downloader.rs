@@ -74,7 +74,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
@@ -207,6 +207,7 @@ pub struct HttpDownloader {
     client: Client,
     active_downloads: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
     semaphore: Arc<Semaphore>,
+    max_concurrent: Arc<AtomicUsize>,
     progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
     is_paused: Arc<AtomicBool>,
     resume_downloader: Arc<ResumeDownloader>,
@@ -223,6 +224,7 @@ impl HttpDownloader {
             .user_agent(&config.user_agent)
             .build()?;
 
+        let max_concurrent = Arc::new(AtomicUsize::new(config.max_concurrent));
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
 
         // 创建ResumeDownloader配置，与HttpDownloader配置保持一致
@@ -259,6 +261,7 @@ impl HttpDownloader {
             client,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             semaphore,
+            max_concurrent,
             progress_tx: None,
             is_paused: Arc::new(AtomicBool::new(false)),
             resume_downloader: Arc::new(resume_downloader),
@@ -273,16 +276,65 @@ impl HttpDownloader {
 
     /// 设置进度回调
     pub fn set_progress_callback(&mut self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
-        self.progress_tx = Some(tx);
+        self.progress_tx = Some(tx.clone());
+        self.m3u8_downloader.set_progress_callback(tx);
+    }
+
+    pub fn update_max_concurrent(&self, new_limit: usize) {
+        if new_limit == 0 {
+            tracing::warn!(
+                "Attempted to set max_concurrent to 0; keeping current value {}",
+                self.max_concurrent.load(Ordering::Relaxed)
+            );
+            return;
+        }
+
+        let current = self.max_concurrent.load(Ordering::Relaxed);
+        if new_limit == current {
+            return;
+        }
+
+        self.max_concurrent.store(new_limit, Ordering::Relaxed);
+
+        if new_limit > current {
+            self.semaphore.add_permits(new_limit - current);
+        } else {
+            let diff = current - new_limit;
+            if let Ok(permits) = self.semaphore.try_acquire_many(diff as u32) {
+                permits.forget();
+            } else {
+                tracing::warn!(
+                    "Could not immediately reduce download concurrency to {}; it will settle as tasks finish",
+                    new_limit
+                );
+            }
+        }
     }
 
     /// 开始下载单个文件
     pub async fn download(&self, mut task: DownloadTask) -> Result<DownloadTask> {
+        tracing::info!(
+            "🔵 [DOWNLOAD_ENTRY] Starting download for task {} (url={})",
+            task.id,
+            task.url
+        );
+        tracing::info!(
+            "🔵 [DOWNLOAD_ENTRY] Semaphore permits available: {}",
+            self.semaphore.available_permits()
+        );
+
         let _permit = self.semaphore.acquire().await?;
+        tracing::info!(
+            "🔵 [DOWNLOAD_ENTRY] Acquired semaphore permit for task {}",
+            task.id
+        );
 
         // 检查文件是否已存在
         let full_path = Path::new(&task.output_path).join(&task.filename);
+        tracing::info!("🔵 [DOWNLOAD_ENTRY] Output path: {:?}", full_path);
+
         if full_path.exists() && !self.config.resume_enabled {
+            tracing::info!("🔵 [DOWNLOAD_ENTRY] File already exists, marking as completed");
             task.status = TaskStatus::Completed;
             task.stats.progress = 1.0;
             task.updated_at = chrono::Utc::now();
@@ -294,19 +346,42 @@ impl HttpDownloader {
         {
             let mut downloads = self.active_downloads.write().await;
             downloads.insert(task.id.clone(), cancel_flag.clone());
+            tracing::info!(
+                "🔵 [DOWNLOAD_ENTRY] Registered task {} in active_downloads (total: {})",
+                task.id,
+                downloads.len()
+            );
         }
 
         task.status = TaskStatus::Downloading;
         task.stats.start_time = chrono::Utc::now();
         task.updated_at = chrono::Utc::now();
 
-        // 智能选择下载策略：根据文件大小决定使用哪种下载器
+        // 智能选择下载策略
+        tracing::info!(
+            "🔵 [DOWNLOAD_ENTRY] Calling smart_download for task {} (resume_enabled={})",
+            task.id,
+            self.config.resume_enabled
+        );
         let result = if self.config.resume_enabled {
             self.smart_download(&mut task, cancel_flag.clone()).await
         } else {
             self.download_with_resume(&mut task, cancel_flag.clone())
                 .await
         };
+
+        tracing::info!(
+            "🔵 [DOWNLOAD_ENTRY] smart_download returned for task {}: success={}",
+            task.id,
+            result.is_ok()
+        );
+        if let Err(ref e) = result {
+            tracing::error!(
+                "🔴 [DOWNLOAD_ENTRY] Download error for task {}: {}",
+                task.id,
+                e
+            );
+        }
 
         // 清理活跃下载记录
         {
@@ -319,13 +394,17 @@ impl HttpDownloader {
                 task.status = TaskStatus::Completed;
                 task.stats.progress = 1.0;
                 task.updated_at = chrono::Utc::now();
-                tracing::info!("下载完成: {}", task.filename);
+                tracing::info!("✅ [DOWNLOAD_ENTRY] Download completed: {}", task.filename);
             }
             Err(e) => {
                 task.status = TaskStatus::Failed;
                 task.error_message = Some(e.to_string());
                 task.updated_at = chrono::Utc::now();
-                tracing::error!("下载失败: {} - {}", task.filename, e);
+                tracing::error!(
+                    "❌ [DOWNLOAD_ENTRY] Download failed: {} - {}",
+                    task.filename,
+                    e
+                );
             }
         }
 
@@ -339,40 +418,89 @@ impl HttpDownloader {
         task: &mut DownloadTask,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<()> {
-        tracing::info!("开始智能下载策略检测: {}", task.url);
+        tracing::info!(
+            "🟢 [SMART_DOWNLOAD] Started for task {} (url={})",
+            task.id,
+            task.url
+        );
+        tracing::info!(
+            "🟢 [SMART_DOWNLOAD] progress_tx is_some={}",
+            self.progress_tx.is_some()
+        );
+
+        // 立即发送一次初始进度，确保UI显示活跃状态
+        tracing::info!(
+            "🟢 [SMART_DOWNLOAD] Sending initial progress for task {}",
+            task.id
+        );
+        self.update_progress(
+            task,
+            task.stats.downloaded_bytes,
+            task.stats.total_bytes.unwrap_or(0),
+            Instant::now(),
+        )
+        .await;
 
         // 首先检测是否为M3U8流媒体
-        if self.is_m3u8_url(&task.url) {
-            tracing::info!("检测到M3U8流媒体，使用M3U8Downloader");
+        let is_m3u8 = self.is_m3u8_url(&task.url);
+        tracing::info!(
+            "🟢 [SMART_DOWNLOAD] is_m3u8_url={} for task {}",
+            is_m3u8,
+            task.id
+        );
+        if is_m3u8 {
+            tracing::info!("🟢 [SMART_DOWNLOAD] M3U8 URL detected, using M3U8 downloader");
             return self.download_with_m3u8(task, cancel_flag).await;
         }
 
         // 对于非M3U8 URL，尝试获取文件大小
+        tracing::info!(
+            "🟢 [SMART_DOWNLOAD] Getting content length for task {} (url={})",
+            task.id,
+            task.url
+        );
         let content_length = match self.get_content_length(&task.url).await {
             Ok(Some(size)) => {
                 tracing::info!(
-                    "检测到文件大小: {} 字节 ({})",
+                    "🟢 [SMART_DOWNLOAD] ✅ Content length for task {}: {} bytes ({})",
+                    task.id,
                     size,
                     self.format_bytes(size)
                 );
                 size
             }
             Ok(None) => {
-                tracing::warn!("无法获取文件大小，使用传统下载方法");
+                tracing::warn!("🟡 [SMART_DOWNLOAD] No content length returned for task {}, using resume downloader", task.id);
                 return self
                     .download_with_resume_downloader(task, cancel_flag)
                     .await;
             }
             Err(e) => {
-                tracing::warn!("获取文件大小失败，使用传统下载方法: {}", e);
-                return self
-                    .download_with_resume_downloader(task, cancel_flag)
-                    .await;
+                tracing::error!(
+                    "🔴 [SMART_DOWNLOAD] ❌ Failed to get content length for task {}: {}",
+                    task.id,
+                    e
+                );
+                tracing::info!(
+                    "🟢 [SMART_DOWNLOAD] Falling back to download_with_resume for task {}",
+                    task.id
+                );
+                // 直接使用简单的下载方法而不是 resume_downloader
+                return self.download_with_resume(task, cancel_flag).await;
             }
         };
 
         // 设置任务的总文件大小
         task.stats.total_bytes = Some(content_length);
+
+        // 更新一次带有总大小的进度
+        self.update_progress(
+            task,
+            task.stats.downloaded_bytes,
+            content_length,
+            Instant::now(),
+        )
+        .await;
 
         // 根据文件大小选择下载策略
         let large_file_threshold = 50 * 1024 * 1024; // 50MB
@@ -419,6 +547,8 @@ impl HttpDownloader {
             Path::new(&output_path_str),
             task.stats.total_bytes,
             Some(progress_callback),
+            Some(cancel_flag.clone()),
+            Some(self.is_paused.clone()),
         ));
 
         let start_time = Instant::now();
@@ -427,10 +557,22 @@ impl HttpDownloader {
 
         loop {
             tokio::select! {
-                Some(delta) = delta_rx.recv() => {
-                    downloaded = downloaded.saturating_add(delta);
-                    let total = total_hint.unwrap_or(downloaded);
-                    self.update_progress(task, downloaded, total, start_time).await;
+                _ = sleep(Duration::from_millis(200)), if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) => {
+                    return Err(anyhow::anyhow!("下载被取消"));
+                }
+                delta = delta_rx.recv() => {
+                    match delta {
+                        Some(delta) => {
+                            downloaded = downloaded.saturating_add(delta);
+                            let total = total_hint.unwrap_or(downloaded);
+                            self.update_progress(task, downloaded, total, start_time).await;
+                        }
+                        None => {
+                            if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
+                                return Err(anyhow::anyhow!("下载被取消"));
+                            }
+                        }
+                    }
                 }
                 result = &mut resume_future => {
                     let resume_info = result?;
@@ -453,9 +595,30 @@ impl HttpDownloader {
 
     /// 获取HTTP响应的内容长度
     async fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
-        let response = self.client.head(url).send().await?;
+        tracing::info!("🔍 [GET_CONTENT_LENGTH] Sending HEAD request to: {}", url);
+
+        // 使用较短的超时时间，防止阻塞
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent(&self.config.user_agent)
+            .build()?;
+
+        let response = match client.head(url).send().await {
+            Ok(resp) => {
+                tracing::info!(
+                    "🔍 [GET_CONTENT_LENGTH] HEAD response status: {}",
+                    resp.status()
+                );
+                resp
+            }
+            Err(e) => {
+                tracing::error!("🔴 [GET_CONTENT_LENGTH] HEAD request failed: {}", e);
+                return Err(anyhow::anyhow!("HEAD request failed: {}", e));
+            }
+        };
 
         if !response.status().is_success() {
+            tracing::error!("🔴 [GET_CONTENT_LENGTH] HTTP error: {}", response.status());
             return Err(anyhow::anyhow!("HTTP错误: {}", response.status()));
         }
 
@@ -465,6 +628,10 @@ impl HttpDownloader {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
 
+        tracing::info!(
+            "🔍 [GET_CONTENT_LENGTH] Content-Length: {:?}",
+            content_length
+        );
         Ok(content_length)
     }
 
@@ -505,7 +672,6 @@ impl HttpDownloader {
     ) -> Result<()> {
         let full_path = Path::new(&task.output_path).join(&task.filename);
         let output_path_str = full_path.to_string_lossy().to_string();
-
         // 检查取消标志
         if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
             return Err(anyhow::anyhow!("下载被取消"));
@@ -528,11 +694,22 @@ impl HttpDownloader {
         task: &mut DownloadTask,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<()> {
+        tracing::info!(
+            "🟣 [DOWNLOAD_WITH_RESUME] Started for task {} (url={})",
+            task.id,
+            task.url
+        );
         let full_path = Path::new(&task.output_path).join(&task.filename);
+        tracing::info!("🟣 [DOWNLOAD_WITH_RESUME] Output path: {:?}", full_path);
+        tracing::info!(
+            "🟣 [DOWNLOAD_WITH_RESUME] progress_tx is_some={}",
+            self.progress_tx.is_some()
+        );
 
         // 创建输出目录
         if let Some(parent) = full_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
+            tracing::info!("[DOWNLOAD_TRACE] Created output directory: {:?}", parent);
         }
 
         // 检查现有文件大小以支持断点续传
@@ -543,29 +720,62 @@ impl HttpDownloader {
         };
 
         // 构建HTTP请求
+        tracing::info!(
+            "🟣 [DOWNLOAD_WITH_RESUME] Building GET request for: {}",
+            task.url
+        );
         let mut request = self.client.get(&task.url);
         if existing_size > 0 && self.config.resume_enabled {
             request = request.header("Range", format!("bytes={}-", existing_size));
-            tracing::info!("断点续传: {} 从字节 {} 开始", task.filename, existing_size);
+            tracing::info!(
+                "🟣 [DOWNLOAD_WITH_RESUME] Resume from byte: {}",
+                existing_size
+            );
         }
 
         // 发送请求
-        let response = request.send().await?;
+        tracing::info!("🟣 [DOWNLOAD_WITH_RESUME] Sending HTTP GET request...");
+        let response = match request.send().await {
+            Ok(resp) => {
+                tracing::info!(
+                    "🟣 [DOWNLOAD_WITH_RESUME] ✅ HTTP response received: status={}",
+                    resp.status()
+                );
+                resp
+            }
+            Err(e) => {
+                tracing::error!("🔴 [DOWNLOAD_WITH_RESUME] ❌ HTTP request failed: {}", e);
+                return Err(anyhow::anyhow!("HTTP请求失败: {}", e));
+            }
+        };
 
         // 检查响应状态
         if !response.status().is_success() && response.status().as_u16() != 206 {
+            tracing::error!(
+                "🔴 [DOWNLOAD_WITH_RESUME] HTTP error status: {}",
+                response.status()
+            );
             return Err(anyhow::anyhow!("HTTP错误: {}", response.status()));
         }
 
         // 获取内容长度
         let content_length = response.content_length();
+        tracing::info!(
+            "🟣 [DOWNLOAD_WITH_RESUME] Content-Length: {:?}",
+            content_length
+        );
         let total_size = if let Some(len) = content_length {
             existing_size + len
         } else {
             existing_size
         };
+        tracing::info!("🟣 [DOWNLOAD_WITH_RESUME] Total size: {} bytes", total_size);
 
-        task.stats.total_bytes = Some(total_size);
+        task.stats.total_bytes = if total_size > 0 {
+            Some(total_size)
+        } else {
+            None
+        };
         task.stats.downloaded_bytes = existing_size;
 
         // 打开文件准备写入
@@ -579,25 +789,55 @@ impl HttpDownloader {
         };
 
         // 开始流式下载
+        tracing::info!(
+            "[DOWNLOAD_TRACE] Starting stream download for task {}",
+            task.id
+        );
+        tracing::info!(
+            "[DOWNLOAD_TRACE] progress_tx is_some={} for task {}",
+            self.progress_tx.is_some(),
+            task.id
+        );
         let mut stream = response.bytes_stream();
         let mut downloaded = existing_size;
-        let mut last_update = Instant::now();
         let start_time = Instant::now();
+        let mut last_update = start_time;
+        let mut chunk_count = 0u64;
+
+        // 立即发送初始进度，确保前端能看到下载已开始
+        tracing::info!(
+            "[DOWNLOAD_TRACE] Sending initial progress for task {} (downloaded={}, total={})",
+            task.id,
+            downloaded,
+            total_size
+        );
+        self.update_progress(task, downloaded, total_size, start_time)
+            .await;
 
         while let Some(chunk) = stream.next().await {
             // 检查取消标志
             if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
+                tracing::info!(
+                    "[DOWNLOAD_TRACE] Task {} cancelled/paused after {} chunks",
+                    task.id,
+                    chunk_count
+                );
                 return Err(anyhow::anyhow!("下载被取消"));
             }
 
             let chunk = chunk?;
+            chunk_count += 1;
+
+            if chunk_count == 1 {
+                tracing::info!("[DOWNLOAD_TRACE] Received first chunk for task {}", task.id);
+            }
             file.write_all(&chunk).await?;
             self.bandwidth_controller.throttle(chunk.len() as u64).await;
             downloaded += chunk.len() as u64;
 
-            // 更新进度（限制更新频率）
+            // 更新进度（限制更新频率为200ms，提供更平滑的进度显示）
             let now = Instant::now();
-            if now.duration_since(last_update) >= Duration::from_millis(500) {
+            if now.duration_since(last_update) >= Duration::from_millis(200) {
                 self.update_progress(task, downloaded, total_size, start_time)
                     .await;
                 last_update = now;
@@ -625,20 +865,47 @@ impl HttpDownloader {
         start_time: Instant,
     ) {
         let elapsed = start_time.elapsed();
-        let speed = if elapsed.as_secs() > 0 {
-            downloaded as f64 / elapsed.as_secs() as f64
+        let elapsed_secs = elapsed.as_secs_f64();
+        let previous_downloaded = task.stats.downloaded_bytes;
+        let now_utc = chrono::Utc::now();
+        let ms_since_last = now_utc
+            .signed_duration_since(task.stats.last_update)
+            .num_milliseconds();
+        let bytes_since_last = downloaded.saturating_sub(previous_downloaded);
+
+        let speed = if ms_since_last > 0 && bytes_since_last > 0 {
+            bytes_since_last as f64 / (ms_since_last as f64 / 1000.0)
+        } else if elapsed_secs > 0.0 {
+            // Fallback to average speed since start to avoid showing 0
+            (downloaded.saturating_sub(previous_downloaded) as f64) / elapsed_secs.max(1e-3)
+        } else {
+            task.stats.speed
+        };
+
+        // 确保 total 始终有效：当服务器未返回 Content-Length 或 total
+        // 小于已下载字节数时，将其视为未知（None），避免前端校验失败。
+        let safe_total = if total == 0 {
+            None
+        } else {
+            Some(total.max(downloaded))
+        };
+
+        let progress = if let Some(total_bytes) = safe_total {
+            if total_bytes > 0 {
+                downloaded as f64 / total_bytes as f64
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
 
-        let progress = if total > 0 {
-            downloaded as f64 / total as f64
-        } else {
-            0.0
-        };
-
-        let eta = if speed > 0.0 && total > downloaded {
-            Some(((total - downloaded) as f64 / speed) as u64)
+        let eta = if let Some(total_bytes) = safe_total {
+            if speed > 0.0 && total_bytes > downloaded {
+                Some(((total_bytes - downloaded) as f64 / speed) as u64)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -647,11 +914,38 @@ impl HttpDownloader {
         task.stats.speed = speed;
         task.stats.progress = progress;
         task.stats.eta = eta;
-        task.stats.last_update = chrono::Utc::now();
+        task.stats.last_update = now_utc;
+        task.stats.total_bytes = safe_total;
 
         // 发送进度更新
         if let Some(ref tx) = self.progress_tx {
-            let _ = tx.send((task.id.clone(), task.stats.clone()));
+            match tx.send((task.id.clone(), task.stats.clone())) {
+                Ok(_) => {
+                    // 只在关键节点记录日志，避免刷屏
+                    if downloaded == 0 || progress > 0.99 || (downloaded % (1024 * 1024)) < 1024 {
+                        tracing::info!(
+                            "[PROGRESS_TX] Sent progress for task {}: {}% ({} bytes)",
+                            task.id,
+                            (progress * 100.0) as u32,
+                            downloaded
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[PROGRESS_TX] Failed to send progress for task {}: {}",
+                        task.id,
+                        e
+                    );
+                }
+            }
+        } else {
+            // 首次警告无progress_tx
+            static WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!("[PROGRESS_TX] No progress_tx set for task {} - progress updates will not be sent!", task.id);
+            }
         }
     }
 
@@ -667,19 +961,57 @@ impl HttpDownloader {
         tracing::info!("所有下载已恢复");
     }
 
+    /// 返回是否有正在进行的下载（底层视角）
+    pub async fn has_active_download(&self, task_id: &str) -> bool {
+        self.active_downloads.read().await.contains_key(task_id)
+    }
+
     /// 取消特定下载
     pub async fn cancel_download(&self, task_id: &str) -> Result<()> {
-        let downloads = self.active_downloads.read().await;
-        if let Some(cancel_flag) = downloads.get(task_id) {
-            cancel_flag.store(true, Ordering::Relaxed);
-            tracing::info!("下载已取消: {}", task_id);
+        tracing::info!("[CANCEL_DOWNLOAD] Attempting to cancel task: {}", task_id);
+        {
+            let downloads = self.active_downloads.read().await;
+            let active_count = downloads.len();
+            tracing::info!(
+                "[CANCEL_DOWNLOAD] Active downloads count: {}, looking for task: {}",
+                active_count,
+                task_id
+            );
+
+            if let Some(cancel_flag) = downloads.get(task_id) {
+                let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+                cancel_flag.store(true, Ordering::Relaxed);
+                tracing::info!(
+                    "[CANCEL_DOWNLOAD] ✅ Found and cancelled task: {} (was_cancelled before: {})",
+                    task_id,
+                    was_cancelled
+                );
+            } else {
+                tracing::warn!(
+                    "[CANCEL_DOWNLOAD] ⚠️ Task not found in active_downloads: {}",
+                    task_id
+                );
+                tracing::info!(
+                    "[CANCEL_DOWNLOAD] Available tasks: {:?}",
+                    downloads.keys().collect::<Vec<_>>()
+                );
+            }
         }
+
+        // 确保 M3U8 下载器也能收到取消信号
+        let _ = self.m3u8_downloader.cancel_download(task_id).await;
         Ok(())
     }
 
     /// 获取活跃下载数量
     pub async fn active_download_count(&self) -> usize {
         self.active_downloads.read().await.len()
+    }
+
+    /// 强制移除活跃下载记录（用于被上层中断时的兜底清理）
+    pub async fn force_remove_active(&self, task_id: &str) {
+        let mut downloads = self.active_downloads.write().await;
+        downloads.remove(task_id);
     }
 
     /// 批量下载文件
@@ -740,6 +1072,7 @@ impl Clone for HttpDownloader {
             client: self.client.clone(),
             active_downloads: Arc::clone(&self.active_downloads),
             semaphore: Arc::clone(&self.semaphore),
+            max_concurrent: Arc::clone(&self.max_concurrent),
             progress_tx: self.progress_tx.clone(),
             is_paused: Arc::clone(&self.is_paused),
             resume_downloader: Arc::clone(&self.resume_downloader),

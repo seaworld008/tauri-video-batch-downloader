@@ -46,7 +46,10 @@ pub async fn start_system_monitor(
 
 /// Stop system monitoring
 #[tauri::command]
-pub async fn stop_system_monitor(_app: AppHandle, _state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_system_monitor(
+    _app: AppHandle,
+    _state: State<'_, AppState>,
+) -> Result<(), String> {
     info!("⏹️ Stopping system monitor");
 
     // This is a placeholder - real implementation would stop the monitoring task

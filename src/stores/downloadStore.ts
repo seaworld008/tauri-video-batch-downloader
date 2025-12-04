@@ -40,6 +40,10 @@ import {
   ensureDownloadStats,
   calculateStatsFromTasks,
 } from '../utils/downloadStats';
+
+let listenersInitialized = false;
+let listenerSetupPromise: Promise<void> | null = null;
+let activeSyncTimer: number | null = null;
 const STATUS_TO_BACKEND: Record<TaskStatus, string> = {
   pending: 'Pending',
   downloading: 'Downloading',
@@ -304,6 +308,8 @@ interface DownloadState {
   isProcessingQueue: boolean;
   recentImportTaskIds: string[];
   recentImportSnapshot: VideoTask[];
+  resumePriority: string[];
+  queueFrozen: boolean;
   enqueueDownloads: (taskIds: string[]) => void;
   processStartQueue: () => Promise<void>;
   recordRecentImport: (taskIds: string[], snapshot: VideoTask[]) => void;
@@ -337,6 +343,8 @@ export const useDownloadStore = create<DownloadState>()(
     isProcessingQueue: false,
     recentImportTaskIds: [],
     recentImportSnapshot: [],
+    resumePriority: [],
+    queueFrozen: false,
 
     filterStatus: 'all',
 
@@ -614,6 +622,7 @@ export const useDownloadStore = create<DownloadState>()(
           tasks: state.tasks.filter(task => !taskIds.includes(task.id)),
 
           selectedTasks: state.selectedTasks.filter(id => !taskIds.includes(id)),
+          resumePriority: state.resumePriority.filter(id => !taskIds.includes(id)),
         }));
 
         await get().refreshStats();
@@ -638,6 +647,10 @@ export const useDownloadStore = create<DownloadState>()(
 
             return task && task.status !== 'completed';
           }),
+          resumePriority: state.resumePriority.filter(id => {
+            const task = state.tasks.find(t => t.id === id);
+            return task && task.status !== 'completed';
+          }),
         }));
 
         await get().refreshStats();
@@ -654,33 +667,37 @@ export const useDownloadStore = create<DownloadState>()(
 
     startDownload: async (taskId, options = {}) => {
       const { enqueueOnLimit = true, suppressConcurrencyToast = false } = options;
+      console.log('[START_DOWNLOAD] Initiating download for task:', taskId);
       try {
-        const state = get();
-        const maxConcurrent = state.config.concurrent_downloads ?? 3;
-        const activeDownloads = state.tasks.filter(t => t.status === 'downloading').length;
-
-        if (activeDownloads >= maxConcurrent) {
-          throw new Error('Maximum concurrent downloads reached');
-        }
-
+        // 只要用户主动点开始，解冻队列
+        set({ queueFrozen: false });
+        console.log('[START_DOWNLOAD] Calling invoke start_download...');
         await invoke('start_download', buildTaskIdPayload(taskId));
+        console.log('[START_DOWNLOAD] invoke returned successfully for task:', taskId);
 
         set(state => ({
           tasks: state.tasks.map(task =>
             task.id === taskId ? { ...task, status: 'downloading' as TaskStatus } : task
           ),
+          resumePriority: state.resumePriority.filter(id => id !== taskId),
         }));
 
+        void get().refreshTasks().catch(err => console.warn('[startDownload] sync failed', err));
+        void get().refreshStats().catch(err => console.warn('[startDownload] stats sync failed', err));
+
+        console.log('[START_DOWNLOAD] Task started successfully:', taskId);
         return 'started';
       } catch (error) {
         if (isConcurrencyError(error)) {
-          if (enqueueOnLimit) {
-            set(state => ({
-              pendingStartQueue: state.pendingStartQueue.includes(taskId)
-                ? state.pendingStartQueue
-                : [...state.pendingStartQueue, taskId],
-            }));
-          }
+          set(state => {
+            if (state.pendingStartQueue.includes(taskId)) {
+              return {};
+            }
+            const nextQueue = enqueueOnLimit
+              ? [...state.pendingStartQueue, taskId]
+              : [taskId, ...state.pendingStartQueue];
+            return { pendingStartQueue: nextQueue };
+          });
 
           if (!suppressConcurrencyToast) {
             const now = Date.now();
@@ -690,9 +707,7 @@ export const useDownloadStore = create<DownloadState>()(
             }
           }
 
-          if (enqueueOnLimit) {
-            void get().processStartQueue();
-          }
+          void get().processStartQueue();
 
           return 'queued';
         }
@@ -703,16 +718,32 @@ export const useDownloadStore = create<DownloadState>()(
     },
 
     pauseDownload: async taskId => {
+      console.log('[PAUSE_DOWNLOAD] Starting pause for task:', taskId);
       try {
+        console.log('[PAUSE_DOWNLOAD] Calling invoke pause_download...');
         await invoke('pause_download', buildTaskIdPayload(taskId));
+        console.log('[PAUSE_DOWNLOAD] invoke returned successfully for task:', taskId);
 
-        set(state => ({
-          tasks: state.tasks.map(task =>
+        set(state => {
+          const updatedTasks = state.tasks.map(task =>
             task.id === taskId ? { ...task, status: 'paused' as TaskStatus } : task
-          ),
-        }));
+          );
+          const filteredPriority = state.resumePriority.filter(id => id !== taskId);
+          console.log('[PAUSE_DOWNLOAD] Updated task state to paused:', taskId);
+          return {
+            tasks: updatedTasks,
+            resumePriority: [taskId, ...filteredPriority],
+            // 暂停后不要进入自动启动队列，避免立刻被重新启动
+            pendingStartQueue: state.pendingStartQueue.filter(id => id !== taskId),
+            queueFrozen: true, // 暂停单个任务时也冻结队列，避免立即启动其他任务
+          };
+        });
+
+        void get().refreshTasks().catch(err => console.warn('[pauseDownload] sync failed', err));
+        void get().refreshStats().catch(err => console.warn('[pauseDownload] stats sync failed', err));
       } catch (error) {
-        handleError('\u6682\u505c\u4e0b\u8f7d', error);
+        console.error('[PAUSE_DOWNLOAD] Failed to pause task:', taskId, error);
+        handleError('暂停下载', error);
 
         throw error;
       }
@@ -720,14 +751,33 @@ export const useDownloadStore = create<DownloadState>()(
 
     resumeDownload: async taskId => {
       try {
+        set({ queueFrozen: false });
         await invoke('resume_download', buildTaskIdPayload(taskId));
 
         set(state => ({
           tasks: state.tasks.map(task =>
             task.id === taskId ? { ...task, status: 'downloading' as TaskStatus } : task
           ),
+          resumePriority: state.resumePriority.filter(id => id !== taskId),
         }));
+
+        void get().refreshTasks().catch(err => console.warn('[resumeDownload] sync failed', err));
+        void get().refreshStats().catch(err => console.warn('[resumeDownload] stats sync failed', err));
       } catch (error) {
+        if (isConcurrencyError(error)) {
+           set(state => {
+            if (state.pendingStartQueue.includes(taskId)) {
+              return {};
+            }
+            // 恢复的任务优先级通常较高，放到队列前面
+            return { pendingStartQueue: [taskId, ...state.pendingStartQueue] };
+          });
+          
+          toast('当前下载达到最大并发，任务已加入队列等待恢复。');
+          void get().processStartQueue();
+          return;
+        }
+
         handleError('\u6062\u590d\u4e0b\u8f7d', error);
 
         throw error;
@@ -742,9 +792,13 @@ export const useDownloadStore = create<DownloadState>()(
           tasks: state.tasks.map(task =>
             task.id === taskId ? { ...task, status: 'cancelled' as TaskStatus } : task
           ),
+          resumePriority: state.resumePriority.filter(id => id !== taskId),
         }));
+
+        void get().refreshTasks().catch(err => console.warn('[cancelDownload] sync failed', err));
+        void get().refreshStats().catch(err => console.warn('[cancelDownload] stats sync failed', err));
       } catch (error) {
-        handleError('\u53d6\u6d88\u4e0b\u8f7d', error);
+        handleError('取消下载', error);
 
         throw error;
       }
@@ -752,30 +806,32 @@ export const useDownloadStore = create<DownloadState>()(
 
     startAllDownloads: async () => {
       const { tasks, selectedTasks } = get();
-
-      // \u5982\u679c\u6709\u9009\u4e2d\u7684\u4efb\u52a1\uff0c\u53ea\u542f\u52a8\u9009\u4e2d\u7684\uff1b\u5426\u5219\u542f\u52a8\u6240\u6709\u53ef\u542f\u52a8\u7684\u4efb\u52a1
-
       const targetTasks =
-        selectedTasks.length > 0 ? tasks.filter(task => selectedTasks.includes(task.id)) : tasks;
+        selectedTasks.length > 0
+          ? tasks.filter(task => selectedTasks.includes(task.id))
+          : tasks;
 
-      const pendingTasks = targetTasks.filter(
-        task => task.status === 'pending' || task.status === 'paused' || task.status === 'failed'
+      const startableTasks = targetTasks.filter(task =>
+        ['pending', 'paused', 'failed'].includes(task.status)
       );
 
-      if (pendingTasks.length === 0) {
-        toast('\u6ca1\u6709\u53ef\u542f\u52a8\u7684\u4e0b\u8f7d\u4efb\u52a1');
-
+      if (startableTasks.length === 0) {
+        toast('没有可开始的下载任务');
         return;
       }
 
-      get().enqueueDownloads(pendingTasks.map(task => task.id));
+      // 如果用户有选中项，逐个处理以保持顺序
+      if (selectedTasks.length > 0) {
+        for (const task of startableTasks) {
+          await get().startDownload(task.id, { enqueueOnLimit: true });
+        }
+        return;
+      }
 
-      const message =
-        selectedTasks.length > 0
-          ? `\u5df2\u63d0\u4ea4 ${pendingTasks.length} \u4e2a\u9009\u4e2d\u4efb\u52a1\u5230\u961f\u5217`
-          : `\u5df2\u63d0\u4ea4 ${pendingTasks.length} \u4e2a\u4efb\u52a1\u5230\u961f\u5217`;
-
-      toast.success(message);
+      const orderedTaskIds = startableTasks.map(task => task.id);
+      set({ queueFrozen: false });
+      get().enqueueDownloads(orderedTaskIds);
+      toast.success(`已提交 ${orderedTaskIds.length} 个任务到下载队列`);
     },
 
     pauseAllDownloads: async () => {
@@ -784,7 +840,31 @@ export const useDownloadStore = create<DownloadState>()(
       const downloadingTasks = tasks.filter(task => task.status === 'downloading');
 
       try {
-        await Promise.all(downloadingTasks.map(task => get().pauseDownload(task.id)));
+        // 逐个暂停，避免因某个异常阻塞全部
+        for (const task of downloadingTasks) {
+          try {
+            // 一次仅暂停非 completed/cancelled 的任务
+            const safeTask = get().tasks.find(t => t.id === task.id);
+            if (safeTask && safeTask.status === 'downloading') {
+              // 调用单条暂停
+              await get().pauseDownload(task.id);
+            }
+          } catch (err) {
+            console.warn('Pause task failed', task.id, err);
+          }
+        }
+        set(state => {
+        const pausedOrder = downloadingTasks.map(task => task.id);
+        const remaining = state.resumePriority.filter(id => !pausedOrder.includes(id));
+        const queuedWithoutPaused = state.pendingStartQueue.filter(id => !pausedOrder.includes(id));
+        return {
+          resumePriority: [...pausedOrder, ...remaining],
+          // 暂停时不把任务重新塞进启动队列，避免自动重启
+          pendingStartQueue: queuedWithoutPaused,
+          isProcessingQueue: false,
+          queueFrozen: true, // 全局暂停时冻结队列，直到用户再次点击开始
+        };
+      });
 
         toast.success(`\u5df2\u6682\u505c ${downloadingTasks.length} \u4e2a\u4e0b\u8f7d\u4efb\u52a1`);
       } catch (error) {
@@ -810,8 +890,19 @@ export const useDownloadStore = create<DownloadState>()(
       }
 
       set(state => {
+        const resumeOrder = state.resumePriority;
         const existing = new Set(state.pendingStartQueue);
-        const additions = uniqueIds.filter(id => !existing.has(id));
+        // additions 按 resumePriority 优先级排序
+        const additions = uniqueIds
+          .filter(id => !existing.has(id))
+          .sort((a, b) => {
+            const ia = resumeOrder.indexOf(a);
+            const ib = resumeOrder.indexOf(b);
+            if (ia === -1 && ib === -1) return 0;
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+          });
         if (additions.length === 0) {
           return {};
         }
@@ -822,6 +913,9 @@ export const useDownloadStore = create<DownloadState>()(
     },
 
     processStartQueue: async () => {
+      if (get().queueFrozen) {
+        return;
+      }
       if (get().isProcessingQueue) {
         return;
       }
@@ -831,7 +925,31 @@ export const useDownloadStore = create<DownloadState>()(
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const state = get();
-          const queue = state.pendingStartQueue;
+          // 过滤掉不应再次启动的任务
+          let queue = state.pendingStartQueue.filter(id => {
+            const task = state.tasks.find(t => t.id === id);
+            return (
+              task &&
+              task.status !== 'completed' &&
+              task.status !== 'cancelled' &&
+              task.status !== 'downloading'
+            );
+          });
+
+          // 按 resumePriority 优先恢复暂停过的任务
+          if (queue.length > 1 && state.resumePriority.length > 0) {
+            const idxMap = new Map<string, number>();
+            state.resumePriority.forEach((id, idx) => idxMap.set(id, idx));
+            queue = [...queue].sort((a, b) => {
+              const ia = idxMap.get(a);
+              const ib = idxMap.get(b);
+              if (ia === undefined && ib === undefined) return 0;
+              if (ia === undefined) return 1;
+              if (ib === undefined) return -1;
+              return ia - ib;
+            });
+          }
+
           if (queue.length === 0) {
             break;
           }
@@ -846,14 +964,20 @@ export const useDownloadStore = create<DownloadState>()(
           }
 
           const toStart = queue.slice(0, available);
-          set({ pendingStartQueue: queue.slice(available) });
+
+          // Remove tasks to be started from the queue
+          set(current => ({
+            pendingStartQueue: current.pendingStartQueue.filter(id => !toStart.includes(id))
+          }));
 
           for (const taskId of toStart) {
             const result = await get().startDownload(taskId, {
               enqueueOnLimit: false,
               suppressConcurrencyToast: true,
             });
+
             if (result === 'queued') {
+              // If rejected, put back in queue and stop processing
               set(current => ({
                 pendingStartQueue: current.pendingStartQueue.includes(taskId)
                   ? current.pendingStartQueue
@@ -1115,14 +1239,25 @@ export const useDownloadStore = create<DownloadState>()(
 
     updateConfig: async newConfig => {
       try {
-        const baseDownloadConfig = get().config ?? DEFAULT_DOWNLOAD_CONFIG;
+        const currentAppConfig = await invoke<AppConfig>('get_config').catch(() => null);
+        if (!currentAppConfig) {
+          throw new Error('获取现有配置失败，未能同步到后端');
+        }
 
         const mergedDownloadConfig = mergeDownloadConfig({
-          ...baseDownloadConfig,
+          ...(currentAppConfig.download ?? DEFAULT_DOWNLOAD_CONFIG),
           ...newConfig,
         });
 
-        await invoke('update_config', { config: mergedDownloadConfig });
+        const mergedAppConfig: AppConfig = {
+          ...currentAppConfig,
+          download: mergedDownloadConfig,
+        };
+
+        await invoke('update_config', {
+          newConfig: mergedAppConfig,
+          new_config: mergedAppConfig,
+        });
 
         set({ config: mergedDownloadConfig });
 
@@ -1575,86 +1710,225 @@ export const useDownloadStore = create<DownloadState>()(
 
 // \u8fdb\u5ea6\u66f4\u65b0\u76d1\u542c\u5668 - \u589e\u5f3a\u7248\u672c\u5e26Zod\u9a8c\u8bc1
 
-export const initializeProgressListener = () => {
-  listen<any>('download_progress', event => {
-    // \u9a8c\u8bc1\u8fdb\u5ea6\u66f4\u65b0\u6570\u636e
+export const initializeProgressListener = async () => {
+  if (listenersInitialized) {
+    return;
+  }
 
-    const validationResult = validateProgressUpdate(event.payload);
+  if (listenerSetupPromise) {
+    return listenerSetupPromise;
+  }
 
-    if (!validationResult.success) {
-      console.error('\u274c \u8fdb\u5ea6\u66f4\u65b0\u6570\u636e\u65e0\u6548:', {
-        payload: event.payload,
+  const setupListeners = async () => {
+    try {
+      let progressEventCount = 0;
+      const lastProgressUpdate = new Map<string, number>();
+      const unlistenProgress = await listen<any>('download_progress', event => {
+        progressEventCount++;
+        
+        // 只在首次和每10次记录详细日志，避免刷屏
+        const shouldLogDetail = progressEventCount <= 3 || progressEventCount % 10 === 0;
+        
+        if (shouldLogDetail) {
+          console.log(`[FRONTEND_PROGRESS] Event #${progressEventCount}:`, {
+            task_id: event.payload?.task_id,
+            progress: event.payload?.progress,
+            speed: event.payload?.speed,
+            downloaded: event.payload?.downloaded_size,
+          });
+        }
 
-        errors: validationResult.errors,
+        const validationResult = validateProgressUpdate(event.payload);
+
+        if (!validationResult.success) {
+          // 验证失败时尝试使用原始数据（降级处理）
+          console.warn('⚠️ 进度验证失败，尝试降级处理:', {
+            payload: event.payload,
+            errors: validationResult.errors,
+          });
+          
+          // 如果有基本必要字段，仍然尝试更新
+          const rawPayload = event.payload;
+          if (rawPayload?.task_id && typeof rawPayload.downloaded_size === 'number') {
+            const fallbackUpdate = {
+              task_id: String(rawPayload.task_id),
+              downloaded_size: rawPayload.downloaded_size ?? 0,
+              total_size: rawPayload.total_size,
+              speed: rawPayload.speed ?? 0,
+              eta: rawPayload.eta,
+              progress: rawPayload.progress ?? 0,
+            };
+            updateTaskProgress(fallbackUpdate);
+            return;
+          }
+          return;
+        }
+
+        const update = validationResult.data!;
+        if (update.task_id && typeof update.downloaded_size === 'number') {
+          const now = Date.now();
+          const last = lastProgressUpdate.get(update.task_id) ?? 0;
+          const pct = typeof update.progress === 'number' ? update.progress * 100 : undefined;
+          const forceEmit = (pct ?? 0) >= 99 || progressEventCount <= 3;
+          if (!forceEmit && now - last < 1000) {
+            return; // 节流：默认1秒一次
+          }
+          lastProgressUpdate.set(update.task_id, now);
+          updateTaskProgress({
+            task_id: update.task_id,
+            downloaded_size: update.downloaded_size,
+            total_size: update.total_size,
+            speed: update.speed,
+            eta: update.eta,
+            progress: update.progress,
+          });
+        }
       });
 
-      return; // \u5ffd\u7565\u65e0\u6548\u6570\u636e
-    }
+      // 抽取进度更新逻辑为独立函数
+      function updateTaskProgress(update: {
+        task_id: string;
+        downloaded_size: number;
+        total_size?: number | null;
+        speed?: number;
+        eta?: number | null;
+        progress?: number;
+      }) {
+        const totalSize =
+          typeof update.total_size === 'number' && Number.isFinite(update.total_size)
+            ? update.total_size
+            : undefined;
+        const etaValue =
+          typeof update.eta === 'number' && Number.isFinite(update.eta) ? update.eta : undefined;
+        const normalizedSpeed = Math.max(0, 
+          typeof update.speed === 'number' && Number.isFinite(update.speed) ? update.speed : 0
+        );
+        const normalizedProgress =
+          typeof update.progress === 'number' && Number.isFinite(update.progress)
+            ? Math.min(Math.max(update.progress * 100, 0), 100)
+            : undefined;
 
-    const update = validationResult.data!;
+        useDownloadStore.setState(state => ({
+          tasks: state.tasks.map(task => {
+            if (task.id === update.task_id) {
+              let progress = normalizedProgress ?? task.progress;
 
-    useDownloadStore.setState(state => ({
-      tasks: state.tasks.map(task => {
-        if (task.id === update.task_id) {
-          return {
-            ...task,
+              // 如果进度为0但有下载数据，从下载量计算进度
+              if (progress === 0 && totalSize && totalSize > 0 && update.downloaded_size > 0) {
+                progress = Math.min((update.downloaded_size / totalSize) * 100, 100);
+              }
 
-            downloaded_size: update.downloaded_size,
+              return {
+                ...task,
+                downloaded_size: update.downloaded_size,
+                file_size: totalSize ?? task.file_size,
+                speed: normalizedSpeed,
+                eta: etaValue,
+                progress,
+                updated_at: new Date().toISOString(),
+              };
+            }
 
-            speed: update.speed,
+            return task;
+          }),
+        }));
+      }
 
-            eta: update.eta,
+      const unlistenStatus = await listen<any>('task_status_changed', event => {
+        const payload = event.payload;
 
-            progress: update.total_size
-              ? (update.downloaded_size / update.total_size) * 100
-              : task.progress,
-
-            updated_at: new Date().toISOString(),
-          };
+        if (!payload || typeof payload.task_id !== 'string' || !payload.status) {
+          console.error('❌ 任务状态变更数据无效:', payload);
+          return;
         }
 
-        return task;
-      }),
-    }));
-  });
+        const { task_id, status: rawStatus, error_message } = payload;
+        const status = fromBackendStatus(rawStatus);
 
-  // \u4efb\u52a1\u72b6\u6001\u53d8\u5316\u76d1\u542c - \u589e\u5f3a\u7248\u672c\u5e26Zod\u9a8c\u8bc1
+        console.log(`🔄 任务 ${task_id} 状态变化: ${rawStatus} → ${status}`);
 
-  listen<any>('task_status_changed', event => {
-    // \u9a8c\u8bc1\u72b6\u6001\u53d8\u5316\u6570\u636e
+        useDownloadStore.setState(state => {
+          const updatedTasks = state.tasks.map(task => {
+            if (task.id === task_id) {
+              return {
+                ...task,
+                status,
+                error_message,
+                updated_at: new Date().toISOString(),
+              };
+            }
 
-    const payload = event.payload;
+            return task;
+          });
 
-    if (!payload || typeof payload.task_id !== 'string' || !payload.status) {
-      console.error('\u274c \u4efb\u52a1\u72b6\u6001\u53d8\u5316\u6570\u636e\u65e0\u6548:', payload);
+          const filteredPriority = state.resumePriority.filter(id => id !== task_id);
+          const nextPriority =
+            status === 'paused' ? [task_id, ...filteredPriority] : filteredPriority;
 
-      return; // \u5ffd\u7565\u65e0\u6548\u6570\u636e
-    }
-
-    const { task_id, status, error_message } = payload;
-
-    useDownloadStore.setState(state => ({
-      tasks: state.tasks.map(task => {
-        if (task.id === task_id) {
           return {
-            ...task,
-
-            status,
-
-            error_message,
-
-            updated_at: new Date().toISOString(),
+            tasks: updatedTasks,
+            resumePriority: nextPriority,
           };
+        });
+
+        useDownloadStore.getState().refreshStats();
+        void useDownloadStore.getState().processStartQueue();
+      });
+
+      const cleanup = () => {
+        if (!listenersInitialized) {
+          return;
         }
+        try {
+          unlistenProgress();
+        } catch (error) {
+          console.warn('Failed to remove progress listener', error);
+        }
+        try {
+          unlistenStatus();
+        } catch (error) {
+          console.warn('Failed to remove status listener', error);
+        }
+        listenersInitialized = false;
+        listenerSetupPromise = null;
+      };
 
-        return task;
-      }),
-    }));
+      if (typeof window !== 'undefined') {
+        window.addEventListener('beforeunload', cleanup, { once: true });
+      }
 
-    // \u5237\u65b0\u7edf\u8ba1\u4fe1\u606f
+      listenersInitialized = true;
+    } catch (error) {
+      listenerSetupPromise = null;
+      console.error('Failed to initialize download listeners', error);
+      throw error;
+    }
+  };
 
-    useDownloadStore.getState().refreshStats();
-    void useDownloadStore.getState().processStartQueue();
-  });
+  listenerSetupPromise = setupListeners();
+
+  try {
+    await listenerSetupPromise;
+  } catch {
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        void initializeProgressListener();
+      }, 1000);
+    }
+  }
+
+  if (typeof window !== 'undefined' && activeSyncTimer === null) {
+    activeSyncTimer = window.setInterval(() => {
+      const state = useDownloadStore.getState();
+      const hasActiveDownloads = state.tasks.some(task => task.status === 'downloading');
+      const hasQueuedStarts = state.pendingStartQueue.length > 0;
+
+      if (!hasActiveDownloads && !hasQueuedStarts) {
+        return;
+      }
+
+      state.refreshTasks().catch(err => console.warn('[sync] refreshTasks failed', err));
+      state.refreshStats().catch(err => console.warn('[sync] refreshStats failed', err));
+    }, 1500);
+  }
 };
-

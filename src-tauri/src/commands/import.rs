@@ -146,7 +146,7 @@ pub async fn import_tasks_and_enqueue(
     for (index, record) in import_result.imported_data.iter().enumerate() {
         match build_task_from_import(record, &base_path, index) {
             Ok(task) => match manager.add_video_task(task.clone()).await {
-                Ok(()) => created_tasks.push(task),
+                Ok(stored) => created_tasks.push(stored),
                 Err(AppError::Config(msg)) if msg.contains("Duplicate task") => {
                     skipped_duplicates.push(record.record_url.clone().unwrap_or_default());
                     warn!(
@@ -629,9 +629,7 @@ mod tests {
         assert!(field_mapping
             .column_id_names
             .contains(&"custom_id".to_string()));
-        assert!(field_mapping
-            .column_id_names
-            .contains(&"my_id".to_string()));
+        assert!(field_mapping.column_id_names.contains(&"my_id".to_string()));
         assert!(field_mapping
             .video_url_names
             .contains(&"download_link".to_string()));

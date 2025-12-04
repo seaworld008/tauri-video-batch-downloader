@@ -421,10 +421,7 @@ impl YoutubeDownloader {
             )
             .await
             {
-                error!(
-                    "YouTube download {} failed: {}",
-                    download_id_for_task, err
-                );
+                error!("YouTube download {} failed: {}", download_id_for_task, err);
                 let mut downloads = active_downloads.write().await;
                 downloads.insert(
                     download_id_for_task,

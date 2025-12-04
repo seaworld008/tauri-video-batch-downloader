@@ -4,8 +4,10 @@
 //! manages concurrent downloads, and handles progress tracking and event emission.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -244,6 +246,13 @@ pub struct DownloadManager {
     scheduler_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CompletionMarker {
+    url: String,
+    file_size: u64,
+    completed_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl DownloadManager {
     /// Create a new download manager with the given configuration
     pub fn new(config: DownloadConfig) -> AppResult<Self> {
@@ -332,6 +341,11 @@ impl DownloadManager {
 
     /// Start the download manager
     pub async fn start(&mut self) -> AppResult<()> {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        self.start_with_sender(sender).await
+    }
+
+    pub async fn start_with_sender(&mut self, sender: EventSender) -> AppResult<()> {
         if self.is_running {
             warn!("Download manager is already running");
             return Ok(());
@@ -342,33 +356,11 @@ impl DownloadManager {
             self.config.concurrent_downloads
         );
         self.is_running = true;
-
-        // Create event channel
-        let (sender, _receiver) = mpsc::unbounded_channel();
         self.event_sender = Some(sender.clone());
 
-        // Start background task scheduler
-        let task_queue = Arc::clone(&self.task_queue);
-        let semaphore = Arc::clone(&self.download_semaphore);
-        let downloader = Arc::clone(&self.http_downloader);
-        let rate_limit = Arc::clone(&self.rate_limit);
-
-        // Clone sender before moving it
-        let scheduler_sender = sender.clone();
+        // 暂停后台空跑调度器，避免队列被弹出但未真正启动下载
         let monitoring_sender = sender.clone();
-
-        let scheduler_handle = tokio::spawn(async move {
-            Self::task_scheduler(
-                task_queue,
-                semaphore,
-                downloader,
-                rate_limit,
-                scheduler_sender,
-            )
-            .await;
-        });
-
-        self.scheduler_handle = Some(scheduler_handle);
+        self.scheduler_handle = None;
 
         // Start monitoring system
         let monitoring = Arc::clone(&self.monitoring_system);
@@ -423,9 +415,8 @@ impl DownloadManager {
         self.add_task_with_priority(url, output_path, 5).await // Default priority = 5
     }
 
-    /// Add a complete VideoTask directly to storage
-    pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<()> {
-        // Check for duplicates based on URL
+    /// Add a complete VideoTask directly to storage and return the stored record (after hydration)
+    pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<VideoTask> {
         if self.has_duplicate_url(&task.url).await {
             return Err(AppError::Config(format!(
                 "Duplicate task detected for URL: {}",
@@ -433,21 +424,27 @@ impl DownloadManager {
             )));
         }
 
-        // Store the task
-        self.tasks.insert(task.id.clone(), task.clone());
+        let mut stored_task = task.clone();
+        self.hydrate_existing_file_state(&mut stored_task).await?;
 
-        // Add to queue if pending
-        if task.status == TaskStatus::Pending {
+        self.tasks
+            .insert(stored_task.id.clone(), stored_task.clone());
+
+        if stored_task.status == TaskStatus::Pending {
             let priority_task = TaskPriority {
-                task_id: task.id.clone(),
-                priority: 5, // Default priority
+                task_id: stored_task.id.clone(),
+                priority: 5,
                 created_at: chrono::Utc::now(),
             };
             self.task_queue.lock().await.push(priority_task);
         }
 
-        tracing::info!("Added video task: {} ({})", task.title, task.id);
-        Ok(())
+        tracing::info!(
+            "Added video task: {} ({})",
+            stored_task.title,
+            stored_task.id
+        );
+        Ok(stored_task)
     }
 
     /// Check if a URL already exists in tasks
@@ -460,7 +457,7 @@ impl DownloadManager {
         &mut self,
         task: VideoTask,
         allow_duplicates: bool,
-    ) -> AppResult<()> {
+    ) -> AppResult<VideoTask> {
         // Check for duplicates if not allowing them
         if !allow_duplicates && self.has_duplicate_url(&task.url).await {
             return Err(AppError::Config(format!(
@@ -469,21 +466,27 @@ impl DownloadManager {
             )));
         }
 
-        // Store the task
-        self.tasks.insert(task.id.clone(), task.clone());
+        let mut stored_task = task.clone();
+        self.hydrate_existing_file_state(&mut stored_task).await?;
 
-        // Add to queue if pending
-        if task.status == TaskStatus::Pending {
+        self.tasks
+            .insert(stored_task.id.clone(), stored_task.clone());
+
+        if stored_task.status == TaskStatus::Pending {
             let priority_task = TaskPriority {
-                task_id: task.id.clone(),
-                priority: 5, // Default priority
+                task_id: stored_task.id.clone(),
+                priority: 5,
                 created_at: chrono::Utc::now(),
             };
             self.task_queue.lock().await.push(priority_task);
         }
 
-        tracing::info!("Added video task: {} ({})", task.title, task.id);
-        Ok(())
+        tracing::info!(
+            "Added video task: {} ({})",
+            stored_task.title,
+            stored_task.id
+        );
+        Ok(stored_task)
     }
 
     /// Check if a task is currently active (downloading)
@@ -501,7 +504,7 @@ impl DownloadManager {
         let task_id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
 
-        let task = VideoTask {
+        let mut task = VideoTask {
             id: task_id.clone(),
             url: url.clone(),
             title: self.extract_title_from_url(&url),
@@ -518,6 +521,8 @@ impl DownloadManager {
             downloader_type: None,
             video_info: None, // 没有额外的视频信息
         };
+
+        self.hydrate_existing_file_state(&mut task).await?;
 
         self.tasks.insert(task_id.clone(), task.clone());
 
@@ -571,11 +576,18 @@ impl DownloadManager {
 
     /// Start downloading a specific task
     pub async fn start_download(&mut self, task_id: &str) -> AppResult<()> {
+        // 在启动前刷新任务的本地文件状态，确保断点续传能拿到最新已下载大小
+        self.refresh_task_file_state(task_id).await?;
         let task = self
             .tasks
             .get(task_id)
             .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
             .clone();
+
+        // 幂等防护：已在下载或句柄存在则直接返回成功
+        if task.status == TaskStatus::Downloading || self.active_downloads.contains_key(task_id) {
+            return Ok(());
+        }
 
         if task.status != TaskStatus::Pending && task.status != TaskStatus::Paused {
             return Err(AppError::Download(format!(
@@ -672,6 +684,8 @@ impl DownloadManager {
 
     /// Resume a paused download task
     pub async fn resume_download(&mut self, task_id: &str) -> AppResult<()> {
+        // 恢复前先刷新本地文件状态，确保续传起点正确
+        self.refresh_task_file_state(task_id).await?;
         let task = self
             .tasks
             .get(task_id)
@@ -770,6 +784,42 @@ impl DownloadManager {
         Ok(resumed)
     }
 
+    /// Start all pending/paused/failed tasks (best-effort)
+    pub async fn start_all_pending(&mut self) -> AppResult<usize> {
+        let candidates = self.collect_task_ids_by_status(&[
+            TaskStatus::Pending,
+            TaskStatus::Paused,
+            TaskStatus::Failed,
+        ]);
+        if candidates.is_empty() {
+            info!("No pending or paused tasks to start");
+            return Ok(0);
+        }
+
+        let mut started = 0usize;
+        for task_id in candidates {
+            match self.start_download(&task_id).await {
+                Ok(_) => started += 1,
+                Err(AppError::Download(msg)) if msg.contains("Maximum concurrent downloads") => {
+                    info!(
+                        "Reached concurrency limit while starting tasks (started {})",
+                        started
+                    );
+                    break;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to start task {} during start_all_pending: {}",
+                        task_id, e
+                    );
+                }
+            }
+        }
+
+        info!("Started {} tasks via start_all_pending", started);
+        Ok(started)
+    }
+
     /// Cancel all pending/downloading/paused tasks
     pub async fn cancel_all_downloads(&mut self) -> AppResult<usize> {
         let cancellable_ids: Vec<String> = self
@@ -791,6 +841,62 @@ impl DownloadManager {
 
         info!("Cancelled {} downloads", cancelled);
         Ok(cancelled)
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.is_running
+    }
+
+    pub fn has_event_sender(&self) -> bool {
+        self.event_sender.is_some()
+    }
+
+    pub async fn start_download_impl(&mut self, task_id: &str) -> AppResult<()> {
+        self.start_download(task_id).await
+    }
+
+    pub async fn pause_download_impl(&mut self, task_id: &str) -> AppResult<()> {
+        self.pause_download(task_id).await
+    }
+
+    pub async fn resume_download_impl(&mut self, task_id: &str) -> AppResult<()> {
+        self.resume_download(task_id).await
+    }
+
+    pub async fn cancel_download_impl(&mut self, task_id: &str) -> AppResult<()> {
+        self.cancel_download(task_id).await
+    }
+
+    pub async fn pause_all_downloads_impl(&mut self) -> AppResult<usize> {
+        self.pause_all_downloads().await
+    }
+
+    pub async fn resume_all_downloads_impl(&mut self) -> AppResult<usize> {
+        self.resume_all_downloads().await
+    }
+
+    pub async fn start_all_pending_impl(&mut self) -> AppResult<usize> {
+        self.start_all_pending().await
+    }
+
+    pub async fn cancel_all_downloads_impl(&mut self) -> AppResult<usize> {
+        self.cancel_all_downloads().await
+    }
+
+    fn collect_task_ids_by_status(&self, statuses: &[TaskStatus]) -> Vec<String> {
+        let mut entries: Vec<(String, chrono::DateTime<chrono::Utc>)> = self
+            .tasks
+            .iter()
+            .filter_map(|(task_id, task)| {
+                if statuses.iter().any(|status| task.status == *status) {
+                    Some((task_id.clone(), task.created_at))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.into_iter().map(|(task_id, _)| task_id).collect()
     }
 
     /// Remove a completed or failed task
@@ -980,7 +1086,9 @@ impl DownloadManager {
             if let Some(task_priority) = next_task {
                 // Try to acquire a permit for concurrent download
                 if let Ok(permit) = semaphore.clone().try_acquire_owned() {
-                    let TaskPriority { task_id, priority, .. } = task_priority;
+                    let TaskPriority {
+                        task_id, priority, ..
+                    } = task_priority;
                     let rate_limit_clone = Arc::clone(&rate_limit);
 
                     // Spawn individual download task
@@ -1022,6 +1130,86 @@ impl DownloadManager {
     }
 
     // Private helper methods
+
+    async fn hydrate_existing_file_state(&self, task: &mut VideoTask) -> AppResult<()> {
+        let Some(file_path) = self.resolve_output_file_path(task) else {
+            return Ok(());
+        };
+
+        if let Some(marker) = Self::load_completion_marker(&file_path).await {
+            if marker.url == task.url {
+                if let Ok(metadata) = fs::metadata(&file_path).await {
+                    if metadata.len() == marker.file_size && marker.file_size > 0 {
+                        task.status = TaskStatus::Completed;
+                        task.file_size = Some(marker.file_size);
+                        task.downloaded_size = marker.file_size;
+                        task.progress = 100.0;
+                        task.speed = 0.0;
+                        task.eta = None;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        if let Ok(metadata) = fs::metadata(&file_path).await {
+            let existing_size = metadata.len();
+            if existing_size > 0 {
+                task.downloaded_size = existing_size;
+                if let Some(total) = task.file_size {
+                    if total > 0 {
+                        task.progress = ((existing_size as f64 / total as f64) * 100.0).min(100.0);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_output_file_path(&self, task: &VideoTask) -> Option<PathBuf> {
+        if task.output_path.trim().is_empty() {
+            return None;
+        }
+        let filename = self.extract_title_from_url(&task.url);
+        Some(Path::new(&task.output_path).join(filename))
+    }
+
+    fn completion_marker_path(file_path: &Path) -> PathBuf {
+        let file_name = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("download");
+        file_path.with_file_name(format!("{}.vdstate", file_name))
+    }
+
+    async fn load_completion_marker(file_path: &Path) -> Option<CompletionMarker> {
+        let marker_path = Self::completion_marker_path(file_path);
+        match fs::read_to_string(&marker_path).await {
+            Ok(contents) => serde_json::from_str(&contents).ok(),
+            Err(_) => None,
+        }
+    }
+
+    async fn persist_completion_marker(file_path: &Path, url: &str) -> AppResult<()> {
+        let metadata = fs::metadata(file_path)
+            .await
+            .map_err(|e| AppError::System(format!("Failed to inspect download file: {}", e)))?;
+
+        let marker = CompletionMarker {
+            url: url.to_string(),
+            file_size: metadata.len(),
+            completed_at: chrono::Utc::now(),
+        };
+
+        let json = serde_json::to_string(&marker).map_err(|e| {
+            AppError::System(format!("Failed to serialize completion marker: {}", e))
+        })?;
+
+        fs::write(Self::completion_marker_path(file_path), json)
+            .await
+            .map_err(|e| AppError::System(format!("Failed to persist completion marker: {}", e)))
+    }
 
     /// Update task status
     pub async fn update_task_status(&mut self, task_id: &str, status: TaskStatus) -> AppResult<()> {
@@ -1092,6 +1280,117 @@ impl DownloadManager {
         // For now, monitoring system will collect its own statistics
     }
 
+    /// Apply state updates based on download events so backend state stays consistent with UI
+    pub async fn apply_event_side_effects(&mut self, event: &DownloadEvent) -> AppResult<()> {
+        match event {
+            DownloadEvent::TaskProgress { progress, .. } => {
+                self.update_task_progress_snapshot(progress).await?;
+            }
+            DownloadEvent::TaskCompleted { task_id, file_path } => {
+                self.finalize_task_state(task_id, TaskStatus::Completed, Some(file_path), None)
+                    .await?;
+            }
+            DownloadEvent::TaskFailed { task_id, error } => {
+                self.finalize_task_state(
+                    task_id,
+                    TaskStatus::Failed,
+                    None,
+                    Some(error.to_string()),
+                )
+                .await?;
+            }
+            DownloadEvent::TaskCancelled { task_id } => {
+                self.finalize_task_state(task_id, TaskStatus::Cancelled, None, None)
+                    .await?;
+            }
+            DownloadEvent::TaskPaused { task_id } => {
+                self.drop_active_handle(task_id);
+                self.update_task_status(task_id, TaskStatus::Paused).await?;
+            }
+            DownloadEvent::TaskResumed { task_id } | DownloadEvent::TaskStarted { task_id } => {
+                self.update_task_status(task_id, TaskStatus::Downloading)
+                    .await?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// Persist progress snapshot into task list for consistent refreshes
+    async fn update_task_progress_snapshot(&mut self, progress: &ProgressUpdate) -> AppResult<()> {
+        if let Some(task) = self.tasks.get_mut(&progress.task_id) {
+            if matches!(task.status, TaskStatus::Completed | TaskStatus::Cancelled) {
+                return Ok(());
+            }
+
+            task.downloaded_size = progress.downloaded_size;
+            if let Some(total) = progress.total_size {
+                task.file_size = Some(total);
+            }
+            task.speed = progress.speed;
+            task.eta = progress.eta;
+
+            task.progress = (progress.progress * 100.0).clamp(0.0, 100.0);
+            task.updated_at = chrono::Utc::now();
+        }
+
+        self.update_stats().await;
+        Ok(())
+    }
+
+    /// Finalize task state on completion/failure/cancel and clean active handle
+    async fn finalize_task_state(
+        &mut self,
+        task_id: &str,
+        status: TaskStatus,
+        file_path: Option<&str>,
+        error_message: Option<String>,
+    ) -> AppResult<()> {
+        self.drop_active_handle(task_id);
+
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            task.status = status;
+            task.error_message = error_message;
+            task.speed = 0.0;
+            task.eta = None;
+
+            if let Some(path) = file_path {
+                match fs::metadata(path).await {
+                    Ok(metadata) => {
+                        let size = metadata.len();
+                        task.downloaded_size = size;
+                        task.file_size = Some(size);
+                        task.progress = 100.0;
+                    }
+                    Err(e) => {
+                        warn!("Failed to read file metadata for {}: {}", task_id, e);
+                        if task.progress < 100.0 && matches!(task.status, TaskStatus::Completed) {
+                            task.progress = 100.0;
+                        }
+                    }
+                }
+            }
+
+            task.updated_at = chrono::Utc::now();
+        } else {
+            warn!(
+                "Received lifecycle event for unknown task {}; state will not be updated",
+                task_id
+            );
+        }
+
+        self.update_stats().await;
+        Ok(())
+    }
+
+    /// Remove finished/aborted download handle from the active map
+    fn drop_active_handle(&mut self, task_id: &str) {
+        if self.active_downloads.remove(task_id).is_some() {
+            debug!("Dropped active download handle for {}", task_id);
+        }
+    }
+
     /// Extract title from URL (simple heuristic)
     fn extract_title_from_url(&self, url: &str) -> String {
         url.split('/')
@@ -1099,6 +1398,19 @@ impl DownloadManager {
             .and_then(|s| s.split('?').next())
             .unwrap_or("Unknown")
             .to_string()
+    }
+
+    /// Refresh a task's local file state (downloaded_size/progress) before start/resume
+    async fn refresh_task_file_state(&mut self, task_id: &str) -> AppResult<()> {
+        // 先克隆，再水合，最后写回，避免可变/不可变重叠借用
+        if let Some(existing) = self.tasks.get(task_id).cloned() {
+            let mut hydrated = existing;
+            self.hydrate_existing_file_state(&mut hydrated).await?;
+            if let Some(slot) = self.tasks.get_mut(task_id) {
+                *slot = hydrated;
+            }
+        }
+        Ok(())
     }
 
     /// Execute the actual download using HttpDownloader with retry mechanism
@@ -1206,8 +1518,10 @@ impl DownloadManager {
             .unwrap_or("download")
             .to_string();
 
-        // Create download task
-        let download_task = DownloadTask::new(url.to_string(), output_path.to_string(), filename);
+        // Create download task and ensure IDs match the manager task ID so progress events line up.
+        let mut download_task =
+            DownloadTask::new(url.to_string(), output_path.to_string(), filename);
+        download_task.id = task_id.to_string();
 
         // Create progress channel for downloader callback
         let (download_progress_tx, mut download_progress_rx) =
@@ -1229,6 +1543,7 @@ impl DownloadManager {
                         total_size: download_stats.total_bytes,
                         speed: download_stats.speed,
                         eta: download_stats.eta,
+                        progress: download_stats.progress,
                     };
 
                     let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
@@ -1274,10 +1589,9 @@ impl DownloadManager {
             Ok(completed_task) => {
                 match completed_task.status {
                     TaskStatus::Completed => {
-                        let file_path = std::path::Path::new(&completed_task.output_path)
-                            .join(&completed_task.filename)
-                            .to_string_lossy()
-                            .to_string();
+                        let file_path_buf = std::path::Path::new(&completed_task.output_path)
+                            .join(&completed_task.filename);
+                        let file_path = file_path_buf.to_string_lossy().to_string();
 
                         // Stop enhanced progress tracking
                         let _ = progress_tracker.stop_tracking(task_id).await;
@@ -1286,6 +1600,15 @@ impl DownloadManager {
                             task_id: task_id.to_string(),
                             file_path: file_path.clone(),
                         });
+
+                        if let Err(err) =
+                            Self::persist_completion_marker(&file_path_buf, &url).await
+                        {
+                            warn!(
+                                "Failed to persist completion marker for {}: {}",
+                                task_id, err
+                            );
+                        }
 
                         // Perform integrity verification if enabled
                         if config.auto_verify_integrity {

@@ -5,9 +5,7 @@
 mod tests {
     use crate::core::{
         manager::DownloadManager,
-        models::{
-            DownloadConfig, DownloaderType, ProgressUpdate, TaskStatus, VideoTask,
-        },
+        models::{DownloadConfig, DownloaderType, ProgressUpdate, TaskStatus, VideoTask},
     };
     use std::collections::HashMap;
     use uuid::Uuid;
@@ -106,6 +104,7 @@ mod tests {
                     total_size: Some(4096),
                     speed: 512.0,
                     eta: Some(6),
+                    progress: 0.25,
                 },
             )
             .await;
@@ -441,6 +440,7 @@ mod tests {
                 } else {
                     0
                 }),
+                progress: expected_progress / 100.0,
             };
 
             let result = manager

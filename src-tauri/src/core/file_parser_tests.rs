@@ -258,13 +258,15 @@ mod integration_tests {
         let temp_dir = create_test_csv_files().unwrap();
 
         // 测试CSV格式检测
-        let csv_format = parser.test_detect_file_format(temp_dir.path().join("utf8_test.csv"))
+        let csv_format = parser
+            .test_detect_file_format(temp_dir.path().join("utf8_test.csv"))
             .unwrap();
         assert_eq!(csv_format, FileFormat::Csv);
 
         // 测试未知扩展名（应该默认为CSV）
         fs::write(temp_dir.path().join("unknown.txt"), "test").unwrap();
-        let unknown_format = parser.test_detect_file_format(temp_dir.path().join("unknown.txt"))
+        let unknown_format = parser
+            .test_detect_file_format(temp_dir.path().join("unknown.txt"))
             .unwrap();
         assert_eq!(unknown_format, FileFormat::Csv);
     }
@@ -780,7 +782,3 @@ mod integration_tests {
         assert_eq!(parser.config.skip_empty_rows, false);
     }
 }
-
-
-
-
