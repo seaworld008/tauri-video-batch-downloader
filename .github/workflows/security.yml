@@ -179,12 +179,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
+      - name: Enable pnpm via Corepack
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.15.9 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -293,12 +293,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
+      - name: Enable pnpm via Corepack
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.15.9 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -342,12 +342,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
+      - name: Enable pnpm via Corepack
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.15.9 --activate
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable

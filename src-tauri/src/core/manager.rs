@@ -3,6 +3,7 @@
 //! This module provides the main DownloadManager that orchestrates all download operations,
 //! manages concurrent downloads, and handles progress tracking and event emission.
 
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
