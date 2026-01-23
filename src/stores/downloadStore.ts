@@ -509,7 +509,18 @@ export const useDownloadStore = create<DownloadState>()(
         // \u6b65\u9aa46: \u539f\u5b50\u6027\u72b6\u6001\u66f4\u65b0 - \u4f7f\u7528\u9a8c\u8bc1\u8fc7\u7684\u540e\u7aef\u6570\u636e
 
         set(state => {
-          const updatedTasks = [...state.tasks, ...validatedBackendTasks];
+          const updatedTasks = [...state.tasks];
+          const indexById = new Map(updatedTasks.map((task, index) => [task.id, index]));
+
+          for (const task of validatedBackendTasks) {
+            const existingIndex = indexById.get(task.id);
+            if (existingIndex !== undefined) {
+              updatedTasks[existingIndex] = task;
+            } else {
+              indexById.set(task.id, updatedTasks.length);
+              updatedTasks.push(task);
+            }
+          }
 
           console.log('\u1f4ca \u66f4\u65b0\u540e\u7684\u72b6\u6001:', {
             \u539f\u6709\u4efb\u52a1\u6570: state.tasks.length,
@@ -1864,10 +1875,17 @@ export const initializeProgressListener = async () => {
           const filteredPriority = state.resumePriority.filter(id => id !== task_id);
           const nextPriority =
             status === 'paused' ? [task_id, ...filteredPriority] : filteredPriority;
+          const nextQueueFrozen = status === 'paused' ? true : state.queueFrozen;
+          const nextPendingStartQueue =
+            status === 'paused'
+              ? state.pendingStartQueue.filter(id => id !== task_id)
+              : state.pendingStartQueue;
 
           return {
             tasks: updatedTasks,
             resumePriority: nextPriority,
+            queueFrozen: nextQueueFrozen,
+            pendingStartQueue: nextPendingStartQueue,
           };
         });
 

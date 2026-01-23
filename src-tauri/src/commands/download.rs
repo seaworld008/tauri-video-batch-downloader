@@ -74,18 +74,18 @@ pub async fn add_download_tasks(
     let mut manager = state.download_manager.write().await;
 
     let mut created_tasks = Vec::new();
-    let mut skipped_duplicates = Vec::new();
+    let mut reused_tasks = Vec::new();
     let mut failed_tasks = Vec::new();
 
     for task in tasks {
         // 尝试添加任务到管理器，处理重复项
         match manager.add_video_task(task.clone()).await {
-            Ok(stored) => {
-                created_tasks.push(stored);
-            }
-            Err(AppError::Config(msg)) if msg.contains("Duplicate task") => {
-                skipped_duplicates.push(task.title.clone());
-                tracing::warn!("Skipped duplicate task: {} ({})", task.title, task.url);
+            Ok(result) => {
+                if result.created {
+                    created_tasks.push(result.task);
+                } else {
+                    reused_tasks.push(result.task);
+                }
             }
             Err(e) => {
                 failed_tasks.push(format!("{}: {}", task.title, e));
@@ -95,12 +95,8 @@ pub async fn add_download_tasks(
     }
 
     // 创建详细的日志信息
-    if !skipped_duplicates.is_empty() {
-        tracing::info!(
-            "Skipped {} duplicate tasks: {:?}",
-            skipped_duplicates.len(),
-            skipped_duplicates
-        );
+    if !reused_tasks.is_empty() {
+        tracing::info!("Reused {} existing tasks", reused_tasks.len());
     }
     if !failed_tasks.is_empty() {
         tracing::warn!(
@@ -111,13 +107,14 @@ pub async fn add_download_tasks(
     }
 
     tracing::info!(
-        "Successfully created {} download tasks (skipped {} duplicates, {} failed)",
+        "Successfully created {} download tasks (reused {}, {} failed)",
         created_tasks.len(),
-        skipped_duplicates.len(),
+        reused_tasks.len(),
         failed_tasks.len()
     );
 
     // 即使有一些失败或重复，也返回成功创建的任务
+    created_tasks.extend(reused_tasks);
     Ok(created_tasks)
 }
 

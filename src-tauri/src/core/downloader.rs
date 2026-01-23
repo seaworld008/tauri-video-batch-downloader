@@ -87,8 +87,10 @@ use uuid::Uuid;
 use crate::core::m3u8_downloader::{M3U8Downloader, M3U8DownloaderConfig};
 use crate::core::models::*;
 use crate::core::resume_downloader::{
-    ResumeDownloader, ResumeDownloaderConfig, ResumeProgressCallback,
+    ResumeDownloader, ResumeDownloaderConfig, ResumeInfo, ResumeProgressCallback,
 };
+use directories::ProjectDirs;
+use sha2::{Digest, Sha256};
 
 /// HTTP下载器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +226,8 @@ impl HttpDownloader {
             .user_agent(&config.user_agent)
             .build()?;
 
+        let resume_dir = Self::resolve_resume_dir();
+
         let max_concurrent = Arc::new(AtomicUsize::new(config.max_concurrent));
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
 
@@ -234,7 +238,7 @@ impl HttpDownloader {
             large_file_threshold: 50 * 1024 * 1024, // 50MB 阈值
             max_retries: config.retry_attempts,
             retry_delay: Duration::from_secs(2),
-            resume_info_dir: std::env::temp_dir().join("video_downloader_resume"),
+            resume_info_dir: resume_dir,
             server_cache_ttl: Duration::from_secs(24 * 60 * 60), // 24小时
         };
 
@@ -274,6 +278,14 @@ impl HttpDownloader {
         self.bandwidth_controller.clone()
     }
 
+    pub async fn load_resume_info(&self, resume_key: &str) -> Option<ResumeInfo> {
+        self.resume_downloader
+            .load_resume_info(resume_key)
+            .await
+            .ok()
+            .flatten()
+    }
+
     /// 设置进度回调
     pub fn set_progress_callback(&mut self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
         self.progress_tx = Some(tx.clone());
@@ -309,6 +321,19 @@ impl HttpDownloader {
                 );
             }
         }
+    }
+
+    fn build_resume_key(&self, task: &DownloadTask) -> String {
+        let identity = format!("{}|{}|{}", task.url, task.output_path, task.filename);
+        let mut hasher = Sha256::new();
+        hasher.update(identity.as_bytes());
+        hex::encode(hasher.finalize())
+    }
+
+    fn resolve_resume_dir() -> std::path::PathBuf {
+        ProjectDirs::from("com", "video-downloader", "VideoDownloaderPro")
+            .map(|dirs| dirs.data_local_dir().join("resume"))
+            .unwrap_or_else(|| std::env::temp_dir().join("video_downloader_resume"))
     }
 
     /// 开始下载单个文件
@@ -540,9 +565,10 @@ impl HttpDownloader {
 
         let task_id = task.id.clone();
         let task_url = task.url.clone();
+        let resume_key = self.build_resume_key(task);
 
         let mut resume_future = Box::pin(self.resume_downloader.download_with_resume(
-            &task_id,
+            &resume_key,
             &task_url,
             Path::new(&output_path_str),
             task.stats.total_bytes,
