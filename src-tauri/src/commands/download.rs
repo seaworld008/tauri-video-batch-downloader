@@ -96,7 +96,10 @@ pub async fn add_download_tasks(
 
     // 创建详细的日志信息
     if !reused_tasks.is_empty() {
-        tracing::info!("Reused {} existing tasks", reused_tasks.len());
+        tracing::info!(
+            "Reused {} existing tasks",
+            reused_tasks.len()
+        );
     }
     if !failed_tasks.is_empty() {
         tracing::warn!(

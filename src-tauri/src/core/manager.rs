@@ -12,6 +12,7 @@ use tokio::fs;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use sha2::{Digest, Sha256};
 
 use crate::core::downloader::{DownloadStats, DownloadTask, DownloaderConfig, HttpDownloader};
 use crate::core::error_handling::{
@@ -426,10 +427,11 @@ impl DownloadManager {
     pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<AddVideoTaskResult> {
         if let Some(existing_id) = self.find_task_by_identity(&task.url, &task.output_path) {
             self.refresh_task_file_state(&existing_id).await?;
-            let existing =
-                self.tasks.get(&existing_id).cloned().ok_or_else(|| {
-                    AppError::Download("Duplicate task lookup failed".to_string())
-                })?;
+            let existing = self
+                .tasks
+                .get(&existing_id)
+                .cloned()
+                .ok_or_else(|| AppError::Download("Duplicate task lookup failed".to_string()))?;
             return Ok(AddVideoTaskResult {
                 task: existing,
                 created: false,
@@ -477,9 +479,11 @@ impl DownloadManager {
         if !allow_duplicates {
             if let Some(existing_id) = self.find_task_by_identity(&task.url, &task.output_path) {
                 self.refresh_task_file_state(&existing_id).await?;
-                let existing = self.tasks.get(&existing_id).cloned().ok_or_else(|| {
-                    AppError::Download("Duplicate task lookup failed".to_string())
-                })?;
+                let existing = self
+                    .tasks
+                    .get(&existing_id)
+                    .cloned()
+                    .ok_or_else(|| AppError::Download("Duplicate task lookup failed".to_string()))?;
                 return Ok(AddVideoTaskResult {
                     task: existing,
                     created: false,
