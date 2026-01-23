@@ -140,19 +140,18 @@ pub async fn import_tasks_and_enqueue(
 
     let mut manager = state.download_manager.write().await;
     let mut created_tasks = Vec::new();
-    let mut skipped_duplicates = Vec::new();
+    let mut reused_tasks = Vec::new();
     let mut failed_items = Vec::new();
 
     for (index, record) in import_result.imported_data.iter().enumerate() {
         match build_task_from_import(record, &base_path, index) {
             Ok(task) => match manager.add_video_task(task.clone()).await {
-                Ok(stored) => created_tasks.push(stored),
-                Err(AppError::Config(msg)) if msg.contains("Duplicate task") => {
-                    skipped_duplicates.push(record.record_url.clone().unwrap_or_default());
-                    warn!(
-                        "Skipped duplicate task for URL: {}",
-                        record.record_url.as_deref().unwrap_or("unknown")
-                    );
+                Ok(result) => {
+                    if result.created {
+                        created_tasks.push(result.task);
+                    } else {
+                        reused_tasks.push(result.task);
+                    }
                 }
                 Err(error) => {
                     failed_items.push(format!(
@@ -172,9 +171,9 @@ pub async fn import_tasks_and_enqueue(
     drop(manager);
 
     info!(
-        "\u{2705} Enqueued {} tasks ({} duplicates skipped, {} failed)",
+        "\u{2705} Enqueued {} tasks ({} reused, {} failed)",
         created_tasks.len(),
-        skipped_duplicates.len(),
+        reused_tasks.len(),
         failed_items.len()
     );
 
@@ -182,6 +181,7 @@ pub async fn import_tasks_and_enqueue(
         warn!("{} tasks failed to import", failed_items.len());
     }
 
+    created_tasks.extend(reused_tasks);
     Ok(created_tasks)
 }
 
