@@ -12,6 +12,7 @@ use tokio::fs;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use sha2::{Digest, Sha256};
 
 use crate::core::downloader::{DownloadStats, DownloadTask, DownloaderConfig, HttpDownloader};
 use crate::core::error_handling::{

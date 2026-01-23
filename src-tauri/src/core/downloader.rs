@@ -84,6 +84,7 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
 use uuid::Uuid;
 
+use directories::ProjectDirs;
 use crate::core::m3u8_downloader::{M3U8Downloader, M3U8DownloaderConfig};
 use crate::core::models::*;
 use crate::core::resume_downloader::{
