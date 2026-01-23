@@ -11,6 +11,7 @@ use tokio::fs;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use sha2::{Digest, Sha256};
 
 use crate::core::downloader::{DownloadStats, DownloadTask, DownloaderConfig, HttpDownloader};
 use crate::core::error_handling::{
@@ -165,6 +166,12 @@ pub enum DownloadEvent {
         task_id: String,
         youtube_download_id: String,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct AddVideoTaskResult {
+    pub task: VideoTask,
+    pub created: bool,
 }
 
 /// Channel for communication between download manager and UI
@@ -416,12 +423,18 @@ impl DownloadManager {
     }
 
     /// Add a complete VideoTask directly to storage and return the stored record (after hydration)
-    pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<VideoTask> {
-        if self.has_duplicate_url(&task.url).await {
-            return Err(AppError::Config(format!(
-                "Duplicate task detected for URL: {}",
-                task.url
-            )));
+    pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<AddVideoTaskResult> {
+        if let Some(existing_id) = self.find_task_by_identity(&task.url, &task.output_path) {
+            self.refresh_task_file_state(&existing_id).await?;
+            let existing = self
+                .tasks
+                .get(&existing_id)
+                .cloned()
+                .ok_or_else(|| AppError::Download("Duplicate task lookup failed".to_string()))?;
+            return Ok(AddVideoTaskResult {
+                task: existing,
+                created: false,
+            });
         }
 
         let mut stored_task = task.clone();
@@ -444,12 +457,15 @@ impl DownloadManager {
             stored_task.title,
             stored_task.id
         );
-        Ok(stored_task)
+        Ok(AddVideoTaskResult {
+            task: stored_task,
+            created: true,
+        })
     }
 
     /// Check if a URL already exists in tasks
-    pub async fn has_duplicate_url(&self, url: &str) -> bool {
-        self.tasks.values().any(|task| task.url == url)
+    pub async fn has_duplicate_task(&self, url: &str, output_path: &str) -> bool {
+        self.find_task_by_identity(url, output_path).is_some()
     }
 
     /// Add video task with duplicate checking option
@@ -457,13 +473,21 @@ impl DownloadManager {
         &mut self,
         task: VideoTask,
         allow_duplicates: bool,
-    ) -> AppResult<VideoTask> {
+    ) -> AppResult<AddVideoTaskResult> {
         // Check for duplicates if not allowing them
-        if !allow_duplicates && self.has_duplicate_url(&task.url).await {
-            return Err(AppError::Config(format!(
-                "Duplicate task detected for URL: {}",
-                task.url
-            )));
+        if !allow_duplicates {
+            if let Some(existing_id) = self.find_task_by_identity(&task.url, &task.output_path) {
+                self.refresh_task_file_state(&existing_id).await?;
+                let existing = self
+                    .tasks
+                    .get(&existing_id)
+                    .cloned()
+                    .ok_or_else(|| AppError::Download("Duplicate task lookup failed".to_string()))?;
+                return Ok(AddVideoTaskResult {
+                    task: existing,
+                    created: false,
+                });
+            }
         }
 
         let mut stored_task = task.clone();
@@ -486,7 +510,10 @@ impl DownloadManager {
             stored_task.title,
             stored_task.id
         );
-        Ok(stored_task)
+        Ok(AddVideoTaskResult {
+            task: stored_task,
+            created: true,
+        })
     }
 
     /// Check if a task is currently active (downloading)
@@ -661,25 +688,39 @@ impl DownloadManager {
 
     /// Pause a download task
     pub async fn pause_download(&mut self, task_id: &str) -> AppResult<()> {
+        let task = self
+            .tasks
+            .get(task_id)
+            .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
+            .clone();
+
+        if matches!(task.status, TaskStatus::Completed | TaskStatus::Cancelled) {
+            return Err(AppError::Download(format!(
+                "Task {} cannot be paused from status: {:?}",
+                task_id, task.status
+            )));
+        }
+
         if let Some(handle) = self.active_downloads.remove(task_id) {
             handle.abort();
-            self.update_task_status(task_id, TaskStatus::Paused).await?;
-
-            // Emit task paused event
-            if let Some(sender) = &self.event_sender {
-                let _ = sender.send(DownloadEvent::TaskPaused {
-                    task_id: task_id.to_string(),
-                });
-            }
-
-            info!("⏸️ Paused download: {}", task_id);
-            Ok(())
-        } else {
-            Err(AppError::Download(format!(
-                "Active download not found: {}",
-                task_id
-            )))
         }
+
+        // Signal downloader to stop current task if it's still running
+        let _ = self.http_downloader.cancel_download(task_id).await;
+
+        if task.status != TaskStatus::Paused {
+            self.update_task_status(task_id, TaskStatus::Paused).await?;
+        }
+
+        // Emit task paused event
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.send(DownloadEvent::TaskPaused {
+                task_id: task_id.to_string(),
+            });
+        }
+
+        info!("⏸️ Paused download: {}", task_id);
+        Ok(())
     }
 
     /// Resume a paused download task
@@ -1156,10 +1197,32 @@ impl DownloadManager {
             let existing_size = metadata.len();
             if existing_size > 0 {
                 task.downloaded_size = existing_size;
+
+                let resume_total = self
+                    .load_resume_total_size(task)
+                    .await
+                    .filter(|total| *total > 0);
+
+                if let Some(total) = resume_total {
+                    task.file_size = Some(total);
+                    if existing_size >= total {
+                        task.status = TaskStatus::Completed;
+                        task.downloaded_size = total;
+                        task.progress = 100.0;
+                        task.speed = 0.0;
+                        task.eta = None;
+                        return Ok(());
+                    }
+                }
+
                 if let Some(total) = task.file_size {
                     if total > 0 {
                         task.progress = ((existing_size as f64 / total as f64) * 100.0).min(100.0);
                     }
+                }
+
+                if task.status == TaskStatus::Pending {
+                    task.status = TaskStatus::Paused;
                 }
             }
         }
@@ -1173,6 +1236,35 @@ impl DownloadManager {
         }
         let filename = self.extract_title_from_url(&task.url);
         Some(Path::new(&task.output_path).join(filename))
+    }
+
+    fn normalize_output_path(&self, output_path: &str) -> String {
+        PathBuf::from(output_path)
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR)
+            .to_string()
+    }
+
+    fn build_identity_key(&self, url: &str, output_path: &str) -> String {
+        let filename = self.extract_title_from_url(url);
+        let normalized_path = self.normalize_output_path(output_path);
+        format!("{}|{}|{}", url, normalized_path, filename)
+    }
+
+    fn find_task_by_identity(&self, url: &str, output_path: &str) -> Option<String> {
+        let identity = self.build_identity_key(url, output_path);
+        self.tasks
+            .values()
+            .find(|task| self.build_identity_key(&task.url, &task.output_path) == identity)
+            .map(|task| task.id.clone())
+    }
+
+    async fn load_resume_total_size(&self, task: &VideoTask) -> Option<u64> {
+        let resume_key = self.build_resume_key(task)?;
+        self.http_downloader
+            .load_resume_info(&resume_key)
+            .await
+            .map(|info| info.total_size)
     }
 
     fn completion_marker_path(file_path: &Path) -> PathBuf {
@@ -1398,6 +1490,17 @@ impl DownloadManager {
             .and_then(|s| s.split('?').next())
             .unwrap_or("Unknown")
             .to_string()
+    }
+
+    fn build_resume_key(&self, task: &VideoTask) -> Option<String> {
+        if task.output_path.trim().is_empty() {
+            return None;
+        }
+        let filename = self.extract_title_from_url(&task.url);
+        let identity = format!("{}|{}|{}", task.url, task.output_path, filename);
+        let mut hasher = Sha256::new();
+        hasher.update(identity.as_bytes());
+        Some(hex::encode(hasher.finalize()))
     }
 
     /// Refresh a task's local file state (downloaded_size/progress) before start/resume
