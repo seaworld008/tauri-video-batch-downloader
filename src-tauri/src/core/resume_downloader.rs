@@ -785,7 +785,7 @@ impl ResumeDownloader {
     }
 
     /// 加载断点续传信息
-    async fn load_resume_info(&self, task_id: &str) -> Result<Option<ResumeInfo>> {
+    pub async fn load_resume_info(&self, task_id: &str) -> Result<Option<ResumeInfo>> {
         // 先检查内存缓存
         {
             let cache = self.resume_info_cache.read().await;
