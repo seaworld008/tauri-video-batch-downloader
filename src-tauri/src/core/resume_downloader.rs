@@ -234,6 +234,27 @@ impl ResumeDownloader {
                 .unwrap_or(false)
     }
 
+    fn interrupt_reason(
+        cancel_flag: &Option<Arc<AtomicBool>>,
+        pause_flag: &Option<Arc<AtomicBool>>,
+    ) -> &'static str {
+        if cancel_flag
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+        {
+            "download_cancelled"
+        } else if pause_flag
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+        {
+            "download_paused"
+        } else {
+            "download_cancelled"
+        }
+    }
+
     /// 创建新的断点续传下载器
     pub fn new(
         config: ResumeDownloaderConfig,
@@ -352,7 +373,7 @@ impl ResumeDownloader {
         }
 
         if Self::should_interrupt(&cancel_flag, &pause_flag) {
-            bail!("下载被取消");
+            bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
         }
 
         // 检测服务器支持能力
@@ -388,7 +409,7 @@ impl ResumeDownloader {
         if Self::should_interrupt(&cancel_flag, &pause_flag) {
             // 保存当前进度，保证后续能继续
             self.save_resume_info(&resume_info).await.ok();
-            bail!("下载被取消");
+            bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
         }
 
         // 合并分片
@@ -446,7 +467,10 @@ impl ResumeDownloader {
         let bandwidth_controller = self.bandwidth_controller.clone();
 
         if Self::should_interrupt(&cancel_flag, &pause_flag) {
-            return Err(anyhow::anyhow!("下载被取消"));
+            return Err(anyhow::anyhow!(Self::interrupt_reason(
+                &cancel_flag,
+                &pause_flag
+            )));
         }
 
         if pending_chunks.is_empty() {
@@ -473,7 +497,10 @@ impl ResumeDownloader {
             if Self::should_interrupt(&cancel_flag, &pause_flag) {
                 // 在退出前保存进度，便于下次继续
                 self.save_resume_info(resume_info).await.ok();
-                return Err(anyhow::anyhow!("下载被取消"));
+                return Err(anyhow::anyhow!(Self::interrupt_reason(
+                    &cancel_flag,
+                    &pause_flag
+                )));
             }
 
             let semaphore = Arc::clone(&semaphore);
@@ -492,7 +519,10 @@ impl ResumeDownloader {
                 let _permit = semaphore.acquire().await.unwrap();
 
                 if ResumeDownloader::should_interrupt(&cancel_flag, &pause_flag) {
-                    return Err(anyhow::anyhow!("下载被取消"));
+                    return Err(anyhow::anyhow!(Self::interrupt_reason(
+                        &cancel_flag,
+                        &pause_flag
+                    )));
                 }
 
                 Self::download_chunk_static(
@@ -568,14 +598,20 @@ impl ResumeDownloader {
         }
 
         if Self::should_interrupt(&cancel_flag, &pause_flag) {
-            return Err(anyhow::anyhow!("下载被取消"));
+            return Err(anyhow::anyhow!(Self::interrupt_reason(
+                &cancel_flag,
+                &pause_flag
+            )));
         }
 
         let mut retry_count = 0;
 
         while retry_count <= config.max_retries {
             if Self::should_interrupt(&cancel_flag, &pause_flag) {
-                return Err(anyhow::anyhow!("下载被取消"));
+                return Err(anyhow::anyhow!(Self::interrupt_reason(
+                    &cancel_flag,
+                    &pause_flag
+                )));
             }
 
             match Self::download_chunk_attempt(
@@ -639,7 +675,7 @@ impl ResumeDownloader {
         chunk.status = ChunkStatus::Downloading;
 
         if Self::should_interrupt(&cancel_flag, &pause_flag) {
-            bail!("下载被取消");
+            bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
         }
 
         // 计算实际需要下载的范围
@@ -677,7 +713,7 @@ impl ResumeDownloader {
 
         while let Some(chunk_data) = stream.next().await {
             if Self::should_interrupt(&cancel_flag, &pause_flag) {
-                bail!("下载被取消");
+                bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
             }
             let chunk_data = chunk_data?;
             file.write_all(&chunk_data).await?;

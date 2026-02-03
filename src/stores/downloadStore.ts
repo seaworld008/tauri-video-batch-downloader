@@ -1876,10 +1876,7 @@ export const initializeProgressListener = async () => {
           const nextPriority =
             status === 'paused' ? [task_id, ...filteredPriority] : filteredPriority;
           const nextQueueFrozen = status === 'paused' ? true : state.queueFrozen;
-          const nextPendingStartQueue =
-            status === 'paused'
-              ? state.pendingStartQueue.filter(id => id !== task_id)
-              : state.pendingStartQueue;
+          const nextPendingStartQueue = state.pendingStartQueue.filter(id => id !== task_id);
 
           return {
             tasks: updatedTasks,

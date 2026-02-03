@@ -158,6 +158,7 @@ impl M3U8Downloader {
         task_id: &str,
         m3u8_url: &str,
         output_path: &str,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
         tracing::info!("开始下载M3U8流: {}", m3u8_url);
         // 解析M3U8播放列表
@@ -207,7 +208,7 @@ impl M3U8Downloader {
                 &playlist,
                 &task_temp_dir,
                 cancel_flag.clone(),
-                Arc::clone(&self.is_paused),
+                Arc::clone(&pause_flag),
             )
             .await;
 
@@ -478,8 +479,15 @@ impl M3U8Downloader {
         let start_time = Instant::now();
 
         for (index, segment) in playlist.segments.iter().enumerate() {
-            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-                return Err(anyhow::anyhow!("下载被取消"));
+            if cancel_flag.load(Ordering::Relaxed)
+                || pause_flag.load(Ordering::Relaxed)
+                || self.is_paused.load(Ordering::Relaxed)
+            {
+                return Err(if cancel_flag.load(Ordering::Relaxed) {
+                    anyhow::anyhow!("download_cancelled")
+                } else {
+                    anyhow::anyhow!("download_paused")
+                });
             }
             let segment_file = temp_dir.join(format!("segment_{:06}.ts", index));
             segment_files.push(segment_file.clone());
@@ -500,12 +508,20 @@ impl M3U8Downloader {
             let total_bytes_hint = total_bytes_hint;
             let start_time = start_time;
             let pause_flag = Arc::clone(&pause_flag);
+            let global_pause = Arc::clone(&self.is_paused);
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
 
-                if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-                    return Err(anyhow::anyhow!("下载被取消"));
+                if cancel_flag.load(Ordering::Relaxed)
+                    || pause_flag.load(Ordering::Relaxed)
+                    || global_pause.load(Ordering::Relaxed)
+                {
+                    return Err(if cancel_flag.load(Ordering::Relaxed) {
+                        anyhow::anyhow!("download_cancelled")
+                    } else {
+                        anyhow::anyhow!("download_paused")
+                    });
                 }
 
                 tracing::debug!(
@@ -618,9 +634,13 @@ impl M3U8Downloader {
         let mut retry_count = 0;
 
         while retry_count <= config.retry_attempts {
-            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-                return Err(anyhow::anyhow!("下载被取消"));
-            }
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            return Err(if cancel_flag.load(Ordering::Relaxed) {
+                anyhow::anyhow!("download_cancelled")
+            } else {
+                anyhow::anyhow!("download_paused")
+                        });
+                    }
             match Self::download_segment_attempt(
                 client,
                 segment_url,
@@ -666,7 +686,11 @@ impl M3U8Downloader {
         pause_flag: Arc<AtomicBool>,
     ) -> Result<u64> {
         if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-            bail!("下载被取消");
+            if cancel_flag.load(Ordering::Relaxed) {
+                bail!("download_cancelled");
+            } else {
+                bail!("download_paused");
+            }
         }
         let mut request = client.get(segment_url);
         if let Some((start, end)) = byte_range {
@@ -692,7 +716,11 @@ impl M3U8Downloader {
 
         let mut data = response.bytes().await?.to_vec();
         if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-            bail!("下载被取消");
+            if cancel_flag.load(Ordering::Relaxed) {
+                bail!("download_cancelled");
+            } else {
+                bail!("download_paused");
+            }
         }
         if let Some(enc) = encryption {
             if enc.method.to_uppercase() == "AES-128" {

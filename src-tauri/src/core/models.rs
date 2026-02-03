@@ -45,6 +45,10 @@ pub struct VideoTask {
 
     pub output_path: String,
 
+    /// Fully resolved file path for this task (optional, backend-derived)
+    #[serde(default)]
+    pub resolved_path: Option<String>,
+
     pub status: TaskStatus,
 
     pub progress: f64,

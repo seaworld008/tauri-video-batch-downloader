@@ -225,6 +225,7 @@ fn build_task_from_import(
         url,
         title,
         output_path: output_path_str,
+        resolved_path: None,
         status: TaskStatus::Pending,
         progress: 0.0,
         file_size: None,

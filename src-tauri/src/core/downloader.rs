@@ -204,10 +204,30 @@ impl DownloadTask {
 pub type ProgressCallback = Arc<dyn Fn(&str, &DownloadStats) + Send + Sync>;
 
 /// HTTP 下载引擎
+struct DownloadControl {
+    cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
+    effective_pause_flag: Arc<AtomicBool>,
+}
+
+impl DownloadControl {
+    fn new(global_pause: &Arc<AtomicBool>) -> Self {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let pause_flag = Arc::new(AtomicBool::new(false));
+        let effective_pause_flag =
+            Arc::new(AtomicBool::new(global_pause.load(Ordering::Relaxed)));
+        Self {
+            cancel_flag,
+            pause_flag,
+            effective_pause_flag,
+        }
+    }
+}
+
 pub struct HttpDownloader {
     config: DownloaderConfig,
     client: Client,
-    active_downloads: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+    active_downloads: Arc<RwLock<HashMap<String, DownloadControl>>>,
     semaphore: Arc<Semaphore>,
     max_concurrent: Arc<AtomicUsize>,
     progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
@@ -330,6 +350,14 @@ impl HttpDownloader {
         hex::encode(hasher.finalize())
     }
 
+    fn recalc_effective_pause(&self, control: &DownloadControl) {
+        let paused = control.pause_flag.load(Ordering::Relaxed)
+            || self.is_paused.load(Ordering::Relaxed);
+        control
+            .effective_pause_flag
+            .store(paused, Ordering::Relaxed);
+    }
+
     fn resolve_resume_dir() -> std::path::PathBuf {
         ProjectDirs::from("com", "video-downloader", "VideoDownloaderPro")
             .map(|dirs| dirs.data_local_dir().join("resume"))
@@ -367,10 +395,15 @@ impl HttpDownloader {
         }
 
         // 注册活跃下载
-        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let control = DownloadControl::new(&self.is_paused);
+        self.recalc_effective_pause(&control);
         {
             let mut downloads = self.active_downloads.write().await;
-            downloads.insert(task.id.clone(), cancel_flag.clone());
+            downloads.insert(task.id.clone(), DownloadControl {
+                cancel_flag: Arc::clone(&control.cancel_flag),
+                pause_flag: Arc::clone(&control.pause_flag),
+                effective_pause_flag: Arc::clone(&control.effective_pause_flag),
+            });
             tracing::info!(
                 "🔵 [DOWNLOAD_ENTRY] Registered task {} in active_downloads (total: {})",
                 task.id,
@@ -388,10 +421,14 @@ impl HttpDownloader {
             task.id,
             self.config.resume_enabled
         );
+        let cancel_flag = Arc::clone(&control.cancel_flag);
+        let pause_flag = Arc::clone(&control.effective_pause_flag);
+
         let result = if self.config.resume_enabled {
-            self.smart_download(&mut task, cancel_flag.clone()).await
+            self.smart_download(&mut task, cancel_flag.clone(), pause_flag.clone())
+                .await
         } else {
-            self.download_with_resume(&mut task, cancel_flag.clone())
+            self.download_with_resume(&mut task, cancel_flag.clone(), pause_flag.clone())
                 .await
         };
 
@@ -414,6 +451,9 @@ impl HttpDownloader {
             downloads.remove(&task.id);
         }
 
+        let was_cancelled = control.cancel_flag.load(Ordering::Relaxed);
+        let was_paused = control.effective_pause_flag.load(Ordering::Relaxed);
+
         match result {
             Ok(_) => {
                 task.status = TaskStatus::Completed;
@@ -422,14 +462,27 @@ impl HttpDownloader {
                 tracing::info!("✅ [DOWNLOAD_ENTRY] Download completed: {}", task.filename);
             }
             Err(e) => {
-                task.status = TaskStatus::Failed;
-                task.error_message = Some(e.to_string());
-                task.updated_at = chrono::Utc::now();
-                tracing::error!(
-                    "❌ [DOWNLOAD_ENTRY] Download failed: {} - {}",
-                    task.filename,
-                    e
-                );
+                let err_str = e.to_string();
+                if was_cancelled || err_str == "download_cancelled" {
+                    task.status = TaskStatus::Cancelled;
+                    task.error_message = None;
+                    task.updated_at = chrono::Utc::now();
+                    tracing::info!("🚫 [DOWNLOAD_ENTRY] Download cancelled: {}", task.filename);
+                } else if was_paused || err_str == "download_paused" {
+                    task.status = TaskStatus::Paused;
+                    task.error_message = None;
+                    task.updated_at = chrono::Utc::now();
+                    tracing::info!("⏸️ [DOWNLOAD_ENTRY] Download paused: {}", task.filename);
+                } else {
+                    task.status = TaskStatus::Failed;
+                    task.error_message = Some(err_str.clone());
+                    task.updated_at = chrono::Utc::now();
+                    tracing::error!(
+                        "❌ [DOWNLOAD_ENTRY] Download failed: {} - {}",
+                        task.filename,
+                        err_str
+                    );
+                }
             }
         }
 
@@ -442,6 +495,7 @@ impl HttpDownloader {
         &self,
         task: &mut DownloadTask,
         cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
         tracing::info!(
             "🟢 [SMART_DOWNLOAD] Started for task {} (url={})",
@@ -475,7 +529,9 @@ impl HttpDownloader {
         );
         if is_m3u8 {
             tracing::info!("🟢 [SMART_DOWNLOAD] M3U8 URL detected, using M3U8 downloader");
-            return self.download_with_m3u8(task, cancel_flag).await;
+            return self
+                .download_with_m3u8(task, cancel_flag, pause_flag)
+                .await;
         }
 
         // 对于非M3U8 URL，尝试获取文件大小
@@ -497,7 +553,7 @@ impl HttpDownloader {
             Ok(None) => {
                 tracing::warn!("🟡 [SMART_DOWNLOAD] No content length returned for task {}, using resume downloader", task.id);
                 return self
-                    .download_with_resume_downloader(task, cancel_flag)
+                    .download_with_resume_downloader(task, cancel_flag, pause_flag)
                     .await;
             }
             Err(e) => {
@@ -511,7 +567,9 @@ impl HttpDownloader {
                     task.id
                 );
                 // 直接使用简单的下载方法而不是 resume_downloader
-                return self.download_with_resume(task, cancel_flag).await;
+                return self
+                    .download_with_resume(task, cancel_flag, pause_flag)
+                    .await;
             }
         };
 
@@ -532,11 +590,11 @@ impl HttpDownloader {
 
         if content_length >= large_file_threshold {
             tracing::info!("大文件检测：使用ResumeDownloader进行分片下载");
-            self.download_with_resume_downloader(task, cancel_flag)
+            self.download_with_resume_downloader(task, cancel_flag, pause_flag)
                 .await
         } else {
             tracing::info!("小文件检测：使用传统HTTP下载");
-            self.download_with_resume(task, cancel_flag).await
+            self.download_with_resume(task, cancel_flag, pause_flag).await
         }
     }
 
@@ -545,14 +603,19 @@ impl HttpDownloader {
         &self,
         task: &mut DownloadTask,
         cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
         let full_path = Path::new(&task.output_path).join(&task.filename);
         let output_path_str = full_path.to_string_lossy().to_string();
 
         tracing::info!("ʹ��ResumeDownloader��ʼ����: {}", task.filename);
 
-        if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
-            return Err(anyhow::anyhow!("���ر�ȡ��"));
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            return Err(if cancel_flag.load(Ordering::Relaxed) {
+                anyhow::anyhow!("download_cancelled")
+            } else {
+                anyhow::anyhow!("download_paused")
+            });
         }
 
         let (delta_tx, mut delta_rx) = mpsc::unbounded_channel::<u64>();
@@ -563,7 +626,6 @@ impl HttpDownloader {
             })
         };
 
-        let task_id = task.id.clone();
         let task_url = task.url.clone();
         let resume_key = self.build_resume_key(task);
 
@@ -574,7 +636,7 @@ impl HttpDownloader {
             task.stats.total_bytes,
             Some(progress_callback),
             Some(cancel_flag.clone()),
-            Some(self.is_paused.clone()),
+            Some(pause_flag.clone()),
         ));
 
         let start_time = Instant::now();
@@ -583,8 +645,12 @@ impl HttpDownloader {
 
         loop {
             tokio::select! {
-                _ = sleep(Duration::from_millis(200)), if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) => {
-                    return Err(anyhow::anyhow!("下载被取消"));
+                _ = sleep(Duration::from_millis(200)), if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) => {
+                    return Err(if cancel_flag.load(Ordering::Relaxed) {
+                        anyhow::anyhow!("download_cancelled")
+                    } else {
+                        anyhow::anyhow!("download_paused")
+                    });
                 }
                 delta = delta_rx.recv() => {
                     match delta {
@@ -594,8 +660,12 @@ impl HttpDownloader {
                             self.update_progress(task, downloaded, total, start_time).await;
                         }
                         None => {
-                            if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
-                                return Err(anyhow::anyhow!("下载被取消"));
+                            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+                                return Err(if cancel_flag.load(Ordering::Relaxed) {
+                                    anyhow::anyhow!("download_cancelled")
+                                } else {
+                                    anyhow::anyhow!("download_paused")
+                                });
                             }
                         }
                     }
@@ -695,19 +765,24 @@ impl HttpDownloader {
         &self,
         task: &mut DownloadTask,
         cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
         let full_path = Path::new(&task.output_path).join(&task.filename);
         let output_path_str = full_path.to_string_lossy().to_string();
         // 检查取消标志
-        if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
-            return Err(anyhow::anyhow!("下载被取消"));
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            return Err(if cancel_flag.load(Ordering::Relaxed) {
+                anyhow::anyhow!("download_cancelled")
+            } else {
+                anyhow::anyhow!("download_paused")
+            });
         }
 
         tracing::info!("使用M3U8Downloader开始流媒体下载: {}", task.filename);
 
         // 调用M3U8Downloader的下载方法
         self.m3u8_downloader
-            .download_m3u8(&task.id, &task.url, &output_path_str)
+            .download_m3u8(&task.id, &task.url, &output_path_str, pause_flag)
             .await?;
 
         tracing::info!("M3U8流媒体下载完成: {}", task.filename);
@@ -719,6 +794,7 @@ impl HttpDownloader {
         &self,
         task: &mut DownloadTask,
         cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
         tracing::info!(
             "🟣 [DOWNLOAD_WITH_RESUME] Started for task {} (url={})",
@@ -842,13 +918,17 @@ impl HttpDownloader {
 
         while let Some(chunk) = stream.next().await {
             // 检查取消标志
-            if cancel_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed) {
+            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
                 tracing::info!(
                     "[DOWNLOAD_TRACE] Task {} cancelled/paused after {} chunks",
                     task.id,
                     chunk_count
                 );
-                return Err(anyhow::anyhow!("下载被取消"));
+                return Err(if cancel_flag.load(Ordering::Relaxed) {
+                    anyhow::anyhow!("download_cancelled")
+                } else {
+                    anyhow::anyhow!("download_paused")
+                });
             }
 
             let chunk = chunk?;
@@ -978,18 +1058,46 @@ impl HttpDownloader {
     /// 暂停所有下载
     pub async fn pause_all(&self) {
         self.is_paused.store(true, Ordering::Relaxed);
+        let downloads = self.active_downloads.read().await;
+        for control in downloads.values() {
+            self.recalc_effective_pause(control);
+        }
         tracing::info!("所有下载已暂停");
     }
 
     /// 恢复所有下载
     pub async fn resume_all(&self) {
         self.is_paused.store(false, Ordering::Relaxed);
+        let downloads = self.active_downloads.read().await;
+        for control in downloads.values() {
+            self.recalc_effective_pause(control);
+        }
         tracing::info!("所有下载已恢复");
     }
 
     /// 返回是否有正在进行的下载（底层视角）
     pub async fn has_active_download(&self, task_id: &str) -> bool {
         self.active_downloads.read().await.contains_key(task_id)
+    }
+
+    pub async fn pause_task(&self, task_id: &str) -> Result<()> {
+        let downloads = self.active_downloads.read().await;
+        if let Some(control) = downloads.get(task_id) {
+            control.pause_flag.store(true, Ordering::Relaxed);
+            self.recalc_effective_pause(control);
+            tracing::info!("[PAUSE_TASK] Paused task: {}", task_id);
+        }
+        Ok(())
+    }
+
+    pub async fn resume_task(&self, task_id: &str) -> Result<()> {
+        let downloads = self.active_downloads.read().await;
+        if let Some(control) = downloads.get(task_id) {
+            control.pause_flag.store(false, Ordering::Relaxed);
+            self.recalc_effective_pause(control);
+            tracing::info!("[RESUME_TASK] Resumed task: {}", task_id);
+        }
+        Ok(())
     }
 
     /// 取消特定下载
@@ -1004,9 +1112,9 @@ impl HttpDownloader {
                 task_id
             );
 
-            if let Some(cancel_flag) = downloads.get(task_id) {
-                let was_cancelled = cancel_flag.load(Ordering::Relaxed);
-                cancel_flag.store(true, Ordering::Relaxed);
+            if let Some(control) = downloads.get(task_id) {
+                let was_cancelled = control.cancel_flag.load(Ordering::Relaxed);
+                control.cancel_flag.store(true, Ordering::Relaxed);
                 tracing::info!(
                     "[CANCEL_DOWNLOAD] ✅ Found and cancelled task: {} (was_cancelled before: {})",
                     task_id,
@@ -1185,7 +1293,10 @@ mod tests {
         // 模拟注册一个活跃下载
         {
             let mut downloads = downloader.active_downloads.write().await;
-            downloads.insert(task_id.to_string(), Arc::new(AtomicBool::new(false)));
+            downloads.insert(
+                task_id.to_string(),
+                DownloadControl::new(&downloader.is_paused),
+            );
         }
 
         // 测试取消下载
@@ -1194,8 +1305,10 @@ mod tests {
 
         // 验证取消标志被设置
         let downloads = downloader.active_downloads.read().await;
-        if let Some(cancel_flag) = downloads.get(task_id) {
-            assert!(cancel_flag.load(std::sync::atomic::Ordering::Relaxed));
+        if let Some(control) = downloads.get(task_id) {
+            assert!(control
+                .cancel_flag
+                .load(std::sync::atomic::Ordering::Relaxed));
         }
     }
 
@@ -1209,8 +1322,14 @@ mod tests {
         // 添加一些活跃下载
         {
             let mut downloads = downloader.active_downloads.write().await;
-            downloads.insert("task1".to_string(), Arc::new(AtomicBool::new(false)));
-            downloads.insert("task2".to_string(), Arc::new(AtomicBool::new(false)));
+            downloads.insert(
+                "task1".to_string(),
+                DownloadControl::new(&downloader.is_paused),
+            );
+            downloads.insert(
+                "task2".to_string(),
+                DownloadControl::new(&downloader.is_paused),
+            );
         }
 
         assert_eq!(downloader.active_download_count().await, 2);

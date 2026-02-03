@@ -3,7 +3,6 @@
 //! This module provides the main DownloadManager that orchestrates all download operations,
 //! manages concurrent downloads, and handles progress tracking and event emission.
 
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -175,6 +174,13 @@ pub struct AddVideoTaskResult {
     pub created: bool,
 }
 
+#[derive(Debug)]
+enum DownloadOutcome {
+    Completed(String),
+    Paused,
+    Cancelled,
+}
+
 /// Channel for communication between download manager and UI
 pub type EventSender = mpsc::UnboundedSender<DownloadEvent>;
 pub type EventReceiver = mpsc::UnboundedReceiver<DownloadEvent>;
@@ -196,10 +202,9 @@ impl PartialOrd for TaskPriority {
 impl Ord for TaskPriority {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // First by priority (higher first), then by creation time (older first)
-        other
-            .priority
-            .cmp(&self.priority)
-            .then_with(|| self.created_at.cmp(&other.created_at))
+        self.priority
+            .cmp(&other.priority)
+            .then_with(|| other.created_at.cmp(&self.created_at))
     }
 }
 
@@ -366,7 +371,7 @@ impl DownloadManager {
         self.is_running = true;
         self.event_sender = Some(sender.clone());
 
-        // 暂停后台空跑调度器，避免队列被弹出但未真正启动下载
+        // Scheduler handle is managed by the app bootstrap.
         let monitoring_sender = sender.clone();
         self.scheduler_handle = None;
 
@@ -425,7 +430,29 @@ impl DownloadManager {
 
     /// Add a complete VideoTask directly to storage and return the stored record (after hydration)
     pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<AddVideoTaskResult> {
-        if let Some(existing_id) = self.find_task_by_identity(&task.url, &task.output_path) {
+        let mut normalized_task = task.clone();
+        if let Some(resolved) = normalized_task.resolved_path.clone() {
+            let resolved_path = Path::new(&resolved);
+            let dir = resolved_path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            normalized_task.output_path = Self::normalize_output_path(&dir);
+            normalized_task.resolved_path = Some(resolved);
+        } else {
+            let (output_dir, filename) =
+                Self::split_output_path(&normalized_task.url, &normalized_task.output_path);
+            normalized_task.output_path = output_dir.clone();
+            normalized_task.resolved_path = if output_dir.trim().is_empty() {
+                None
+            } else {
+                Some(Path::new(&output_dir).join(&filename).to_string_lossy().to_string())
+            };
+        }
+
+        if let Some(existing_id) =
+            self.find_task_by_identity(&normalized_task.url, &normalized_task.output_path)
+        {
             self.refresh_task_file_state(&existing_id).await?;
             let existing = self
                 .tasks
@@ -438,20 +465,11 @@ impl DownloadManager {
             });
         }
 
-        let mut stored_task = task.clone();
+        let mut stored_task = normalized_task;
         self.hydrate_existing_file_state(&mut stored_task).await?;
 
         self.tasks
             .insert(stored_task.id.clone(), stored_task.clone());
-
-        if stored_task.status == TaskStatus::Pending {
-            let priority_task = TaskPriority {
-                task_id: stored_task.id.clone(),
-                priority: 5,
-                created_at: chrono::Utc::now(),
-            };
-            self.task_queue.lock().await.push(priority_task);
-        }
 
         tracing::info!(
             "Added video task: {} ({})",
@@ -475,9 +493,31 @@ impl DownloadManager {
         task: VideoTask,
         allow_duplicates: bool,
     ) -> AppResult<AddVideoTaskResult> {
+        let mut normalized_task = task.clone();
+        if let Some(resolved) = normalized_task.resolved_path.clone() {
+            let resolved_path = Path::new(&resolved);
+            let dir = resolved_path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            normalized_task.output_path = Self::normalize_output_path(&dir);
+            normalized_task.resolved_path = Some(resolved);
+        } else {
+            let (output_dir, filename) =
+                Self::split_output_path(&normalized_task.url, &normalized_task.output_path);
+            normalized_task.output_path = output_dir.clone();
+            normalized_task.resolved_path = if output_dir.trim().is_empty() {
+                None
+            } else {
+                Some(Path::new(&output_dir).join(&filename).to_string_lossy().to_string())
+            };
+        }
+
         // Check for duplicates if not allowing them
         if !allow_duplicates {
-            if let Some(existing_id) = self.find_task_by_identity(&task.url, &task.output_path) {
+            if let Some(existing_id) =
+                self.find_task_by_identity(&normalized_task.url, &normalized_task.output_path)
+            {
                 self.refresh_task_file_state(&existing_id).await?;
                 let existing = self
                     .tasks
@@ -491,20 +531,11 @@ impl DownloadManager {
             }
         }
 
-        let mut stored_task = task.clone();
+        let mut stored_task = normalized_task;
         self.hydrate_existing_file_state(&mut stored_task).await?;
 
         self.tasks
             .insert(stored_task.id.clone(), stored_task.clone());
-
-        if stored_task.status == TaskStatus::Pending {
-            let priority_task = TaskPriority {
-                task_id: stored_task.id.clone(),
-                priority: 5,
-                created_at: chrono::Utc::now(),
-            };
-            self.task_queue.lock().await.push(priority_task);
-        }
 
         tracing::info!(
             "Added video task: {} ({})",
@@ -531,12 +562,19 @@ impl DownloadManager {
     ) -> AppResult<String> {
         let task_id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
+        let (output_dir, filename) = Self::split_output_path(&url, &output_path);
+        let resolved_path = if output_dir.trim().is_empty() {
+            None
+        } else {
+            Some(Path::new(&output_dir).join(&filename).to_string_lossy().to_string())
+        };
 
         let mut task = VideoTask {
             id: task_id.clone(),
             url: url.clone(),
-            title: self.extract_title_from_url(&url),
-            output_path,
+            title: Self::extract_title_from_url(&url),
+            output_path: output_dir,
+            resolved_path,
             status: TaskStatus::Pending,
             progress: 0.0,
             file_size: None,
@@ -553,18 +591,6 @@ impl DownloadManager {
         self.hydrate_existing_file_state(&mut task).await?;
 
         self.tasks.insert(task_id.clone(), task.clone());
-
-        // Add to priority queue
-        let task_priority = TaskPriority {
-            task_id: task_id.clone(),
-            priority,
-            created_at: now,
-        };
-
-        {
-            let mut queue = self.task_queue.lock().await;
-            queue.push(task_priority);
-        }
 
         self.update_stats().await;
 
@@ -612,12 +638,17 @@ impl DownloadManager {
             .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
             .clone();
 
+        self.remove_task_from_queue(task_id).await;
+
         // 幂等防护：已在下载或句柄存在则直接返回成功
         if task.status == TaskStatus::Downloading || self.active_downloads.contains_key(task_id) {
             return Ok(());
         }
 
-        if task.status != TaskStatus::Pending && task.status != TaskStatus::Paused {
+        if task.status != TaskStatus::Pending
+            && task.status != TaskStatus::Paused
+            && task.status != TaskStatus::Failed
+        {
             return Err(AppError::Download(format!(
                 "Task {} cannot be started from status: {:?}",
                 task_id, task.status
@@ -625,12 +656,29 @@ impl DownloadManager {
         }
 
         // Check if we can start a new download
-        let permit = self
-            .download_semaphore
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| AppError::Download("Maximum concurrent downloads reached".to_string()))?;
+        let permit = match self.download_semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                self.enqueue_task(task_id, 5).await;
+                return Err(AppError::Download(
+                    "Maximum concurrent downloads reached".to_string(),
+                ));
+            }
+        };
 
+        self.start_download_with_permit(task_id, task, permit)
+            .await
+    }
+
+    async fn start_download_with_permit(
+        &mut self,
+        task_id: &str,
+        task: VideoTask,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AppResult<()> {
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            task.error_message = None;
+        }
         self.update_task_status(task_id, TaskStatus::Downloading)
             .await?;
 
@@ -672,8 +720,14 @@ impl DownloadManager {
             )
             .await
             {
-                Ok(file_path) => {
+                Ok(DownloadOutcome::Completed(file_path)) => {
                     info!("✅ Download completed: {} -> {}", task_id_clone, file_path);
+                }
+                Ok(DownloadOutcome::Paused) => {
+                    info!("⏸️ Download paused: {}", task_id_clone);
+                }
+                Ok(DownloadOutcome::Cancelled) => {
+                    info!("🚫 Download cancelled: {}", task_id_clone);
                 }
                 Err(error) => {
                     error!("❌ Download failed: {} - {}", task_id_clone, error);
@@ -702,22 +756,23 @@ impl DownloadManager {
             )));
         }
 
-        if let Some(handle) = self.active_downloads.remove(task_id) {
-            handle.abort();
+        let _ = self.remove_task_from_queue(task_id).await;
+        let is_active = self.active_downloads.contains_key(task_id);
+        if is_active {
+            let _ = self.http_downloader.pause_task(task_id).await;
         }
-
-        // Signal downloader to stop current task if it's still running
-        let _ = self.http_downloader.cancel_download(task_id).await;
 
         if task.status != TaskStatus::Paused {
             self.update_task_status(task_id, TaskStatus::Paused).await?;
         }
 
-        // Emit task paused event
-        if let Some(sender) = &self.event_sender {
-            let _ = sender.send(DownloadEvent::TaskPaused {
-                task_id: task_id.to_string(),
-            });
+        // Emit task paused event only when there is no active worker to emit it.
+        if !is_active {
+            if let Some(sender) = &self.event_sender {
+                let _ = sender.send(DownloadEvent::TaskPaused {
+                    task_id: task_id.to_string(),
+                });
+            }
         }
 
         info!("⏸️ Paused download: {}", task_id);
@@ -740,8 +795,16 @@ impl DownloadManager {
             )));
         }
 
-        // Resume is essentially the same as starting
-        self.start_download(task_id).await?;
+        let _ = self.remove_task_from_queue(task_id).await;
+
+        if self.active_downloads.contains_key(task_id) {
+            let _ = self.http_downloader.resume_task(task_id).await;
+            self.update_task_status(task_id, TaskStatus::Downloading)
+                .await?;
+        } else {
+            // Resume is essentially the same as starting
+            self.start_download(task_id).await?;
+        }
 
         // Emit task resumed event
         if let Some(sender) = &self.event_sender {
@@ -757,21 +820,21 @@ impl DownloadManager {
     /// Cancel a download task
     pub async fn cancel_download(&mut self, task_id: &str) -> AppResult<()> {
         let downloader = Arc::clone(&self.http_downloader);
-        if let Some(handle) = self.active_downloads.remove(task_id) {
-            handle.abort();
-        }
-
+        let is_active = self.active_downloads.contains_key(task_id);
         // 发信号给 HttpDownloader，确保底层任务尽快停止
         let _ = downloader.cancel_download(task_id).await;
+        let _ = self.remove_task_from_queue(task_id).await;
 
         self.update_task_status(task_id, TaskStatus::Cancelled)
             .await?;
 
-        // Emit task cancelled event
-        if let Some(sender) = &self.event_sender {
-            let _ = sender.send(DownloadEvent::TaskCancelled {
-                task_id: task_id.to_string(),
-            });
+        // Emit task cancelled event only if there is no active worker to emit it.
+        if !is_active {
+            if let Some(sender) = &self.event_sender {
+                let _ = sender.send(DownloadEvent::TaskCancelled {
+                    task_id: task_id.to_string(),
+                });
+            }
         }
 
         info!("🚫 Cancelled download: {}", task_id);
@@ -784,17 +847,29 @@ impl DownloadManager {
         downloader.pause_all().await;
 
         let task_ids: Vec<String> = self.active_downloads.keys().cloned().collect();
-
-        let mut paused = 0usize;
-        for task_id in task_ids {
-            match self.pause_download(&task_id).await {
-                Ok(_) => paused += 1,
-                Err(e) => warn!("Failed to pause task {}: {}", task_id, e),
-            }
+        for task_id in &task_ids {
+            let _ = self.update_task_status(task_id, TaskStatus::Paused).await;
         }
 
-        info!("Paused {} active downloads", paused);
-        Ok(paused)
+        let queued_task_ids = {
+            let mut queue = self.task_queue.lock().await;
+            let mut ids = Vec::new();
+            while let Some(item) = queue.pop() {
+                ids.push(item.task_id);
+            }
+            ids
+        };
+
+        for task_id in &queued_task_ids {
+            let _ = self.update_task_status(task_id, TaskStatus::Paused).await;
+        }
+
+        info!(
+            "Paused {} active downloads and {} queued tasks",
+            task_ids.len(),
+            queued_task_ids.len()
+        );
+        Ok(task_ids.len() + queued_task_ids.len())
     }
 
     /// Resume all paused downloads
@@ -839,14 +914,17 @@ impl DownloadManager {
         }
 
         let mut started = 0usize;
-        for task_id in candidates {
-            match self.start_download(&task_id).await {
+        for (idx, task_id) in candidates.iter().enumerate() {
+            match self.start_download(task_id).await {
                 Ok(_) => started += 1,
                 Err(AppError::Download(msg)) if msg.contains("Maximum concurrent downloads") => {
                     info!(
                         "Reached concurrency limit while starting tasks (started {})",
                         started
                     );
+                    for remaining_id in candidates.iter().skip(idx + 1) {
+                        let _ = self.enqueue_task(remaining_id, 5).await;
+                    }
                     break;
                 }
                 Err(e) => {
@@ -941,6 +1019,106 @@ impl DownloadManager {
         entries.into_iter().map(|(task_id, _)| task_id).collect()
     }
 
+    async fn enqueue_task(&self, task_id: &str, priority: u8) -> bool {
+        let mut queue = self.task_queue.lock().await;
+        if queue.iter().any(|item| item.task_id == task_id) {
+            return false;
+        }
+
+        queue.push(TaskPriority {
+            task_id: task_id.to_string(),
+            priority,
+            created_at: chrono::Utc::now(),
+        });
+        true
+    }
+
+    async fn remove_task_from_queue(&self, task_id: &str) -> bool {
+        let mut queue = self.task_queue.lock().await;
+        if queue.is_empty() {
+            return false;
+        }
+
+        let mut items = Vec::with_capacity(queue.len());
+        while let Some(item) = queue.pop() {
+            items.push(item);
+        }
+
+        let before = items.len();
+        items.retain(|item| item.task_id != task_id);
+        let removed = items.len() != before;
+
+        *queue = items.into_iter().collect();
+        removed
+    }
+
+    async fn process_task_queue(&mut self) {
+        loop {
+            if self.download_semaphore.available_permits() == 0 {
+                break;
+            }
+
+            let next_task = {
+                let mut queue = self.task_queue.lock().await;
+                queue.pop()
+            };
+
+            let Some(task_priority) = next_task else {
+                break;
+            };
+
+            let task_id = task_priority.task_id.clone();
+            let task = match self.tasks.get(&task_id).cloned() {
+                Some(task) => task,
+                None => continue,
+            };
+
+            if task.status != TaskStatus::Pending
+                && task.status != TaskStatus::Paused
+                && task.status != TaskStatus::Failed
+            {
+                continue;
+            }
+
+            self.refresh_task_file_state(&task_id).await.ok();
+
+            let permit = match self.download_semaphore.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    let _ = self.enqueue_task(&task_id, task_priority.priority).await;
+                    break;
+                }
+            };
+
+            if let Err(err) = self
+                .start_download_with_permit(&task_id, task, permit)
+                .await
+            {
+                warn!("Failed to start queued task {}: {}", task_id, err);
+            }
+        }
+    }
+
+    pub fn spawn_queue_scheduler(
+        manager: Arc<RwLock<DownloadManager>>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(200));
+            loop {
+                interval.tick().await;
+                let mut guard = manager.write().await;
+                if !guard.is_running {
+                    break;
+                }
+                guard.process_task_queue().await;
+            }
+        })
+    }
+
+    pub fn set_scheduler_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
+        self.scheduler_handle = Some(handle);
+    }
+
     /// Remove a completed or failed task
     pub async fn remove_task(&mut self, task_id: &str) -> AppResult<()> {
         let task = self
@@ -955,6 +1133,7 @@ impl DownloadManager {
                 ));
             }
             _ => {
+                let _ = self.remove_task_from_queue(task_id).await;
                 self.tasks.remove(task_id);
                 self.update_stats().await;
                 info!("🗑️ Removed task: {}", task_id);
@@ -1105,78 +1284,15 @@ impl DownloadManager {
         self.progress_tracker.stop_tracking(task_id).await
     }
 
-    /// Background task scheduler - the heart of concurrent download management
-    async fn task_scheduler(
-        task_queue: Arc<Mutex<std::collections::BinaryHeap<TaskPriority>>>,
-        semaphore: Arc<tokio::sync::Semaphore>,
-        _downloader: Arc<HttpDownloader>,
-        rate_limit: Arc<RwLock<Option<u64>>>,
-        _event_sender: EventSender,
-    ) {
-        info!("🎯 Starting intelligent task scheduler");
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
-
-        loop {
-            interval.tick().await;
-
-            // Try to get the next high-priority task
-            let next_task = {
-                let mut queue = task_queue.lock().await;
-                queue.pop()
-            };
-
-            if let Some(task_priority) = next_task {
-                // Try to acquire a permit for concurrent download
-                if let Ok(permit) = semaphore.clone().try_acquire_owned() {
-                    let TaskPriority {
-                        task_id, priority, ..
-                    } = task_priority;
-                    let rate_limit_clone = Arc::clone(&rate_limit);
-
-                    // Spawn individual download task
-                    tokio::spawn(async move {
-                        let _permit = permit; // Keep permit alive for duration of download
-
-                        info!(
-                            "🚀 Starting download for task: {} (priority: {})",
-                            task_id, priority
-                        );
-
-                        // Apply rate limiting if configured
-                        if let Some(limit) = *rate_limit_clone.read().await {
-                            // TODO: Implement rate limiting in the download process
-                            debug!("Rate limiting enabled: {} bytes/sec", limit);
-                        }
-
-                        // For now, we'll simulate task execution
-                        // In real implementation, this would get task details and execute download
-                        debug!("Scheduled task {} for execution", task_id);
-
-                        // Simulate download completion notification
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        debug!("Task {} scheduled successfully", task_id);
-                    });
-                } else {
-                    // No permits available, put task back in queue
-                    let mut queue = task_queue.lock().await;
-                    queue.push(task_priority);
-
-                    // Wait a bit before trying again
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                }
-            } else {
-                // No tasks in queue, wait longer
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-            }
-        }
-    }
-
     // Private helper methods
 
     async fn hydrate_existing_file_state(&self, task: &mut VideoTask) -> AppResult<()> {
         let Some(file_path) = self.resolve_output_file_path(task) else {
             return Ok(());
         };
+        if task.resolved_path.as_deref().unwrap_or("").is_empty() {
+            task.resolved_path = Some(file_path.to_string_lossy().to_string());
+        }
 
         if let Some(marker) = Self::load_completion_marker(&file_path).await {
             if marker.url == task.url {
@@ -1232,31 +1348,90 @@ impl DownloadManager {
     }
 
     fn resolve_output_file_path(&self, task: &VideoTask) -> Option<PathBuf> {
+        if let Some(resolved) = task.resolved_path.as_ref() {
+            if !resolved.trim().is_empty() {
+                return Some(PathBuf::from(resolved));
+            }
+        }
+
         if task.output_path.trim().is_empty() {
             return None;
         }
-        let filename = self.extract_title_from_url(&task.url);
-        Some(Path::new(&task.output_path).join(filename))
+
+        let (output_dir, filename) = Self::split_output_path(&task.url, &task.output_path);
+        if output_dir.trim().is_empty() {
+            return Some(PathBuf::from(filename));
+        }
+
+        Some(Path::new(&output_dir).join(filename))
     }
 
-    fn normalize_output_path(&self, output_path: &str) -> String {
-        PathBuf::from(output_path)
-            .to_string_lossy()
-            .trim_end_matches(std::path::MAIN_SEPARATOR)
+    fn normalize_output_path(output_path: &str) -> String {
+        output_path
+            .trim_end_matches(|c| c == '/' || c == '\\')
             .to_string()
     }
 
+    fn split_output_path(url: &str, output_path: &str) -> (String, String) {
+        let trimmed = output_path.trim();
+        let default_filename = Self::extract_title_from_url(url);
+        if trimmed.is_empty() {
+            return (String::new(), default_filename);
+        }
+
+        let ends_with_sep = trimmed.ends_with('/') || trimmed.ends_with('\\');
+        if ends_with_sep {
+            return (Self::normalize_output_path(trimmed), default_filename);
+        }
+
+        let path = Path::new(trimmed);
+        if path.extension().is_some() && path.file_name().is_some() {
+            let dir = path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let filename = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or(default_filename);
+            return (Self::normalize_output_path(&dir), filename);
+        }
+
+        (Self::normalize_output_path(trimmed), default_filename)
+    }
+
+    fn identity_parts_from_task(&self, task: &VideoTask) -> (String, String) {
+        if let Some(resolved) = task.resolved_path.as_ref() {
+            let path = Path::new(resolved);
+            let dir = path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let filename = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| Self::extract_title_from_url(&task.url));
+            return (Self::normalize_output_path(&dir), filename);
+        }
+
+        Self::split_output_path(&task.url, &task.output_path)
+    }
+
     fn build_identity_key(&self, url: &str, output_path: &str) -> String {
-        let filename = self.extract_title_from_url(url);
-        let normalized_path = self.normalize_output_path(output_path);
-        format!("{}|{}|{}", url, normalized_path, filename)
+        let (output_dir, filename) = Self::split_output_path(url, output_path);
+        format!("{}|{}|{}", url, output_dir, filename)
+    }
+
+    fn build_identity_key_for_task(&self, task: &VideoTask) -> String {
+        let (output_dir, filename) = self.identity_parts_from_task(task);
+        format!("{}|{}|{}", task.url, output_dir, filename)
     }
 
     fn find_task_by_identity(&self, url: &str, output_path: &str) -> Option<String> {
         let identity = self.build_identity_key(url, output_path);
         self.tasks
             .values()
-            .find(|task| self.build_identity_key(&task.url, &task.output_path) == identity)
+            .find(|task| self.build_identity_key_for_task(task) == identity)
             .map(|task| task.id.clone())
     }
 
@@ -1397,6 +1572,7 @@ impl DownloadManager {
                     .await?;
             }
             DownloadEvent::TaskPaused { task_id } => {
+                let _ = self.remove_task_from_queue(task_id).await;
                 self.drop_active_handle(task_id);
                 self.update_task_status(task_id, TaskStatus::Paused).await?;
             }
@@ -1440,6 +1616,7 @@ impl DownloadManager {
         file_path: Option<&str>,
         error_message: Option<String>,
     ) -> AppResult<()> {
+        let _ = self.remove_task_from_queue(task_id).await;
         self.drop_active_handle(task_id);
 
         if let Some(task) = self.tasks.get_mut(task_id) {
@@ -1485,7 +1662,7 @@ impl DownloadManager {
     }
 
     /// Extract title from URL (simple heuristic)
-    fn extract_title_from_url(&self, url: &str) -> String {
+    fn extract_title_from_url(url: &str) -> String {
         url.split('/')
             .last()
             .and_then(|s| s.split('?').next())
@@ -1494,11 +1671,11 @@ impl DownloadManager {
     }
 
     fn build_resume_key(&self, task: &VideoTask) -> Option<String> {
-        if task.output_path.trim().is_empty() {
+        if task.output_path.trim().is_empty() && task.resolved_path.as_deref().unwrap_or("").trim().is_empty() {
             return None;
         }
-        let filename = self.extract_title_from_url(&task.url);
-        let identity = format!("{}|{}|{}", task.url, task.output_path, filename);
+        let (output_dir, filename) = self.identity_parts_from_task(task);
+        let identity = format!("{}|{}|{}", task.url, output_dir, filename);
         let mut hasher = Sha256::new();
         hasher.update(identity.as_bytes());
         Some(hex::encode(hasher.finalize()))
@@ -1528,7 +1705,7 @@ impl DownloadManager {
         integrity_checker: Arc<IntegrityChecker>,
         retry_executor: Arc<RetryExecutor>,
         config: DownloadConfig,
-    ) -> AppResult<String> {
+    ) -> AppResult<DownloadOutcome> {
         info!(
             "🔽 Starting download with retry mechanism: {} -> {}",
             url, output_path
@@ -1570,7 +1747,7 @@ impl DownloadManager {
                     )
                     .await
                     {
-                        Ok(file_path) => Ok(file_path),
+                        Ok(outcome) => Ok(outcome),
                         Err(app_error) => {
                             // Convert AppError to DownloadError
                             let download_error =
@@ -1590,9 +1767,19 @@ impl DownloadManager {
             .await;
 
         match result {
-            Ok(file_path) => {
-                info!("✅ Download completed successfully: {}", file_path);
-                Ok(file_path)
+            Ok(outcome) => {
+                match &outcome {
+                    DownloadOutcome::Completed(file_path) => {
+                        info!("✅ Download completed successfully: {}", file_path);
+                    }
+                    DownloadOutcome::Paused => {
+                        info!("⏸️ Download paused");
+                    }
+                    DownloadOutcome::Cancelled => {
+                        info!("🚫 Download cancelled");
+                    }
+                }
+                Ok(outcome)
             }
             Err(e) => {
                 error!("❌ Download failed after all retries: {}", e);
@@ -1611,20 +1798,15 @@ impl DownloadManager {
         progress_tracker: Arc<ProgressTrackingManager>,
         integrity_checker: Arc<IntegrityChecker>,
         config: DownloadConfig,
-    ) -> AppResult<String> {
+    ) -> AppResult<DownloadOutcome> {
         debug!("🔄 Attempting download: {} -> {}", url, output_path);
 
-        // Extract filename from URL
-        let filename = url
-            .split('/')
-            .last()
-            .and_then(|s| s.split('?').next())
-            .unwrap_or("download")
-            .to_string();
+        // Resolve output directory and filename (supports full file path inputs).
+        let (output_dir, filename) = Self::split_output_path(url, output_path);
 
         // Create download task and ensure IDs match the manager task ID so progress events line up.
         let mut download_task =
-            DownloadTask::new(url.to_string(), output_path.to_string(), filename);
+            DownloadTask::new(url.to_string(), output_dir.to_string(), filename);
         download_task.id = task_id.to_string();
 
         // Create progress channel for downloader callback
@@ -1690,151 +1872,163 @@ impl DownloadManager {
         progress_handle.abort();
 
         match result {
-            Ok(completed_task) => {
-                match completed_task.status {
-                    TaskStatus::Completed => {
-                        let file_path_buf = std::path::Path::new(&completed_task.output_path)
-                            .join(&completed_task.filename);
-                        let file_path = file_path_buf.to_string_lossy().to_string();
+            Ok(completed_task) => match completed_task.status {
+                TaskStatus::Completed => {
+                    let file_path_buf = std::path::Path::new(&completed_task.output_path)
+                        .join(&completed_task.filename);
+                    let file_path = file_path_buf.to_string_lossy().to_string();
 
-                        // Stop enhanced progress tracking
-                        let _ = progress_tracker.stop_tracking(task_id).await;
+                    // Stop enhanced progress tracking
+                    let _ = progress_tracker.stop_tracking(task_id).await;
 
-                        let _ = event_sender.send(DownloadEvent::TaskCompleted {
+                    let _ = event_sender.send(DownloadEvent::TaskCompleted {
+                        task_id: task_id.to_string(),
+                        file_path: file_path.clone(),
+                    });
+
+                    if let Err(err) = Self::persist_completion_marker(&file_path_buf, &url).await {
+                        warn!(
+                            "Failed to persist completion marker for {}: {}",
+                            task_id, err
+                        );
+                    }
+
+                    // Perform integrity verification if enabled
+                    if config.auto_verify_integrity {
+                        info!(
+                            "🔐 Starting automatic integrity verification for: {}",
+                            file_path
+                        );
+
+                        // Determine which algorithm to use
+                        let algorithm = config
+                            .integrity_algorithm
+                            .as_ref()
+                            .and_then(|alg| match alg.to_lowercase().as_str() {
+                                "sha256" => Some(HashAlgorithm::Sha256),
+                                "sha512" => Some(HashAlgorithm::Sha512),
+                                "blake2b" | "blake2b512" => Some(HashAlgorithm::Blake2b512),
+                                "blake2s" | "blake2s256" => Some(HashAlgorithm::Blake2s256),
+                                "md5" => Some(HashAlgorithm::Md5),
+                                "sha1" => Some(HashAlgorithm::Sha1),
+                                _ => None,
+                            })
+                            .unwrap_or(HashAlgorithm::Sha256); // Default to SHA-256
+
+                        // Emit integrity check started event
+                        let _ = event_sender.send(DownloadEvent::IntegrityCheckStarted {
                             task_id: task_id.to_string(),
-                            file_path: file_path.clone(),
+                            algorithm: format!("{:?}", algorithm),
                         });
 
-                        if let Err(err) =
-                            Self::persist_completion_marker(&file_path_buf, &url).await
-                        {
-                            warn!(
-                                "Failed to persist completion marker for {}: {}",
-                                task_id, err
-                            );
-                        }
+                        // Set up progress tracking for integrity check
+                        let (_integrity_progress_tx, mut integrity_progress_rx) =
+                            mpsc::unbounded_channel::<
+                                crate::core::integrity_checker::IntegrityProgress,
+                            >();
+                        // Note: IntegrityChecker.set_progress_callback may not be async, removing .await for now
 
-                        // Perform integrity verification if enabled
-                        if config.auto_verify_integrity {
-                            info!(
-                                "🔐 Starting automatic integrity verification for: {}",
-                                file_path
-                            );
+                        // Clone necessary data for progress tracking
+                        let task_id_integrity = task_id.to_string();
 
-                            // Determine which algorithm to use
-                            let algorithm = config
-                                .integrity_algorithm
-                                .as_ref()
-                                .and_then(|alg| match alg.to_lowercase().as_str() {
-                                    "sha256" => Some(HashAlgorithm::Sha256),
-                                    "sha512" => Some(HashAlgorithm::Sha512),
-                                    "blake2b" | "blake2b512" => Some(HashAlgorithm::Blake2b512),
-                                    "blake2s" | "blake2s256" => Some(HashAlgorithm::Blake2s256),
-                                    "md5" => Some(HashAlgorithm::Md5),
-                                    "sha1" => Some(HashAlgorithm::Sha1),
-                                    _ => None,
-                                })
-                                .unwrap_or(HashAlgorithm::Sha256); // Default to SHA-256
+                        // Spawn integrity progress tracking task
+                        let integrity_progress_handle = tokio::spawn(async move {
+                            while let Some(progress) = integrity_progress_rx.recv().await {
+                                debug!(
+                                    "Integrity check progress for {}: {:?}",
+                                    task_id_integrity, progress
+                                );
+                                // Could emit custom integrity progress events here if needed
+                            }
+                        });
 
-                            // Emit integrity check started event
-                            let _ = event_sender.send(DownloadEvent::IntegrityCheckStarted {
-                                task_id: task_id.to_string(),
-                                algorithm: format!("{:?}", algorithm),
-                            });
+                        // Perform integrity verification (compute hash without expected value)
+                        let integrity_result =
+                            integrity_checker.compute_hash(&file_path, algorithm).await;
 
-                            // Set up progress tracking for integrity check
-                            let (_integrity_progress_tx, mut integrity_progress_rx) =
-                                mpsc::unbounded_channel::<
-                                    crate::core::integrity_checker::IntegrityProgress,
-                                >();
-                            // Note: IntegrityChecker.set_progress_callback may not be async, removing .await for now
+                        // Stop integrity progress tracking
+                        integrity_progress_handle.abort();
 
-                            // Clone necessary data for progress tracking
-                            let task_id_integrity = task_id.to_string();
+                        match integrity_result {
+                            Ok(result) => {
+                                let _ =
+                                    event_sender.send(DownloadEvent::IntegrityCheckCompleted {
+                                        task_id: task_id.to_string(),
+                                        result: result.clone(),
+                                    });
 
-                            // Spawn integrity progress tracking task
-                            let integrity_progress_handle = tokio::spawn(async move {
-                                while let Some(progress) = integrity_progress_rx.recv().await {
-                                    debug!(
-                                        "Integrity check progress for {}: {:?}",
-                                        task_id_integrity, progress
+                                if result.is_valid {
+                                    info!(
+                                        "✅ Integrity verification passed for: {} ({:?}: {})",
+                                        file_path, algorithm, result.computed_hash
                                     );
-                                    // Could emit custom integrity progress events here if needed
-                                }
-                            });
-
-                            // Perform integrity verification (compute hash without expected value)
-                            let integrity_result =
-                                integrity_checker.compute_hash(&file_path, algorithm).await;
-
-                            // Stop integrity progress tracking
-                            integrity_progress_handle.abort();
-
-                            match integrity_result {
-                                Ok(result) => {
-                                    let _ =
-                                        event_sender.send(DownloadEvent::IntegrityCheckCompleted {
-                                            task_id: task_id.to_string(),
-                                            result: result.clone(),
-                                        });
-
-                                    if result.is_valid {
-                                        info!(
-                                            "✅ Integrity verification passed for: {} ({:?}: {})",
-                                            file_path, algorithm, result.computed_hash
-                                        );
-                                    } else {
-                                        warn!("⚠️ Integrity verification failed for: {} (computed: {}, expected: {:?})", 
-                                              file_path, result.computed_hash, result.expected_hash);
-                                    }
-                                }
-                                Err(integrity_error) => {
-                                    let error_msg =
-                                        format!("Integrity check failed: {}", integrity_error);
-                                    error!("❌ {}", error_msg);
-
-                                    let _ =
-                                        event_sender.send(DownloadEvent::IntegrityCheckFailed {
-                                            task_id: task_id.to_string(),
-                                            error: error_msg,
-                                        });
+                                } else {
+                                    warn!("⚠️ Integrity verification failed for: {} (computed: {}, expected: {:?})", 
+                                          file_path, result.computed_hash, result.expected_hash);
                                 }
                             }
+                            Err(integrity_error) => {
+                                let error_msg =
+                                    format!("Integrity check failed: {}", integrity_error);
+                                error!("❌ {}", error_msg);
+
+                                let _ =
+                                    event_sender.send(DownloadEvent::IntegrityCheckFailed {
+                                        task_id: task_id.to_string(),
+                                        error: error_msg,
+                                    });
+                            }
                         }
-
-                        info!("✅ Download completed: {}", file_path);
-                        Ok(file_path)
                     }
-                    TaskStatus::Failed => {
-                        let error_msg = completed_task
-                            .error_message
-                            .unwrap_or_else(|| "Unknown download error".to_string());
 
-                        // Stop enhanced progress tracking
-                        let _ = progress_tracker.stop_tracking(task_id).await;
-
-                        let _ = event_sender.send(DownloadEvent::TaskFailed {
-                            task_id: task_id.to_string(),
-                            error: error_msg.clone(),
-                        });
-
-                        error!("❌ Download failed: {}", error_msg);
-                        Err(AppError::Download(error_msg))
-                    }
-                    _ => {
-                        let error_msg = "Download ended in unexpected state".to_string();
-
-                        // Stop enhanced progress tracking
-                        let _ = progress_tracker.stop_tracking(task_id).await;
-
-                        let _ = event_sender.send(DownloadEvent::TaskFailed {
-                            task_id: task_id.to_string(),
-                            error: error_msg.clone(),
-                        });
-                        Err(AppError::Download(error_msg))
-                    }
+                    info!("✅ Download completed: {}", file_path);
+                    Ok(DownloadOutcome::Completed(file_path))
                 }
-            }
+                TaskStatus::Paused => {
+                    let _ = progress_tracker.stop_tracking(task_id).await;
+                    let _ = event_sender.send(DownloadEvent::TaskPaused {
+                        task_id: task_id.to_string(),
+                    });
+                    info!("⏸️ Download paused: {}", task_id);
+                    Ok(DownloadOutcome::Paused)
+                }
+                TaskStatus::Cancelled => {
+                    let _ = progress_tracker.stop_tracking(task_id).await;
+                    let _ = event_sender.send(DownloadEvent::TaskCancelled {
+                        task_id: task_id.to_string(),
+                    });
+                    info!("🚫 Download cancelled: {}", task_id);
+                    Ok(DownloadOutcome::Cancelled)
+                }
+                TaskStatus::Failed => {
+                    let error_msg = completed_task
+                        .error_message
+                        .unwrap_or_else(|| "Unknown download error".to_string());
+
+                    // Stop enhanced progress tracking
+                    let _ = progress_tracker.stop_tracking(task_id).await;
+
+                    let _ = event_sender.send(DownloadEvent::TaskFailed {
+                        task_id: task_id.to_string(),
+                        error: error_msg.clone(),
+                    });
+
+                    error!("❌ Download failed: {}", error_msg);
+                    Err(AppError::Download(error_msg))
+                }
+                _ => {
+                    let error_msg = "Download ended in unexpected state".to_string();
+
+                    // Stop enhanced progress tracking
+                    let _ = progress_tracker.stop_tracking(task_id).await;
+
+                    let _ = event_sender.send(DownloadEvent::TaskFailed {
+                        task_id: task_id.to_string(),
+                        error: error_msg.clone(),
+                    });
+                    Err(AppError::Download(error_msg))
+                }
+            },
             Err(e) => {
                 let error_msg = e.to_string();
                 let _ = event_sender.send(DownloadEvent::TaskFailed {
@@ -2279,6 +2473,7 @@ impl DownloadManager {
             url: url.clone(),
             title: output_filename.clone(), // Use output filename as title
             output_path: output_filename.clone(),
+            resolved_path: None,
             status: TaskStatus::Pending,
             progress: 0.0,
             speed: 0.0,
@@ -2777,9 +2972,9 @@ mod tests {
         assert!(!task_id.is_empty());
         assert_eq!(manager.tasks.len(), 1);
 
-        // Check if task was added to priority queue
+        // Tasks should not be auto-queued without an explicit start request
         let queue = manager.task_queue.lock().await;
-        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.len(), 0);
 
         Ok(())
     }
@@ -2812,9 +3007,9 @@ mod tests {
         assert_eq!(task_ids.len(), 3);
         assert_eq!(manager.tasks.len(), 3);
 
-        // Check priority queue
+        // Tasks should not be auto-queued without an explicit start request
         let queue = manager.task_queue.lock().await;
-        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.len(), 0);
 
         Ok(())
     }
@@ -2826,7 +3021,7 @@ mod tests {
 
         manager.start().await?;
         assert!(manager.is_running);
-        assert!(manager.scheduler_handle.is_some());
+        assert!(manager.scheduler_handle.is_none());
 
         manager.stop().await?;
         assert!(!manager.is_running);

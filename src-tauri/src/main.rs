@@ -387,7 +387,13 @@ fn main() {
                         info!("[MANAGER_INIT] Acquiring write lock...");
                         let mut manager = download_manager.write().await;
                         info!("[MANAGER_INIT] Write lock acquired, calling start()...");
-                        manager.start_with_sender(sender).await
+                        manager.start_with_sender(sender).await?;
+                        let scheduler_handle =
+                            core::manager::DownloadManager::spawn_queue_scheduler(
+                                download_manager.clone(),
+                            );
+                        manager.set_scheduler_handle(scheduler_handle);
+                        Ok(())
                     },
                 )
                 .await
