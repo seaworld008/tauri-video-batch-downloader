@@ -90,6 +90,7 @@ use crate::core::models::*;
 use crate::core::resume_downloader::{
     ResumeDownloader, ResumeDownloaderConfig, ResumeInfo, ResumeProgressCallback,
 };
+use directories::ProjectDirs;
 use sha2::{Digest, Sha256};
 
 /// HTTP下载器配置

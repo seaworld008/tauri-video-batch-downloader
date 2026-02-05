@@ -3,6 +3,7 @@
 //! This module provides the main DownloadManager that orchestrates all download operations,
 //! manages concurrent downloads, and handles progress tracking and event emission.
 
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -454,11 +455,10 @@ impl DownloadManager {
             self.find_task_by_identity(&normalized_task.url, &normalized_task.output_path)
         {
             self.refresh_task_file_state(&existing_id).await?;
-            let existing = self
-                .tasks
-                .get(&existing_id)
-                .cloned()
-                .ok_or_else(|| AppError::Download("Duplicate task lookup failed".to_string()))?;
+            let existing =
+                self.tasks.get(&existing_id).cloned().ok_or_else(|| {
+                    AppError::Download("Duplicate task lookup failed".to_string())
+                })?;
             return Ok(AddVideoTaskResult {
                 task: existing,
                 created: false,
@@ -519,11 +519,9 @@ impl DownloadManager {
                 self.find_task_by_identity(&normalized_task.url, &normalized_task.output_path)
             {
                 self.refresh_task_file_state(&existing_id).await?;
-                let existing = self
-                    .tasks
-                    .get(&existing_id)
-                    .cloned()
-                    .ok_or_else(|| AppError::Download("Duplicate task lookup failed".to_string()))?;
+                let existing = self.tasks.get(&existing_id).cloned().ok_or_else(|| {
+                    AppError::Download("Duplicate task lookup failed".to_string())
+                })?;
                 return Ok(AddVideoTaskResult {
                     task: existing,
                     created: false,
