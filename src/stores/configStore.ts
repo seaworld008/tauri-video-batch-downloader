@@ -149,7 +149,7 @@ export const useConfigStore = create<ConfigState>()(
         }
       },
 
-      updateConfig: async (newConfig) => {
+      updateConfig: async newConfig => {
         try {
           const currentConfig = mergeConfigWithDefaults(get().config);
 
@@ -177,9 +177,9 @@ export const useConfigStore = create<ConfigState>()(
               ...(newConfig.advanced ?? {}),
             },
           });
-        await invoke('update_config', { newConfig: mergedConfig, new_config: mergedConfig });
-        set({ config: mergedConfig });
-        useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
+          await invoke('update_config', { newConfig: mergedConfig, new_config: mergedConfig });
+          set({ config: mergedConfig });
+          useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
           toast.success('配置已更新');
         } catch (error) {
           handleError('更新配置', error);
@@ -187,7 +187,7 @@ export const useConfigStore = create<ConfigState>()(
         }
       },
 
-      updateDownloadConfig: async (newDownloadConfig) => {
+      updateDownloadConfig: async newDownloadConfig => {
         const currentConfig = get().config;
         const updatedConfig = {
           ...currentConfig,
@@ -220,7 +220,7 @@ export const useConfigStore = create<ConfigState>()(
         }
       },
 
-      importConfig: async (configData) => {
+      importConfig: async configData => {
         try {
           const importedConfig = JSON.parse(configData) as AppConfig;
           await get().updateConfig(importedConfig);
@@ -233,7 +233,7 @@ export const useConfigStore = create<ConfigState>()(
     }),
     {
       name: 'app-config',
-      partialize: (state) => ({ config: state.config }),
+      partialize: state => ({ config: state.config }),
     }
   )
 );

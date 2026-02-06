@@ -5,37 +5,37 @@ interface UIState {
   // 视图状态
   currentView: ViewType;
   sidebarOpen: boolean;
-  
+
   // 通知系统
   notifications: Notification[];
-  
+
   // 模态框
   modal: ModalOptions | null;
-  
+
   // 全局加载状态
   globalLoading: boolean;
   loadingMessage: string;
-  
+
   // 快捷键状态
   shortcutsEnabled: boolean;
-  
+
   // Actions - 视图管理
   setCurrentView: (view: ViewType) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
-  
+
   // Actions - 通知管理
   addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
   removeNotification: (id: string) => void;
   clearAllNotifications: () => void;
-  
+
   // Actions - 模态框管理
   showModal: (modal: ModalOptions) => void;
   hideModal: () => void;
-  
+
   // Actions - 加载状态
   setGlobalLoading: (loading: boolean, message?: string) => void;
-  
+
   // Actions - 快捷键
   setShortcutsEnabled: (enabled: boolean) => void;
 }
@@ -49,32 +49,32 @@ export const useUIStore = create<UIState>((set, get) => ({
   globalLoading: false,
   loadingMessage: '',
   shortcutsEnabled: true,
-  
+
   // 视图管理
-  setCurrentView: (view) => {
+  setCurrentView: view => {
     set({ currentView: view });
   },
-  
+
   toggleSidebar: () => {
-    set((state) => ({ sidebarOpen: !state.sidebarOpen }));
+    set(state => ({ sidebarOpen: !state.sidebarOpen }));
   },
-  
-  setSidebarOpen: (open) => {
+
+  setSidebarOpen: open => {
     set({ sidebarOpen: open });
   },
-  
+
   // 通知管理
-  addNotification: (notification) => {
+  addNotification: notification => {
     const newNotification: Notification = {
       ...notification,
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       timestamp: Date.now(),
     };
-    
-    set((state) => ({
+
+    set(state => ({
       notifications: [...state.notifications, newNotification],
     }));
-    
+
     // 自动移除通知（如果设置了持续时间）
     if (notification.duration && notification.duration > 0) {
       setTimeout(() => {
@@ -82,33 +82,33 @@ export const useUIStore = create<UIState>((set, get) => ({
       }, notification.duration);
     }
   },
-  
-  removeNotification: (id) => {
-    set((state) => ({
+
+  removeNotification: id => {
+    set(state => ({
       notifications: state.notifications.filter(n => n.id !== id),
     }));
   },
-  
+
   clearAllNotifications: () => {
     set({ notifications: [] });
   },
-  
+
   // 模态框管理
-  showModal: (modal) => {
+  showModal: modal => {
     set({ modal });
   },
-  
+
   hideModal: () => {
     set({ modal: null });
   },
-  
+
   // 加载状态
   setGlobalLoading: (loading, message = '') => {
     set({ globalLoading: loading, loadingMessage: message });
   },
-  
+
   // 快捷键
-  setShortcutsEnabled: (enabled) => {
+  setShortcutsEnabled: enabled => {
     set({ shortcutsEnabled: enabled });
   },
 }));
@@ -123,7 +123,7 @@ export const notify = {
       duration,
     });
   },
-  
+
   error: (title: string, message?: string, duration = 6000) => {
     useUIStore.getState().addNotification({
       type: 'error',
@@ -132,7 +132,7 @@ export const notify = {
       duration,
     });
   },
-  
+
   warning: (title: string, message?: string, duration = 5000) => {
     useUIStore.getState().addNotification({
       type: 'warning',
@@ -141,7 +141,7 @@ export const notify = {
       duration,
     });
   },
-  
+
   info: (title: string, message?: string, duration = 4000) => {
     useUIStore.getState().addNotification({
       type: 'info',
@@ -170,7 +170,7 @@ export const modal = {
       onCancel,
     });
   },
-  
+
   alert: (title: string, message: string) => {
     useUIStore.getState().showModal({
       type: 'info',
@@ -180,7 +180,7 @@ export const modal = {
       onConfirm: () => useUIStore.getState().hideModal(),
     });
   },
-  
+
   error: (title: string, message: string) => {
     useUIStore.getState().showModal({
       type: 'error',
@@ -190,11 +190,11 @@ export const modal = {
       onConfirm: () => useUIStore.getState().hideModal(),
     });
   },
-  
+
   custom: (options: ModalOptions) => {
     useUIStore.getState().showModal(options);
   },
-  
+
   hide: () => {
     useUIStore.getState().hideModal();
   },

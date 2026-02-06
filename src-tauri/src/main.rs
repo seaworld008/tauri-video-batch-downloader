@@ -8,16 +8,23 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
 mod commands;
+// Many core features are behind optional flows and aren't wired in the fixed UI yet.
+// Silence dead_code warnings for now to keep CI signal focused on real issues.
+#[allow(dead_code)]
 mod core;
+#[allow(dead_code, unused_imports)]
 mod parsers;
+#[allow(dead_code, unused_imports)]
 mod utils;
 
 use commands::*;
 use core::{
     downloader::{DownloaderConfig, HttpDownloader},
+    models::AppError,
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
     AppConfig, DownloadManager,
 };
+use utils::logging;
 
 /// 简化的应用程序状态，防止初始化失败
 pub struct AppState {
@@ -169,6 +176,12 @@ impl AppState {
     }
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn main() {
     #[cfg(target_os = "windows")]
     {
@@ -179,12 +192,7 @@ fn main() {
     }
 
     // 初始化日志系统
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "video_downloader_pro=info,tauri=info".into()),
-        )
-        .init();
+    logging::init_tracing();
 
     info!("🚀 Starting Video Downloader Pro (Fixed Version)");
 
@@ -203,6 +211,7 @@ fn main() {
             debug_download_test,
             pause_all_downloads,
             resume_all_downloads,
+            start_all_downloads,
             cancel_all_downloads,
             start_all_pending_downloads,
             remove_download,
@@ -220,6 +229,7 @@ fn main() {
             import_excel_file,
             detect_file_encoding,
             preview_import_data,
+            get_supported_formats,
             // YouTube 相关命令
             get_youtube_info,
             get_youtube_formats,
@@ -261,19 +271,21 @@ fn main() {
                 warn!("⚠️ Router receiver already taken or not available");
             }
 
-            // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
-            let bootstrap_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = log_frontend_event(
-                    bootstrap_handle,
-                    Some("info".to_string()),
-                    "backend_setup".to_string(),
-                )
-                .await
-                {
-                    error!("Failed to write frontend bootstrap log: {}", error);
-                }
-            });
+            if logging::local_logging_enabled() {
+                // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
+                let bootstrap_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = log_frontend_event(
+                        bootstrap_handle,
+                        Some("info".to_string()),
+                        "backend_setup".to_string(),
+                    )
+                    .await
+                    {
+                        error!("Failed to write frontend bootstrap log: {}", error);
+                    }
+                });
+            }
 
             // Create event channel for DownloadManager
             let (sender, mut receiver) = mpsc::unbounded_channel::<core::manager::DownloadEvent>();
@@ -393,7 +405,7 @@ fn main() {
                                 download_manager.clone(),
                             );
                         manager.set_scheduler_handle(scheduler_handle);
-                        Ok(())
+                        Ok::<(), AppError>(())
                     },
                 )
                 .await
@@ -433,8 +445,8 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::CloseRequested { api: _api, .. } => {
+        .on_window_event(|event| {
+            if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event.event() {
                 info!("📦 Application closing requested");
 
                 // 移除 prevent_close() 调用，允许直接关闭
@@ -444,7 +456,6 @@ fn main() {
                 // 可选：执行清理操作但不阻止关闭
                 // 这里可以添加异步清理逻辑
             }
-            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

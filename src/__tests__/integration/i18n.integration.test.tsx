@@ -23,18 +23,14 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     },
   });
 
-  return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-    </QueryClientProvider>
-  );
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 };
 
 describe('i18n Integration Tests', () => {
   beforeEach(() => {
     // Setup default mocks
     setupDefaultMocks();
-    
+
     // Reset store state
     useDownloadStore.setState({
       tasks: [],
@@ -45,6 +41,7 @@ describe('i18n Integration Tests', () => {
         total_downloaded: 0,
         average_speed: 0,
         active_downloads: 0,
+        queue_paused: false,
       },
       isLoading: false,
       filterStatus: 'all',
@@ -67,7 +64,11 @@ describe('i18n Integration Tests', () => {
       await waitFor(() => {
         // Check for empty state translations
         expect(screen.getByText('No Download Tasks')).toBeInTheDocument();
-        expect(screen.getByText("Click 'Import Tasks' in the sidebar to start batch adding download tasks")).toBeInTheDocument();
+        expect(
+          screen.getByText(
+            "Click 'Import Tasks' in the sidebar to start batch adding download tasks"
+          )
+        ).toBeInTheDocument();
         expect(screen.getByText('Import Tasks')).toBeInTheDocument();
       });
     });
@@ -76,14 +77,11 @@ describe('i18n Integration Tests', () => {
       // Create a component that can change language
       const TestComponent = () => {
         const { changeLanguage } = useLanguage();
-        
+
         return (
           <TestWrapper>
             <div>
-              <button 
-                onClick={() => changeLanguage('zh')}
-                data-testid="change-language"
-              >
+              <button onClick={() => changeLanguage('zh')} data-testid='change-language'>
                 Change to Chinese
               </button>
               <DownloadsView />
@@ -100,7 +98,9 @@ describe('i18n Integration Tests', () => {
       await waitFor(() => {
         // Check for Chinese translations
         expect(screen.getByText('暂无下载任务')).toBeInTheDocument();
-        expect(screen.getByText('点击左侧导航的「导入任务」开始批量添加下载任务')).toBeInTheDocument();
+        expect(
+          screen.getByText('点击左侧导航的「导入任务」开始批量添加下载任务')
+        ).toBeInTheDocument();
         expect(screen.getByText('导入任务')).toBeInTheDocument();
       });
     });
@@ -111,7 +111,7 @@ describe('i18n Integration Tests', () => {
         isLoading: true,
       });
 
-      render(
+      const { unmount } = render(
         <TestWrapper>
           <DownloadsView />
         </TestWrapper>
@@ -121,13 +121,15 @@ describe('i18n Integration Tests', () => {
         expect(screen.getByText('Loading...')).toBeInTheDocument();
       });
 
+      unmount();
+
       // Change to Chinese and check loading translation
       const TestComponent = () => {
         const { changeLanguage } = useLanguage();
         React.useEffect(() => {
           changeLanguage('zh');
         }, [changeLanguage]);
-        
+
         return (
           <TestWrapper>
             <DownloadsView />
@@ -169,14 +171,11 @@ describe('i18n Integration Tests', () => {
 
       const TestComponent = () => {
         const { changeLanguage } = useLanguage();
-        
+
         return (
           <TestWrapper>
             <div>
-              <button 
-                onClick={() => changeLanguage('zh')}
-                data-testid="change-language"
-              >
+              <button onClick={() => changeLanguage('zh')} data-testid='change-language'>
                 Change Language
               </button>
               <DownloadsView />
@@ -222,7 +221,7 @@ describe('i18n Integration Tests', () => {
       });
 
       // Open language selector
-      const languageButton = screen.getByRole('button');
+      const languageButton = screen.getByRole('button', { name: /English/i });
       fireEvent.click(languageButton);
 
       // Select Chinese
@@ -235,20 +234,20 @@ describe('i18n Integration Tests', () => {
       await waitFor(() => {
         expect(screen.getByText('暂无下载任务')).toBeInTheDocument();
         // The button text should now show Chinese is selected
-        expect(screen.getByRole('button')).toHaveTextContent('中文');
+        expect(screen.getByRole('button', { name: /中文/ })).toBeInTheDocument();
       });
     });
 
     it('should persist language changes across re-renders', async () => {
       let rerender: any;
-      
+
       const TestComponent = () => {
         const { currentLanguage } = useLanguage();
         return (
           <TestWrapper>
             <div>
               <LanguageSelector />
-              <span data-testid="current-language">{currentLanguage}</span>
+              <span data-testid='current-language'>{currentLanguage}</span>
               <DownloadsView />
             </div>
           </TestWrapper>
@@ -259,9 +258,9 @@ describe('i18n Integration Tests', () => {
       rerender = result.rerender;
 
       // Change to Chinese
-      const languageButton = screen.getByRole('button');
+      const languageButton = screen.getByRole('button', { name: /English/i });
       fireEvent.click(languageButton);
-      
+
       await waitFor(() => {
         const chineseOption = screen.getByText('中文');
         fireEvent.click(chineseOption);
@@ -293,11 +292,11 @@ describe('i18n Integration Tests', () => {
         return (
           <TestWrapper>
             <div>
-              <button onClick={() => changeLanguage('zh')} data-testid="lang-button">
+              <button onClick={() => changeLanguage('zh')} data-testid='lang-button'>
                 {t('common.cancel')}
               </button>
-              <div data-testid="loading-text">{t('common.loading')}</div>
-              <div data-testid="error-text">{t('common.error')}</div>
+              <div data-testid='loading-text'>{t('common.loading')}</div>
+              <div data-testid='error-text'>{t('common.error')}</div>
               <DownloadsView />
             </div>
           </TestWrapper>
@@ -334,15 +333,11 @@ describe('i18n Integration Tests', () => {
         return (
           <TestWrapper>
             <div>
-              <button onClick={() => changeLanguage('zh')} data-testid="change-lang">
+              <button onClick={() => changeLanguage('zh')} data-testid='change-lang'>
                 Change Language
               </button>
-              <div data-testid="task-count">
-                {t('downloads.preview.taskCount', { count: 5 })}
-              </div>
-              <div data-testid="percentage">
-                {t('formats.percentage', { value: 75.5 })}
-              </div>
+              <div data-testid='task-count'>{t('downloads.preview.taskCount', { count: 5 })}</div>
+              <div data-testid='percentage'>{t('formats.percentage', { value: 75.5 })}</div>
             </div>
           </TestWrapper>
         );
@@ -371,12 +366,10 @@ describe('i18n Integration Tests', () => {
     it('should gracefully handle missing translation keys', async () => {
       const ErrorHandlingTest = () => {
         const { t } = useI18n();
-        
+
         return (
           <TestWrapper>
-            <div data-testid="missing-key">
-              {t('nonexistent.translation.key' as any)}
-            </div>
+            <div data-testid='missing-key'>{t('nonexistent.translation.key' as any)}</div>
           </TestWrapper>
         );
       };

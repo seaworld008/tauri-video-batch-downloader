@@ -124,6 +124,50 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    async fn test_parse_real_csv_fixture() {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("video-execl");
+        let csv_path = fixture_dir.join("sqlResult_1.csv");
+        if !csv_path.exists() {
+            eprintln!("fixture not found, skipping: {:?}", csv_path);
+            return;
+        }
+
+        let parser = FileParser::new();
+        let (records, stats) = parser.parse_file(&csv_path).await.unwrap();
+
+        assert!(records.len() > 0);
+        assert_eq!(stats.file_format, FileFormat::Csv);
+        assert!(
+            stats.detected_encoding == "GBK"
+                || stats.detected_encoding == "GB18030"
+                || stats.detected_encoding == "UTF-8"
+        );
+        assert!(!records[0].video_url.is_empty());
+        assert!(!records[0].column_name.contains('\u{FFFD}'));
+    }
+
+    #[tokio::test]
+    async fn test_parse_real_excel_fixture() {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("video-execl");
+        let excel_path = fixture_dir.join("sqlResult_1.xls");
+        if !excel_path.exists() {
+            eprintln!("fixture not found, skipping: {:?}", excel_path);
+            return;
+        }
+
+        let parser = FileParser::new();
+        let (records, stats) = parser.parse_file(&excel_path).await.unwrap();
+
+        assert!(records.len() > 0);
+        assert_eq!(stats.file_format, FileFormat::Excel);
+        assert!(!records[0].video_url.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_encoding_detection_accuracy() {
         let test_files = TestFileSet::new().unwrap();
         let detector = EncodingDetector::new();

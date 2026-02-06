@@ -258,7 +258,7 @@ async fn handle_command(manager: &Arc<RwLock<DownloadManager>>, command: Runtime
         RuntimeCommand::StartAll { respond_to } => {
             let result = {
                 let mut guard = manager.write().await;
-                guard.start_all_pending_impl().await
+                guard.start_all_downloads_impl().await
             };
             let _ = respond_to.send(result);
         }

@@ -37,13 +37,7 @@
       "active": true,
       "targets": ["msi", "nsis"],
       "identifier": "com.videodownloader.pro.simple",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
+      "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
       "resources": [],
       "copyright": "© 2024 Video Downloader Pro Team",
       "category": "Productivity",

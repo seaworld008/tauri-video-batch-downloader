@@ -97,6 +97,7 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
   );
 
   const isEmpty = tasks.length === 0;
+  const isFilteredEmpty = !isEmpty && filteredTasks.length === 0;
 
   const downloadingTaskCount = useMemo(
     () => tasks.filter(t => t.status === 'downloading').length,
@@ -161,6 +162,49 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
   const handleRefresh = useCallback(() => {
     void refreshTasks();
   }, [refreshTasks]);
+
+  const resolveTranslation = useCallback(
+    (key: string, fallbackKey?: string, fallbackValue?: string) => {
+      const primary = t(key);
+      if (primary && primary !== key) {
+        return primary;
+      }
+      if (fallbackKey) {
+        const fallback = t(fallbackKey);
+        if (fallback && fallback !== fallbackKey) {
+          return fallback;
+        }
+      }
+      return fallbackValue ?? primary;
+    },
+    [t]
+  );
+
+  const emptyTitle = resolveTranslation(
+    'downloads.empty.title',
+    'downloads.empty.noTasks',
+    '暂无下载任务'
+  );
+  const emptyDescription = resolveTranslation(
+    'downloads.empty.description',
+    'downloads.empty.noTasksDescription',
+    '开始导入您的视频链接'
+  );
+  const emptyActionLabel = resolveTranslation(
+    'downloads.empty.action',
+    'downloads.empty.importButton',
+    '导入任务'
+  );
+  const noMatchesTitle = resolveTranslation(
+    'downloads.empty.noMatches',
+    undefined,
+    '没有匹配的任务'
+  );
+  const noMatchesDescription = resolveTranslation(
+    'downloads.empty.noMatchesDescription',
+    undefined,
+    '请调整搜索条件或过滤器'
+  );
 
   // 性能信息组件（简化版本）
   const PerformanceInfo = useMemo(() => {
@@ -229,15 +273,34 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
           />
         )}
 
-        {/* 空状态处理 */}
-        {isEmpty ? (
+        {/* 加载状态 */}
+        {isLoading ? (
+          <div className='flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400'>
+            {resolveTranslation('common.loading', undefined, '加载中...')}
+          </div>
+        ) : isEmpty ? (
           <div className='flex-1 flex flex-col'>
             <div className='flex-1 flex items-center justify-center'>
               <EmptyState
-                title={t('downloads.empty.title') || '暂无下载任务'}
-                description={t('downloads.empty.description') || '开始导入您的视频链接'}
+                title={emptyTitle}
+                description={emptyDescription}
                 action={{
-                  label: t('downloads.empty.action') || '导入任务',
+                  label: emptyActionLabel,
+                  onClick: () => {
+                    console.log('触发导入操作');
+                  },
+                }}
+              />
+            </div>
+          </div>
+        ) : isFilteredEmpty ? (
+          <div className='flex-1 flex flex-col'>
+            <div className='flex-1 flex items-center justify-center'>
+              <EmptyState
+                title={noMatchesTitle}
+                description={noMatchesDescription}
+                action={{
+                  label: emptyActionLabel,
                   onClick: () => {
                     console.log('触发导入操作');
                   },
@@ -250,13 +313,10 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
             {/* 任务列表 - 智能渲染 */}
             <div className='flex-1 overflow-hidden bg-gray-50 dark:bg-gray-900'>
               {useVirtualization ? (
-                <VirtualizedTaskList
-                  overscan={5}
-                  className='h-full'
-                />
+                <VirtualizedTaskList overscan={5} className='h-full' />
               ) : (
                 <div className='h-full flex flex-col overflow-y-auto'>
-                  <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                  <div className='divide-y divide-gray-100 dark:divide-gray-800'>
                     {displayTasks.map(task => (
                       <VideoTableItem key={task.id} task={task} />
                     ))}

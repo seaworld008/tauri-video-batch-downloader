@@ -255,6 +255,14 @@ impl ResumeDownloader {
         }
     }
 
+    fn is_pause_error(err: &anyhow::Error) -> bool {
+        err.to_string().contains("download_paused")
+    }
+
+    fn is_cancel_error(err: &anyhow::Error) -> bool {
+        err.to_string().contains("download_cancelled")
+    }
+
     /// 创建新的断点续传下载器
     pub fn new(
         config: ResumeDownloaderConfig,
@@ -343,6 +351,7 @@ impl ResumeDownloader {
     }
 
     /// 开始或恢复下载
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_with_resume(
         &self,
         task_id: &str,
@@ -390,6 +399,9 @@ impl ResumeDownloader {
         if resume_info.chunks.is_empty() {
             resume_info.chunks = self.create_chunks(&resume_info).await?;
         }
+
+        // 如果已有分片临时文件，回填已下载进度
+        self.sync_chunks_with_temp_files(&mut resume_info).await?;
 
         // 创建输出目录
         if let Some(parent) = file_path.parent() {
@@ -550,7 +562,13 @@ impl ResumeDownloader {
             match handle.await? {
                 Ok(chunk_info) => chunk_results.push(chunk_info),
                 Err(e) => {
-                    tracing::error!("分片下载失败: {}", e);
+                    if Self::is_pause_error(&e) {
+                        tracing::info!("分片下载已暂停: {}", e);
+                    } else if Self::is_cancel_error(&e) {
+                        tracing::info!("分片下载已取消: {}", e);
+                    } else {
+                        tracing::error!("分片下载失败: {}", e);
+                    }
                     return Err(e);
                 }
             }
@@ -574,6 +592,7 @@ impl ResumeDownloader {
     }
 
     /// 静态方法下载单个分片
+    #[allow(clippy::too_many_arguments)]
     async fn download_chunk_static(
         client: &Client,
         config: &ResumeDownloaderConfig,
@@ -635,6 +654,17 @@ impl ResumeDownloader {
                     return Ok(chunk);
                 }
                 Err(e) => {
+                    if Self::is_pause_error(&e) {
+                        if chunk.downloaded > 0 {
+                            chunk.status = ChunkStatus::Paused;
+                        } else {
+                            chunk.status = ChunkStatus::Pending;
+                        }
+                        return Ok(chunk);
+                    }
+                    if Self::is_cancel_error(&e) {
+                        return Err(e);
+                    }
                     retry_count += 1;
                     chunk.retry_count = retry_count;
                     chunk.status = ChunkStatus::Failed;
@@ -659,6 +689,7 @@ impl ResumeDownloader {
     }
 
     /// 尝试下载分片
+    #[allow(clippy::too_many_arguments)]
     async fn download_chunk_attempt(
         client: &Client,
         config: &ResumeDownloaderConfig,
@@ -709,8 +740,6 @@ impl ResumeDownloader {
 
         // 下载数据流
         let mut stream = response.bytes_stream();
-        let mut downloaded_in_this_attempt = 0u64;
-
         while let Some(chunk_data) = stream.next().await {
             if Self::should_interrupt(&cancel_flag, &pause_flag) {
                 bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
@@ -719,9 +748,10 @@ impl ResumeDownloader {
             file.write_all(&chunk_data).await?;
             bandwidth_controller.throttle(chunk_data.len() as u64).await;
 
-            downloaded_in_this_attempt += chunk_data.len() as u64;
-            chunk.downloaded = (chunk.start + chunk.downloaded + downloaded_in_this_attempt)
-                .saturating_sub(chunk.start);
+            chunk.downloaded = chunk
+                .downloaded
+                .saturating_add(chunk_data.len() as u64)
+                .min(chunk.size());
             chunk.last_update = SystemTime::now();
 
             if let Some(callback) = &progress_callback {
@@ -790,12 +820,37 @@ impl ResumeDownloader {
         Ok(content_length)
     }
 
+    async fn has_any_chunk_files(&self, task_id: &str) -> Result<bool> {
+        if let Ok(mut entries) = tokio::fs::read_dir(&self.config.resume_info_dir).await {
+            let prefix = format!("{}.chunk.", task_id);
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Some(file_name) = entry.file_name().to_str() {
+                    if file_name.starts_with(&prefix) {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     /// 验证现有文件
     async fn validate_existing_file(&self, resume_info: &ResumeInfo) -> Result<bool> {
         let file_path = Path::new(&resume_info.file_path);
 
         if !file_path.exists() {
-            return Ok(false);
+            if !resume_info.chunks.is_empty() {
+                for chunk in &resume_info.chunks {
+                    let temp_path =
+                        Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
+                    if temp_path.exists() {
+                        return Ok(true);
+                    }
+                }
+            }
+
+            return self.has_any_chunk_files(&resume_info.task_id).await;
         }
 
         let metadata = tokio::fs::metadata(file_path).await?;
@@ -817,7 +872,44 @@ impl ResumeDownloader {
             }
         }
 
+        // 即使当前没有分片信息，也尝试扫描临时分片文件
+        if self.has_any_chunk_files(&resume_info.task_id).await? {
+            return Ok(true);
+        }
+
         Ok(file_size > 0 && file_size < resume_info.total_size)
+    }
+
+    async fn sync_chunks_with_temp_files(&self, resume_info: &mut ResumeInfo) -> Result<()> {
+        if resume_info.chunks.is_empty() {
+            return Ok(());
+        }
+
+        let mut updated = false;
+        for chunk in &mut resume_info.chunks {
+            let temp_path =
+                Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
+            if temp_path.exists() {
+                let metadata = tokio::fs::metadata(&temp_path).await?;
+                let size = metadata.len().min(chunk.size());
+                if size > chunk.downloaded {
+                    chunk.downloaded = size;
+                    updated = true;
+                }
+                if chunk.is_completed() {
+                    chunk.status = ChunkStatus::Completed;
+                } else if chunk.downloaded > 0 {
+                    chunk.status = ChunkStatus::Paused;
+                }
+            }
+        }
+
+        if updated {
+            resume_info.downloaded_total = resume_info.chunks.iter().map(|c| c.downloaded).sum();
+            resume_info.last_modified = SystemTime::now();
+        }
+
+        Ok(())
     }
 
     /// 加载断点续传信息
@@ -841,8 +933,39 @@ impl ResumeDownloader {
         }
 
         let content = tokio::fs::read_to_string(resume_file_path).await?;
-        let resume_info: ResumeInfo =
+        let mut resume_info: ResumeInfo =
             serde_json::from_str(&content).with_context(|| "解析断点续传信息失败")?;
+        let mut sanitized = false;
+
+        if resume_info.total_size > 0 && !resume_info.chunks.is_empty() {
+            for chunk in resume_info.chunks.iter_mut() {
+                let max_size = chunk.size();
+                if chunk.downloaded > max_size {
+                    chunk.downloaded = max_size;
+                    sanitized = true;
+                }
+                if chunk.downloaded >= max_size && chunk.status != ChunkStatus::Completed {
+                    chunk.status = ChunkStatus::Completed;
+                    sanitized = true;
+                }
+            }
+
+            let recalculated: u64 = resume_info.chunks.iter().map(|c| c.downloaded).sum();
+            if resume_info.downloaded_total != recalculated {
+                resume_info.downloaded_total = recalculated;
+                sanitized = true;
+            }
+
+            if resume_info.downloaded_total > resume_info.total_size {
+                resume_info.downloaded_total = resume_info.total_size;
+                sanitized = true;
+            }
+        }
+
+        if sanitized {
+            resume_info.last_modified = SystemTime::now();
+            self.save_resume_info(&resume_info).await.ok();
+        }
 
         // 缓存到内存
         {
@@ -889,6 +1012,7 @@ impl ResumeDownloader {
     async fn open_chunk_file(path: &Path, offset: u64) -> Result<File> {
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(path)
             .await?;

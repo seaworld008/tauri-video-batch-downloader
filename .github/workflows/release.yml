@@ -2,11 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release'
+        description: "Tag to release"
         required: true
         type: string
 
@@ -23,7 +23,8 @@ jobs:
       release_id: ${{ steps.create-release.outputs.id }}
       release_upload_url: ${{ steps.create-release.outputs.upload_url }}
       release_body: ${{ steps.tag-info.outputs.tag_body }}
-    
+      tag_name: ${{ steps.tag-info.outputs.tag }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,11 +40,11 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          
+
           # Extract version from tag (remove 'v' prefix)
           VERSION=${TAG#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+
           # Get the tag message/body
           TAG_BODY=$(git tag -l --format='%(contents)' "$TAG" || echo "Release $TAG")
           echo "tag_body<<EOF" >> $GITHUB_OUTPUT
@@ -57,47 +58,47 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag-info.outputs.tag }}
-          release_name: 'Video Downloader Pro ${{ steps.tag-info.outputs.version }}'
+          release_name: "Video Downloader Pro ${{ steps.tag-info.outputs.version }}"
           body: |
             ## Video Downloader Pro ${{ steps.tag-info.outputs.version }}
-            
+
             🎉 **Professional batch video downloader with modern UI**
-            
+
             ### 📥 Downloads
-            
+
             Choose the appropriate version for your operating system:
-            
+
             - **Windows**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_x64_en-US.msi`
             - **macOS (Intel)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_x64.dmg`  
             - **macOS (Apple Silicon)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_aarch64.dmg`
             - **Linux (AppImage)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_amd64.AppImage`
             - **Linux (deb)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_amd64.deb`
-            
+
             ### ✨ Features
-            
+
             - 🚀 **High-Performance Downloads**: Multi-threaded downloading with resume support
             - 🎯 **Multiple Formats**: HTTP/HTTPS, M3U8 streams, YouTube videos
             - 📊 **Real-time Progress**: Live bandwidth monitoring and statistics
             - 🎨 **Modern UI**: Dark/light themes with responsive design
             - 📁 **Batch Processing**: CSV import and bulk operations
             - ⚙️ **Advanced Settings**: Proxy support, custom headers, speed limiting
-            
+
             ### 🔧 System Requirements
-            
+
             - **Windows**: Windows 10 version 1903+ (64-bit)
             - **macOS**: macOS 10.15+ (Catalina or later)
             - **Linux**: Ubuntu 18.04+ / Debian 10+ / other modern distributions
-            
+
             ### 📝 Changelog
-            
+
             ${{ steps.tag-info.outputs.tag_body }}
-            
+
             ### 🛡️ Security
-            
+
             All release binaries are signed and checksums are provided below for verification.
-            
+
             ---
-            
+
             **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ github.event.before }}...${{ steps.tag-info.outputs.tag }}
           draft: true
           prerelease: ${{ contains(steps.tag-info.outputs.tag, '-') }}
@@ -107,7 +108,7 @@ jobs:
     name: Build Release
     needs: create-release
     runs-on: ${{ matrix.platform.os }}
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -117,19 +118,19 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             arch: x64
             cmd: cmd
-            
-          # macOS Intel  
+
+          # macOS Intel
           - os: macos-latest
             rust_target: x86_64-apple-darwin
             arch: x64
             cmd: bash
-            
+
           # macOS Apple Silicon
           - os: macos-latest
             rust_target: aarch64-apple-darwin
             arch: aarch64
             cmd: bash
-            
+
           # Linux
           - os: ubuntu-20.04
             rust_target: x86_64-unknown-linux-gnu
@@ -143,7 +144,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -200,7 +201,7 @@ jobs:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
-      - name: Import macOS certificate  
+      - name: Import macOS certificate
         if: matrix.platform.os == 'macos-latest'
         run: |
           if [[ -n "$APPLE_CERTIFICATE" ]]; then
@@ -271,6 +272,7 @@ jobs:
 
       # Generate checksums
       - name: Generate checksums
+        shell: bash
         run: |
           cd artifacts
           if [[ "${{ matrix.platform.cmd }}" == "cmd" ]]; then
@@ -304,7 +306,7 @@ jobs:
     name: Publish Release
     runs-on: ubuntu-latest
     needs: [create-release, build-release]
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -337,21 +339,21 @@ jobs:
           files: |
             CHECKSUMS.txt
             release-artifacts/release-*/
-          draft: false  # This publishes the release
+          draft: false # This publishes the release
           tag_name: ${{ needs.create-release.outputs.tag_name }}
           body: |
             ${{ needs.create-release.outputs.release_body }}
-            
+
             ### 📋 Checksums
-            
+
             SHA256 checksums are provided in `CHECKSUMS.txt` for integrity verification.
-            
+
             ### 🔍 Verify Downloads
-            
+
             ```bash
             # Download checksum file
             curl -L -o CHECKSUMS.txt https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.tag_name }}/CHECKSUMS.txt
-            
+
             # Verify your downloaded file
             sha256sum -c CHECKSUMS.txt --ignore-missing
             ```
@@ -364,7 +366,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [create-release, publish-release]
     if: always() && needs.publish-release.result == 'success'
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -376,7 +378,7 @@ jobs:
           echo "TODO: Update Homebrew formula"
           # Implementation for updating Homebrew tap
 
-      # Update Chocolatey package (if applicable) 
+      # Update Chocolatey package (if applicable)
       - name: Update Chocolatey package
         if: ${{ secrets.CHOCOLATEY_API_KEY }}
         run: |

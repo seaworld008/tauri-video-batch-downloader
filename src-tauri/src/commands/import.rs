@@ -187,7 +187,7 @@ pub async fn import_tasks_and_enqueue(
 
 fn build_task_from_import(
     record: &ImportedData,
-    base_path: &PathBuf,
+    base_path: &Path,
     index: usize,
 ) -> Result<VideoTask, String> {
     let url = record
@@ -235,6 +235,8 @@ fn build_task_from_import(
         error_message: None,
         created_at: now,
         updated_at: now,
+        paused_at: None,
+        paused_from_active: false,
         downloader_type: Some(DownloaderType::Http),
         video_info: build_video_info(record),
     })
@@ -412,12 +414,14 @@ async fn import_file_impl(
 
     // Get file size
     let file_size = std::fs::metadata(file_path)
-        .map_err(|e| AppError::Io(e))?
+        .map_err(AppError::Io)?
         .len();
 
     // Create parser configuration
-    let mut config = FileParserConfig::default();
-    config.strict_mode = strict_mode.unwrap_or(false);
+    let mut config = FileParserConfig {
+        strict_mode: strict_mode.unwrap_or(false),
+        ..Default::default()
+    };
     if let Some(max) = max_rows {
         config.max_rows = max;
     }
@@ -437,7 +441,7 @@ async fn import_file_impl(
     // Convert VideoRecord to ImportedData
     let imported_data = video_records
         .into_iter()
-        .map(|record| convert_video_record_to_imported_data(record))
+        .map(convert_video_record_to_imported_data)
         .collect();
 
     // Create result
@@ -495,8 +499,10 @@ async fn preview_import_data_impl(
 ) -> AppResult<ImportPreview> {
     let max_rows = max_rows.unwrap_or(10);
 
-    let mut config = FileParserConfig::default();
-    config.strict_mode = false; // Use lenient mode for preview
+    let config = FileParserConfig {
+        strict_mode: false, // Use lenient mode for preview
+        ..Default::default()
+    };
 
     let parser = FileParser::with_config(config);
     parser

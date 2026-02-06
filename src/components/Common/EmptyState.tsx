@@ -16,7 +16,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   description,
   icon = '📭',
   action,
-  size = 'md'
+  size = 'md',
 }) => {
   const getSizeClasses = () => {
     switch (size) {
@@ -26,7 +26,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
           icon: 'text-4xl mb-4',
           title: 'text-lg',
           description: 'text-sm',
-          button: 'px-4 py-2 text-sm'
+          button: 'px-4 py-2 text-sm',
         };
       case 'lg':
         return {
@@ -34,7 +34,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
           icon: 'text-8xl mb-8',
           title: 'text-3xl',
           description: 'text-lg',
-          button: 'px-6 py-3 text-base'
+          button: 'px-6 py-3 text-base',
         };
       default: // md
         return {
@@ -42,7 +42,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
           icon: 'text-6xl mb-6',
           title: 'text-xl',
           description: 'text-base',
-          button: 'px-5 py-2.5 text-sm'
+          button: 'px-5 py-2.5 text-sm',
         };
     }
   };
@@ -50,11 +50,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const sizeClasses = getSizeClasses();
 
   return (
-    <div className={`flex flex-col items-center justify-center text-center ${sizeClasses.container}`}>
+    <div
+      className={`flex flex-col items-center justify-center text-center ${sizeClasses.container}`}
+    >
       {/* 图标 */}
-      <div className={`${sizeClasses.icon} mb-4`}>
-        {icon}
-      </div>
+      <div className={`${sizeClasses.icon} mb-4`}>{icon}</div>
 
       {/* 标题 */}
       <h3 className={`${sizeClasses.title} font-semibold text-gray-900 dark:text-gray-100 mb-2`}>
@@ -63,7 +63,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
       {/* 描述 */}
       {description && (
-        <p className={`${sizeClasses.description} text-gray-600 dark:text-gray-400 mb-6 max-w-md leading-relaxed`}>
+        <p
+          className={`${sizeClasses.description} text-gray-600 dark:text-gray-400 mb-6 max-w-md leading-relaxed`}
+        >
           {description}
         </p>
       )}
@@ -87,32 +89,30 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 };
 
 // 专门用于加载状态的空状态组件
-export const LoadingState: React.FC<{ message?: string }> = ({ 
-  message = '加载中...' 
-}) => (
-  <div className="flex flex-col items-center justify-center py-12">
-    <div className="loading-spinner w-8 h-8 border-2 border-primary-600 mb-4"></div>
-    <p className="text-gray-600 dark:text-gray-400">{message}</p>
+export const LoadingState: React.FC<{ message?: string }> = ({ message = '加载中...' }) => (
+  <div className='flex flex-col items-center justify-center py-12'>
+    <div className='loading-spinner w-8 h-8 border-2 border-primary-600 mb-4'></div>
+    <p className='text-gray-600 dark:text-gray-400'>{message}</p>
   </div>
 );
 
 // 专门用于错误状态的空状态组件
-export const ErrorState: React.FC<{ 
+export const ErrorState: React.FC<{
   title?: string;
   description?: string;
   onRetry?: () => void;
-}> = ({ 
-  title = '出现错误',
-  description = '请稍后重试或联系支持人员。',
-  onRetry
-}) => (
+}> = ({ title = '出现错误', description = '请稍后重试或联系支持人员。', onRetry }) => (
   <EmptyState
     title={title}
     description={description}
-    icon="❌"
-    action={onRetry ? {
-      label: '重试',
-      onClick: onRetry
-    } : undefined}
+    icon='❌'
+    action={
+      onRetry
+        ? {
+            label: '重试',
+            onClick: onRetry,
+          }
+        : undefined
+    }
   />
 );

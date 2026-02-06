@@ -5,10 +5,10 @@ import { resolve } from 'path';
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
-  
+
   // Vite options tailored for Tauri development
   clearScreen: false,
-  
+
   server: {
     port: 1420,
     strictPort: true,
@@ -17,7 +17,7 @@ export default defineConfig(async () => ({
       port: 1421,
     },
   },
-  
+
   // Development source maps
   build: {
     sourcemap: true,
@@ -27,7 +27,7 @@ export default defineConfig(async () => ({
       external: ['@tauri-apps/api'],
     },
   },
-  
+
   // Path resolution
   resolve: {
     alias: {
@@ -40,15 +40,15 @@ export default defineConfig(async () => ({
       '@/styles': resolve(__dirname, 'src/styles'),
     },
   },
-  
+
   // Environment variables
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
     __TAURI_DEBUG__: JSON.stringify(process.env.TAURI_DEBUG === 'true'),
   },
-  
+
   // CSS configuration is handled by postcss.config.js
-  
+
   // Test configuration
   test: {
     globals: true,
@@ -56,7 +56,7 @@ export default defineConfig(async () => ({
     setupFiles: ['./src/__tests__/setup.ts'],
     css: true,
   },
-  
+
   // Optimize dependencies
   optimizeDeps: {
     include: [

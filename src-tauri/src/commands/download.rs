@@ -1,6 +1,5 @@
 //! Download management commands
 
-use serde::Deserialize;
 use tauri::{command, Manager, State};
 
 use crate::{core::models::*, AppState};
@@ -247,10 +246,21 @@ pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, S
     })
 }
 
-/// Start all pending/paused/failed downloads respecting concurrency limit
+/// Start all downloads (backend decides resume paused vs start pending)
+#[command]
+pub async fn start_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::info!("[START_ALL_CMD] Starting downloads with backend policy");
+    let mut manager = state.download_manager.write().await;
+    manager.start_all_downloads_impl().await.map_err(|e| {
+        tracing::error!("[START_ALL_CMD] ❌ Failed to start all downloads: {}", e);
+        e.to_string()
+    })
+}
+
+/// Start all pending/failed downloads respecting concurrency limit
 #[command]
 pub async fn start_all_pending_downloads(state: State<'_, AppState>) -> Result<usize, String> {
-    tracing::info!("[START_ALL_CMD] Starting all pending/paused/failed downloads");
+    tracing::info!("[START_ALL_CMD] Starting all pending/failed downloads");
     let mut manager = state.download_manager.write().await;
     manager.start_all_pending_impl().await.map_err(|e| {
         tracing::error!(
@@ -426,17 +436,6 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
     Ok(())
 }
 
-/// Request structure for creating new download tasks
-#[derive(Debug, Deserialize)]
-pub struct CreateTaskRequest {
-    pub url: String,
-    pub title: String,
-    pub output_path: String,
-
-    // 保存完整的视频信息供后续使用
-    pub video_info: Option<crate::core::models::VideoInfo>,
-}
-
 #[command]
 pub async fn set_rate_limit(
     bytes_per_second: Option<u64>,
@@ -446,7 +445,7 @@ pub async fn set_rate_limit(
     const MAX_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10GB/s
 
     if let Some(limit) = bytes_per_second {
-        if limit < MIN_LIMIT || limit > MAX_LIMIT {
+        if !(MIN_LIMIT..=MAX_LIMIT).contains(&limit) {
             return Err(format!(
                 "Rate limit must be between {} and {} bytes/sec",
                 MIN_LIMIT, MAX_LIMIT

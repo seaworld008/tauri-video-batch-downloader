@@ -210,6 +210,12 @@ struct DownloadControl {
     effective_pause_flag: Arc<AtomicBool>,
 }
 
+impl Default for BandwidthController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DownloadControl {
     fn new(global_pause: &Arc<AtomicBool>) -> Self {
         let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -343,8 +349,15 @@ impl HttpDownloader {
         }
     }
 
+    fn normalize_output_path(output_path: &str) -> String {
+        output_path
+            .trim_end_matches(['/', '\\'])
+            .to_string()
+    }
+
     fn build_resume_key(&self, task: &DownloadTask) -> String {
-        let identity = format!("{}|{}|{}", task.url, task.output_path, task.filename);
+        let normalized_dir = Self::normalize_output_path(&task.output_path);
+        let identity = format!("{}|{}|{}", task.url, normalized_dir, task.filename);
         let mut hasher = Sha256::new();
         hasher.update(identity.as_bytes());
         hex::encode(hasher.finalize())
@@ -437,13 +450,6 @@ impl HttpDownloader {
             task.id,
             result.is_ok()
         );
-        if let Err(ref e) = result {
-            tracing::error!(
-                "🔴 [DOWNLOAD_ENTRY] Download error for task {}: {}",
-                task.id,
-                e
-            );
-        }
 
         // 清理活跃下载记录
         {
@@ -629,6 +635,23 @@ impl HttpDownloader {
         let task_url = task.url.clone();
         let resume_key = self.build_resume_key(task);
 
+        // 读取已有断点信息，确保续传时进度从已下载位置开始
+        if let Ok(Some(resume_info)) = self.resume_downloader.load_resume_info(&resume_key).await {
+            if resume_info.total_size > 0 {
+                let should_update = match task.stats.total_bytes {
+                    Some(existing) => existing < resume_info.total_size,
+                    None => true,
+                };
+                if should_update {
+                    task.stats.total_bytes = Some(resume_info.total_size);
+                }
+            }
+            if resume_info.downloaded_total > 0 {
+                task.stats.downloaded_bytes =
+                    task.stats.downloaded_bytes.max(resume_info.downloaded_total);
+            }
+        }
+
         let mut resume_future = Box::pin(self.resume_downloader.download_with_resume(
             &resume_key,
             &task_url,
@@ -642,6 +665,10 @@ impl HttpDownloader {
         let start_time = Instant::now();
         let mut downloaded = task.stats.downloaded_bytes;
         let total_hint = task.stats.total_bytes;
+
+        // 发送一次初始进度，避免前端显示为从 0 开始
+        self.update_progress(task, downloaded, total_hint.unwrap_or(0), start_time)
+            .await;
 
         loop {
             tokio::select! {
@@ -1433,10 +1460,11 @@ mod tests {
             ..Default::default()
         };
         let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
 
         let temp_dir = tempdir().unwrap();
         let task = DownloadTask::new(
-            "https://httpbin.org/delay/5".to_string(), // 会超时的URL
+            format!("{}/delay/5", server.url()), // 会超时的URL
             temp_dir.path().to_string_lossy().to_string(),
             "timeout-test.bin".to_string(),
         );
@@ -1465,6 +1493,175 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod test_support {
+    use std::net::SocketAddr;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+    use tokio::time::{sleep, Duration};
+
+    pub struct TestServer {
+        addr: SocketAddr,
+        shutdown: Option<oneshot::Sender<()>>,
+        _handle: JoinHandle<()>,
+    }
+
+    impl TestServer {
+        pub async fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind test server");
+            let addr = listener.local_addr().expect("server addr");
+            let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+
+            let handle = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = &mut shutdown_rx => {
+                            break;
+                        }
+                        accept = listener.accept() => {
+                            if let Ok((mut socket, _)) = accept {
+                                tokio::spawn(async move {
+                                    let _ = handle_connection(&mut socket).await;
+                                });
+                            }
+                        }
+                    }
+                }
+            });
+
+            Self {
+                addr,
+                shutdown: Some(shutdown_tx),
+                _handle: handle,
+            }
+        }
+
+        pub fn url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            if let Some(tx) = self.shutdown.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    async fn handle_connection(socket: &mut tokio::net::TcpStream) -> std::io::Result<()> {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            let bytes_read = socket.read(&mut chunk).await?;
+            if bytes_read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..bytes_read]);
+            if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+
+        let request = String::from_utf8_lossy(&buffer);
+        let mut lines = request.lines();
+        let request_line = lines.next().unwrap_or("");
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("GET");
+        let path = parts.next().unwrap_or("/");
+
+        let mut range_start = None;
+        for line in lines {
+            let lower = line.to_ascii_lowercase();
+            if lower.starts_with("range:") {
+                if let Some(value) = line.splitn(2, ':').nth(1) {
+                    let value = value.trim();
+                    if let Some(bytes_part) = value.strip_prefix("bytes=") {
+                        if let Some(start_str) = bytes_part.split('-').next() {
+                            if let Ok(start) = start_str.parse::<usize>() {
+                                range_start = Some(start);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if method != "GET" {
+            write_response(socket, 405, "Method Not Allowed", &[]).await?;
+            return Ok(());
+        }
+
+        if let Some(delay) = path.strip_prefix("/delay/") {
+            let delay_secs: u64 = delay.parse().unwrap_or(1);
+            sleep(Duration::from_secs(delay_secs)).await;
+            write_response(socket, 200, "OK", b"ok").await?;
+            return Ok(());
+        }
+
+        if let Some(size) = path.strip_prefix("/bytes/") {
+            let size: usize = size.parse().unwrap_or(0);
+            let data = vec![b'a'; size];
+            if let Some(start) = range_start {
+                if start >= data.len() {
+                    write_response(socket, 416, "Range Not Satisfiable", &[]).await?;
+                    return Ok(());
+                }
+                let body = &data[start..];
+                let header = format!(
+                    "Content-Range: bytes {}-{}/{}\r\nAccept-Ranges: bytes\r\n",
+                    start,
+                    data.len().saturating_sub(1),
+                    data.len()
+                );
+                write_response_with_headers(socket, 206, "Partial Content", body, &header)
+                    .await?;
+                return Ok(());
+            }
+
+            let header = "Accept-Ranges: bytes\r\n";
+            write_response_with_headers(socket, 200, "OK", &data, header).await?;
+            return Ok(());
+        }
+
+        write_response(socket, 404, "Not Found", &[]).await?;
+        Ok(())
+    }
+
+    async fn write_response(
+        socket: &mut tokio::net::TcpStream,
+        status_code: u16,
+        status_text: &str,
+        body: &[u8],
+    ) -> std::io::Result<()> {
+        write_response_with_headers(socket, status_code, status_text, body, "").await
+    }
+
+    async fn write_response_with_headers(
+        socket: &mut tokio::net::TcpStream,
+        status_code: u16,
+        status_text: &str,
+        body: &[u8],
+        extra_headers: &str,
+    ) -> std::io::Result<()> {
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\n{}Connection: close\r\n\r\n",
+            status_code,
+            status_text,
+            body.len(),
+            extra_headers
+        );
+        socket.write_all(response.as_bytes()).await?;
+        socket.write_all(body).await?;
+        socket.shutdown().await?;
+        Ok(())
+    }
+}
+
 /// 集成测试模块
 #[cfg(test)]
 mod integration_tests {
@@ -1476,10 +1673,11 @@ mod integration_tests {
     async fn test_small_file_download() {
         let config = DownloaderConfig::default();
         let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
 
         let temp_dir = tempdir().unwrap();
         let task = DownloadTask::new(
-            "https://httpbin.org/bytes/100".to_string(),
+            format!("{}/bytes/100", server.url()),
             temp_dir.path().to_string_lossy().to_string(),
             "small_file.bin".to_string(),
         );
@@ -1507,6 +1705,7 @@ mod integration_tests {
             ..Default::default()
         };
         let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
 
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("resume_test.bin");
@@ -1515,7 +1714,7 @@ mod integration_tests {
         fs::write(&file_path, b"partial").await.unwrap();
 
         let task = DownloadTask::new(
-            "https://httpbin.org/bytes/100".to_string(),
+            format!("{}/bytes/100", server.url()),
             temp_dir.path().to_string_lossy().to_string(),
             "resume_test.bin".to_string(),
         );
@@ -1535,22 +1734,23 @@ mod integration_tests {
             ..Default::default()
         };
         let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
 
         let temp_dir = tempdir().unwrap();
 
         let tasks = vec![
             DownloadTask::new(
-                "https://httpbin.org/bytes/50".to_string(),
+                format!("{}/bytes/50", server.url()),
                 temp_dir.path().to_string_lossy().to_string(),
                 "file1.bin".to_string(),
             ),
             DownloadTask::new(
-                "https://httpbin.org/bytes/75".to_string(),
+                format!("{}/bytes/75", server.url()),
                 temp_dir.path().to_string_lossy().to_string(),
                 "file2.bin".to_string(),
             ),
             DownloadTask::new(
-                "https://httpbin.org/bytes/25".to_string(),
+                format!("{}/bytes/25", server.url()),
                 temp_dir.path().to_string_lossy().to_string(),
                 "file3.bin".to_string(),
             ),
@@ -1577,12 +1777,13 @@ mod integration_tests {
     async fn test_directory_creation() {
         let config = DownloaderConfig::default();
         let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
 
         let temp_dir = tempdir().unwrap();
         let nested_path = temp_dir.path().join("nested").join("directory");
 
         let task = DownloadTask::new(
-            "https://httpbin.org/bytes/10".to_string(),
+            format!("{}/bytes/10", server.url()),
             nested_path.to_string_lossy().to_string(),
             "nested_file.bin".to_string(),
         );

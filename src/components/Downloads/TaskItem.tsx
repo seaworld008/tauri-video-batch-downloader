@@ -17,7 +17,6 @@ export const TaskItem = React.memo(
       toggleTaskSelection,
       startDownload,
       pauseDownload,
-      resumeDownload,
       cancelDownload,
       removeTasks,
     } = useDownloadStore();
@@ -55,9 +54,7 @@ export const TaskItem = React.memo(
       return statusMap[status] || status;
     };
 
-    const handleAction = async (
-      action: 'start' | 'pause' | 'resume' | 'cancel' | 'remove'
-    ) => {
+    const handleAction = async (action: 'start' | 'pause' | 'cancel' | 'remove') => {
       try {
         switch (action) {
           case 'start':
@@ -65,9 +62,6 @@ export const TaskItem = React.memo(
             break;
           case 'pause':
             await pauseDownload(task.id);
-            break;
-          case 'resume':
-            await resumeDownload(task.id);
             break;
           case 'cancel':
             await cancelDownload(task.id);
@@ -90,69 +84,69 @@ export const TaskItem = React.memo(
       switch (task.status) {
         case 'pending':
           return (
-            <div className="flex items-center space-x-1">
+            <div className='flex items-center space-x-1'>
               <ActionButton
-                icon="▶️"
-                tooltip="开始下载"
+                icon='▶️'
+                tooltip='开始下载'
                 onClick={() => handleAction('start')}
-                variant="primary"
+                variant='primary'
               />
               <ActionButton
-                icon="🗑️"
-                tooltip="删除任务"
+                icon='🗑️'
+                tooltip='删除任务'
                 onClick={() => handleAction('remove')}
-                variant="danger"
+                variant='danger'
               />
             </div>
           );
         case 'downloading':
           return (
-            <div className="flex items-center space-x-1">
+            <div className='flex items-center space-x-1'>
               <ActionButton
-                icon="⏸️"
-                tooltip="暂停下载"
+                icon='⏸️'
+                tooltip='暂停下载'
                 onClick={() => handleAction('pause')}
-                variant="secondary"
+                variant='secondary'
               />
               <ActionButton
-                icon="🚫"
-                tooltip="取消下载"
+                icon='🚫'
+                tooltip='取消下载'
                 onClick={() => handleAction('cancel')}
-                variant="danger"
+                variant='danger'
               />
             </div>
           );
         case 'paused':
           return (
-            <div className="flex items-center space-x-1">
+            <div className='flex items-center space-x-1'>
               <ActionButton
-                icon="▶️"
-                tooltip="继续下载"
-                onClick={() => handleAction('resume')}
-                variant="primary"
+                icon='▶️'
+                tooltip='继续下载'
+                onClick={() => handleAction('start')}
+                variant='primary'
               />
               <ActionButton
-                icon="🚫"
-                tooltip="取消下载"
+                icon='🚫'
+                tooltip='取消下载'
                 onClick={() => handleAction('cancel')}
-                variant="danger"
+                variant='danger'
               />
             </div>
           );
         case 'failed':
           return (
-            <div className="flex items-center space-x-1">
+            <div className='flex items-center space-x-1'>
               <ActionButton
-                icon="🔄"
-                tooltip="重新开始"
+                icon='🔄'
+                tooltip='重新开始'
                 onClick={() => handleAction('start')}
-                variant="primary"
+                variant='primary'
               />
               <ActionButton
-                icon="🗑️"
-                tooltip="删除任务"
+                icon='🗑️'
+                tooltip='删除任务'
                 onClick={() => handleAction('remove')}
-                variant="danger"
+                variant='danger'
               />
             </div>
           );
@@ -160,10 +154,10 @@ export const TaskItem = React.memo(
         case 'cancelled':
           return (
             <ActionButton
-              icon="🗑️"
-              tooltip="删除任务"
+              icon='🗑️'
+              tooltip='删除任务'
               onClick={() => handleAction('remove')}
-              variant="danger"
+              variant='danger'
             />
           );
         default:
@@ -177,37 +171,34 @@ export const TaskItem = React.memo(
           isSelected ? 'bg-primary-50 dark:bg-primary-900/20' : ''
         }`}
       >
-        <div className="px-6 py-4">
-          <div className="grid grid-cols-12 gap-4 items-center">
+        <div className='px-6 py-4'>
+          <div className='grid grid-cols-12 gap-4 items-center'>
             {/* 选择框 */}
-            <div className="col-span-1">
+            <div className='col-span-1'>
               <input
-                type="checkbox"
+                type='checkbox'
                 checked={isSelected}
                 onChange={() => toggleTaskSelection(task.id)}
-                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                className='w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500'
               />
             </div>
 
             {/* 任务名称 */}
-            <div className="col-span-4">
-              <div className="flex flex-col">
+            <div className='col-span-4'>
+              <div className='flex flex-col'>
                 <button
                   onClick={() => setShowDetails(!showDetails)}
-                  className="text-left font-medium text-gray-900 dark:text-gray-100 hover:text-primary-600 dark:hover:text-primary-400 truncate"
+                  className='text-left font-medium text-gray-900 dark:text-gray-100 hover:text-primary-600 dark:hover:text-primary-400 truncate'
                   title={task.title}
                 >
                   {task.title}
                 </button>
-                <div
-                  className="text-xs text-gray-500 dark:text-gray-400 truncate"
-                  title={task.url}
-                >
+                <div className='text-xs text-gray-500 dark:text-gray-400 truncate' title={task.url}>
                   {task.url}
                 </div>
                 {task.error_message && (
                   <div
-                    className="text-xs text-red-600 dark:text-red-400 mt-1 truncate"
+                    className='text-xs text-red-600 dark:text-red-400 mt-1 truncate'
                     title={task.error_message}
                   >
                     错误: {task.error_message}
@@ -217,7 +208,7 @@ export const TaskItem = React.memo(
             </div>
 
             {/* 状态 */}
-            <div className="col-span-2">
+            <div className='col-span-2'>
               <span
                 className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(
                   task.status
@@ -228,15 +219,15 @@ export const TaskItem = React.memo(
             </div>
 
             {/* 进度 */}
-            <div className="col-span-2">
-              <div className="flex flex-col space-y-1">
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+            <div className='col-span-2'>
+              <div className='flex flex-col space-y-1'>
+                <div className='w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2'>
                   <div
-                    className="bg-primary-600 h-2 rounded-full transition-all duration-300"
+                    className='bg-primary-600 h-2 rounded-full transition-all duration-300'
                     style={{ width: `${Math.min(task.progress, 100)}%` }}
                   />
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 flex justify-between">
+                <div className='text-xs text-gray-500 dark:text-gray-400 flex justify-between'>
                   <span>{task.progress.toFixed(1)}%</span>
                   {task.status === 'downloading' && task.speed > 0 && (
                     <span>{formatBytes(task.speed)}/s</span>
@@ -246,69 +237,58 @@ export const TaskItem = React.memo(
             </div>
 
             {/* 更新时间 */}
-            <div className="col-span-2">
-              <div className="text-sm text-gray-600 dark:text-gray-400">
+            <div className='col-span-2'>
+              <div className='text-sm text-gray-600 dark:text-gray-400'>
                 {formatDate(task.updated_at)}
               </div>
-              <div className="text-xs text-gray-500 dark:text-gray-500">
+              <div className='text-xs text-gray-500 dark:text-gray-500'>
                 {task.file_size
-                  ? `${formatBytes(task.downloaded_size)} / ${formatBytes(
-                      task.file_size
-                    )}`
+                  ? `${formatBytes(task.downloaded_size)} / ${formatBytes(task.file_size)}`
                   : `${formatBytes(task.downloaded_size)}`}
               </div>
             </div>
 
             {/* 操作按钮 */}
-            <div className="col-span-1">{getActionButtons()}</div>
+            <div className='col-span-1'>{getActionButtons()}</div>
           </div>
         </div>
 
         {/* 详细信息展开面板 */}
         {showDetails && (
-          <div className="px-6 pb-4 border-t border-gray-100 dark:border-gray-800">
-            <div className="grid grid-cols-2 gap-6 mt-4 text-sm">
+          <div className='px-6 pb-4 border-t border-gray-100 dark:border-gray-800'>
+            <div className='grid grid-cols-2 gap-6 mt-4 text-sm'>
               <div>
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">
-                  下载信息
-                </h4>
-                <div className="space-y-1 text-gray-600 dark:text-gray-400">
+                <h4 className='font-medium text-gray-900 dark:text-gray-100 mb-2'>下载信息</h4>
+                <div className='space-y-1 text-gray-600 dark:text-gray-400'>
                   <div>
-                    <span className="font-medium">URL:</span> {task.url}
+                    <span className='font-medium'>URL:</span> {task.url}
                   </div>
                   <div>
-                    <span className="font-medium">输出路径:</span>{' '}
-                    {task.output_path}
+                    <span className='font-medium'>输出路径:</span> {task.output_path}
                   </div>
                   {task.downloader_type && (
                     <div>
-                      <span className="font-medium">下载器:</span>{' '}
-                      {task.downloader_type}
+                      <span className='font-medium'>下载器:</span> {task.downloader_type}
                     </div>
                   )}
                   {task.eta && task.status === 'downloading' && (
                     <div>
-                      <span className="font-medium">预计剩余:</span>{' '}
-                      {formatDuration(task.eta)}
+                      <span className='font-medium'>预计剩余:</span> {formatDuration(task.eta)}
                     </div>
                   )}
                 </div>
               </div>
               <div>
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">
-                  时间信息
-                </h4>
-                <div className="space-y-1 text-gray-600 dark:text-gray-400">
+                <h4 className='font-medium text-gray-900 dark:text-gray-100 mb-2'>时间信息</h4>
+                <div className='space-y-1 text-gray-600 dark:text-gray-400'>
                   <div>
-                    <span className="font-medium">创建时间:</span>{' '}
-                    {formatDate(task.created_at)}
+                    <span className='font-medium'>创建时间:</span> {formatDate(task.created_at)}
                   </div>
                   <div>
-                    <span className="font-medium">更新时间:</span>{' '}
-                    {formatDate(task.updated_at)}
+                    <span className='font-medium'>更新时间:</span> {formatDate(task.updated_at)}
                   </div>
                   <div>
-                    <span className="font-medium">任务ID:</span> {task.id}
+                    <span className='font-medium'>任务ID:</span> {task.id}
                   </div>
                 </div>
               </div>
@@ -346,12 +326,12 @@ interface ActionButtonProps {
   disabled?: boolean;
 }
 
-const ActionButton: React.FC<ActionButtonProps> = ({ 
-  icon, 
-  tooltip, 
-  onClick, 
+const ActionButton: React.FC<ActionButtonProps> = ({
+  icon,
+  tooltip,
+  onClick,
   variant = 'secondary',
-  disabled = false 
+  disabled = false,
 }) => {
   const getVariantClasses = () => {
     switch (variant) {
@@ -373,7 +353,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
         disabled ? 'opacity-50 cursor-not-allowed' : ''
       }`}
     >
-      <span className="text-sm">{icon}</span>
+      <span className='text-sm'>{icon}</span>
     </button>
   );
 };

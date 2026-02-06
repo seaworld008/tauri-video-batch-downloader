@@ -132,6 +132,7 @@ mod tests {
 
     #[test]
     fn test_init() {
+        std::env::set_var("RUST_LOG", "off");
         assert!(init().is_ok());
     }
 

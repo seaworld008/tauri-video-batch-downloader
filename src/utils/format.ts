@@ -10,11 +10,11 @@
  * @returns 格式化后的字符串，如 "1.23 MB"
  */
 export function formatBytes(bytes: number, decimals: number = 2): string {
-  if (!Number.isFinite(bytes) || bytes < 0) {
+  if (!Number.isFinite(bytes)) {
     return '--';
   }
 
-  if (bytes === 0) {
+  if (bytes <= 0) {
     return '0 B';
   }
 
@@ -69,7 +69,7 @@ export function formatDuration(seconds: number): string {
  */
 export function formatDate(dateString: string): string {
   const date = new Date(dateString);
-  
+
   if (isNaN(date.getTime())) {
     return '无效日期';
   }
@@ -122,37 +122,43 @@ export function formatDate(dateString: string): string {
  */
 export function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
-  
+
   if (isNaN(date.getTime())) {
     return '无效日期';
   }
 
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
-  
+
   const rtf = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' });
 
-  if (diffMs < 60000) { // 1分钟内
+  if (diffMs < 60000) {
+    // 1分钟内
     return '刚刚';
   }
 
-  if (diffMs < 3600000) { // 1小时内
+  if (diffMs < 3600000) {
+    // 1小时内
     return rtf.format(-Math.floor(diffMs / 60000), 'minute');
   }
 
-  if (diffMs < 86400000) { // 24小时内
+  if (diffMs < 86400000) {
+    // 24小时内
     return rtf.format(-Math.floor(diffMs / 3600000), 'hour');
   }
 
-  if (diffMs < 604800000) { // 7天内
+  if (diffMs < 604800000) {
+    // 7天内
     return rtf.format(-Math.floor(diffMs / 86400000), 'day');
   }
 
-  if (diffMs < 2592000000) { // 30天内
+  if (diffMs < 2592000000) {
+    // 30天内
     return rtf.format(-Math.floor(diffMs / 604800000), 'week');
   }
 
-  if (diffMs < 31536000000) { // 365天内
+  if (diffMs < 31536000000) {
+    // 365天内
     return rtf.format(-Math.floor(diffMs / 2592000000), 'month');
   }
 
@@ -194,14 +200,14 @@ export function formatFileName(urlOrPath: string): string {
       const url = new URL(urlOrPath);
       const pathname = url.pathname;
       const fileName = pathname.split('/').pop() || 'unknown';
-      
+
       // 移除查询参数
       return fileName.split('?')[0] || 'unknown';
     } catch {
       // URL解析失败，降级到路径处理
     }
   }
-  
+
   // 作为文件路径处理
   const normalizedPath = urlOrPath.replace(/\\/g, '/');
   const parts = normalizedPath.split('/');
@@ -220,9 +226,9 @@ export function formatTaskStatus(status: string): string {
     paused: '已暂停',
     completed: '已完成',
     failed: '失败',
-    cancelled: '已取消'
+    cancelled: '已取消',
   };
-  
+
   return statusMap[status] || status;
 }
 
@@ -245,7 +251,7 @@ export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
     return text;
   }
-  
+
   return text.slice(0, maxLength - 3) + '...';
 }
 
@@ -270,13 +276,13 @@ export function formatETA(seconds: number | null | undefined): string {
 
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.ceil((seconds % 3600) / 60);
-  
+
   if (hours < 24) {
     return minutes > 0 ? `${hours}小时${minutes}分钟` : `${hours}小时`;
   }
 
   const days = Math.floor(hours / 24);
   const remainingHours = hours % 24;
-  
+
   return remainingHours > 0 ? `${days}天${remainingHours}小时` : `${days}天`;
 }

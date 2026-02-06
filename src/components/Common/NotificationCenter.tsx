@@ -41,7 +41,7 @@ export const NotificationCenter: React.FC = () => {
   }
 
   return (
-    <div className="pointer-events-none fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full">
+    <div className='pointer-events-none fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full'>
       {notifications.map(notification => {
         const style = typeStyles[notification.type] ?? typeStyles.info;
         return (
@@ -49,32 +49,34 @@ export const NotificationCenter: React.FC = () => {
             key={notification.id}
             appear
             show
-            enter="transition transform duration-200"
-            enterFrom="opacity-0 translate-y-2 scale-95"
-            enterTo="opacity-100 translate-y-0 scale-100"
-            leave="transition transform duration-150"
-            leaveFrom="opacity-100 translate-y-0 scale-100"
-            leaveTo="opacity-0 translate-y-2 scale-95"
+            enter='transition transform duration-200'
+            enterFrom='opacity-0 translate-y-2 scale-95'
+            enterTo='opacity-100 translate-y-0 scale-100'
+            leave='transition transform duration-150'
+            leaveFrom='opacity-100 translate-y-0 scale-100'
+            leaveTo='opacity-0 translate-y-2 scale-95'
           >
             <div
               className={`pointer-events-auto flex items-start gap-3 rounded-xl border-l-4 bg-white dark:bg-gray-900 shadow-lg p-4 ${style.border}`}
             >
-              <div className={`flex h-8 w-8 items-center justify-center rounded-full ${style.iconBg}`}>
+              <div
+                className={`flex h-8 w-8 items-center justify-center rounded-full ${style.iconBg}`}
+              >
                 <span className={`text-lg font-semibold ${style.icon}`}>
                   {icons[notification.type] ?? icons.info}
                 </span>
               </div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              <div className='flex-1'>
+                <p className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
                   {notification.title}
                 </p>
                 {notification.message && (
-                  <p className="mt-1 text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                  <p className='mt-1 text-xs text-gray-600 dark:text-gray-300 leading-relaxed'>
                     {notification.message}
                   </p>
                 )}
                 {notification.actions && notification.actions.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <div className='mt-2 flex flex-wrap gap-2'>
                     {notification.actions.map(action => (
                       <button
                         key={action.label}
@@ -92,7 +94,7 @@ export const NotificationCenter: React.FC = () => {
                 )}
               </div>
               <button
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors text-lg leading-none"
+                className='text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors text-lg leading-none'
                 onClick={() => removeNotification(notification.id)}
               >
                 ×
@@ -104,5 +106,3 @@ export const NotificationCenter: React.FC = () => {
     </div>
   );
 };
-
-

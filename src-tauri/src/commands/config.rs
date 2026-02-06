@@ -169,7 +169,7 @@ async fn export_config_impl(state: &State<'_, AppState>, file_path: &str) -> App
     // Write to file
     tokio::fs::write(file_path, json_data)
         .await
-        .map_err(|e| AppError::Io(e))?;
+        .map_err(AppError::Io)?;
 
     Ok(())
 }
@@ -178,7 +178,7 @@ async fn import_config_impl(state: &State<'_, AppState>, file_path: &str) -> App
     // Check if file exists
     if !tokio::fs::try_exists(file_path)
         .await
-        .map_err(|e| AppError::Io(e))?
+        .map_err(AppError::Io)?
     {
         return Err(AppError::Config(format!(
             "Configuration file not found: {}",
@@ -189,7 +189,7 @@ async fn import_config_impl(state: &State<'_, AppState>, file_path: &str) -> App
     // Read file content
     let content = tokio::fs::read_to_string(file_path)
         .await
-        .map_err(|e| AppError::Io(e))?;
+        .map_err(AppError::Io)?;
 
     // Parse JSON
     let imported_config: AppConfig = serde_json::from_str(&content)

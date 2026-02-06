@@ -4,27 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Video Downloader Pro - Minimal Test</title>
-    
+
     <!-- 最简单的CSP策略 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost;">
-    
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost;"
+    />
+
     <style>
       * {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
       }
-      
+
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         background-color: #fafafa;
         color: #333;
       }
-      
+
       #root {
         min-height: 100vh;
       }
-      
+
       .loading {
         display: flex;
         align-items: center;
@@ -32,20 +35,24 @@
         min-height: 100vh;
         flex-direction: column;
       }
-      
+
       .spinner {
         width: 30px;
         height: 30px;
         border: 3px solid #e3e3e3;
-        border-top: 3px solid #4CAF50;
+        border-top: 3px solid #4caf50;
         border-radius: 50%;
         animation: spin 1s linear infinite;
         margin-bottom: 15px;
       }
-      
+
       @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
       }
     </style>
   </head>
@@ -57,18 +64,18 @@
         <p>Testing Tauri Connection...</p>
       </div>
     </div>
-    
+
     <script type="module" src="/src/main-minimal.tsx"></script>
-    
+
     <script>
       console.log('🔧 Minimal test HTML loaded');
-      
+
       // 错误处理
-      window.addEventListener('error', (event) => {
+      window.addEventListener('error', event => {
         console.error('Global error:', event.error);
       });
-      
-      window.addEventListener('unhandledrejection', (event) => {
+
+      window.addEventListener('unhandledrejection', event => {
         console.error('Unhandled promise rejection:', event.reason);
       });
     </script>

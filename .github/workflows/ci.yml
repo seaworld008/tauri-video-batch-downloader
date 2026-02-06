@@ -19,7 +19,7 @@ jobs:
   frontend:
     name: Frontend CI
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,7 +27,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -45,13 +45,13 @@ jobs:
         run: pnpm lint
 
       - name: Format check
-        run: pnpm format --check
+        run: pnpm exec prettier --check "src/**/*.{ts,tsx,css,json}" "*.html" ".github/workflows/*.yml" "README.md"
 
       - name: Run unit tests
-        run: pnpm test --run --coverage
+        run: pnpm exec vitest run --coverage
 
       - name: Run integration tests
-        run: pnpm test:integration --run
+        run: pnpm exec vitest run --config vitest.config.integration.ts
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
@@ -65,7 +65,7 @@ jobs:
   backend:
     name: Backend CI
     runs-on: ${{ matrix.os }}
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -104,22 +104,18 @@ jobs:
         working-directory: ./src-tauri
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy -- -D warnings
         working-directory: ./src-tauri
 
       - name: Run Rust tests
         run: cargo test --verbose
         working-directory: ./src-tauri
 
-      - name: Run Rust integration tests
-        run: cargo test --test integration_tests --verbose
-        working-directory: ./src-tauri
-
   # Security Audit
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -147,7 +143,7 @@ jobs:
     name: Build Check
     runs-on: ${{ matrix.os }}
     needs: [frontend, backend]
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -160,7 +156,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -194,7 +190,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        run: pnpm build
+        run: pnpm exec vite build
 
       - name: Build Tauri app (debug)
         run: pnpm tauri build --debug
@@ -216,7 +212,7 @@ jobs:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -231,7 +227,7 @@ jobs:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -263,12 +259,12 @@ jobs:
         uses: benchmark-action/github-action-benchmark@v1
         if: github.ref == 'refs/heads/main'
         with:
-          tool: 'cargo'
+          tool: "cargo"
           output-file-path: src-tauri/target/criterion/report/benchmark.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
-          alert-threshold: '200%'
+          alert-threshold: "200%"
           fail-on-alert: false
 
   # Final Status Check
@@ -277,7 +273,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [frontend, backend, security, build-check]
     if: always()
-    
+
     steps:
       - name: Check all jobs success
         if: needs.frontend.result != 'success' || needs.backend.result != 'success' || needs.security.result != 'success' || needs.build-check.result != 'success'

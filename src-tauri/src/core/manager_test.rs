@@ -6,6 +6,8 @@
 mod tests {
     use super::super::manager::DownloadManager;
     use crate::core::models::{AppResult, DownloadConfig, TaskStatus};
+    use std::fs;
+    use tempfile::tempdir;
 
     /// 创建测试用的下载配置
     fn create_test_config() -> DownloadConfig {
@@ -20,10 +22,17 @@ mod tests {
         }
     }
 
+    fn create_test_config_with_output_dir(output_directory: String) -> DownloadConfig {
+        DownloadConfig {
+            output_directory,
+            ..create_test_config()
+        }
+    }
+
     #[tokio::test]
     async fn test_download_manager_creation() {
         let config = create_test_config();
-        let manager = DownloadManager::new(config.clone());
+        let manager = DownloadManager::new(config.clone()).unwrap();
 
         assert!(!manager.is_running);
         assert_eq!(manager.config.concurrent_downloads, 2);
@@ -34,7 +43,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_stop_manager() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         // 测试启动
         assert!(!manager.is_running);
@@ -55,7 +64,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_task() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -80,7 +89,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_multiple_tasks() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -109,9 +118,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pending_task_with_existing_file_stays_pending() -> AppResult<()> {
+        let dir = tempdir().expect("create temp dir");
+        let output_path = dir.path().join("video.mp4");
+        fs::write(&output_path, vec![1u8; 128]).expect("write partial file");
+
+        let config =
+            create_test_config_with_output_dir(dir.path().to_string_lossy().to_string());
+        let mut manager = DownloadManager::new(config).unwrap();
+        manager.start().await?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/video.mp4".to_string(),
+                output_path.to_string_lossy().to_string(),
+            )
+            .await?;
+
+        let task = manager.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, TaskStatus::Pending);
+        assert!(task.downloaded_size > 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_remove_task() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -133,7 +167,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_active_download_fails() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -159,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_download() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -192,7 +226,7 @@ mod tests {
     #[tokio::test]
     async fn test_pause_nonexistent_download() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -205,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_download() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -228,7 +262,7 @@ mod tests {
     #[tokio::test]
     async fn test_clear_completed() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -277,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn test_retry_failed() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -324,7 +358,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_config() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -343,7 +377,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_tasks_empty() -> AppResult<()> {
         let config = create_test_config();
-        let manager = DownloadManager::new(config);
+        let manager = DownloadManager::new(config).unwrap();
 
         let tasks = manager.get_tasks().await;
         assert_eq!(tasks.len(), 0);
@@ -354,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_stats() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -403,7 +437,7 @@ mod tests {
     async fn test_concurrent_download_limit() -> AppResult<()> {
         let mut config = create_test_config();
         config.concurrent_downloads = 1; // 限制为1个并发下载
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -436,7 +470,7 @@ mod tests {
     #[test]
     fn test_extract_title_from_url() {
         let config = create_test_config();
-        let manager = DownloadManager::new(config);
+        let manager = DownloadManager::new(config).unwrap();
 
         // 测试正常URL
         let title1 = manager.extract_title_from_url("https://example.com/video.mp4");
@@ -463,7 +497,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_many_tasks() -> AppResult<()> {
         let config = create_test_config();
-        let mut manager = DownloadManager::new(config);
+        let mut manager = DownloadManager::new(config).unwrap();
 
         manager.start().await?;
 
@@ -501,7 +535,7 @@ mod tests {
     async fn test_manager_drop_while_running() -> AppResult<()> {
         {
             let config = create_test_config();
-            let mut manager = DownloadManager::new(config);
+            let mut manager = DownloadManager::new(config).unwrap();
 
             manager.start().await?;
 

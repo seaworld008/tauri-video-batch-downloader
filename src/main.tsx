@@ -26,7 +26,15 @@ const safeStringify = (value: unknown): string => {
   return String(value);
 };
 
+const localLoggingEnabled = Boolean(
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_LOCAL_LOGGING === 'true'
+);
+
 const logFrontendEvent = (level: 'info' | 'warn' | 'error', message: string) => {
+  if (!localLoggingEnabled) {
+    return;
+  }
+
   const truncated = message.length > 4000 ? `${message.slice(0, 4000)}...` : message;
 
   invoke('log_frontend_event', { level, message: truncated }).catch(() => {
@@ -34,13 +42,13 @@ const logFrontendEvent = (level: 'info' | 'warn' | 'error', message: string) => 
   });
 };
 
-if (typeof window !== 'undefined') {
-  window.addEventListener('error', (event) => {
+if (localLoggingEnabled && typeof window !== 'undefined') {
+  window.addEventListener('error', event => {
     const message = event?.error ? safeStringify(event.error) : event?.message || 'Unknown error';
     logFrontendEvent('error', message);
   });
 
-  window.addEventListener('unhandledrejection', (event) => {
+  window.addEventListener('unhandledrejection', event => {
     const message = safeStringify(event.reason ?? 'Unknown reason');
     logFrontendEvent('error', `Unhandled rejection: ${message}`);
   });
@@ -60,7 +68,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 3,
-      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000),
       staleTime: 5 * 60 * 1000, // 5 minutes
       refetchOnWindowFocus: false,
     },
@@ -80,12 +88,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <App />
-          {(typeof import.meta !== 'undefined' && import.meta.env?.DEV) && <ReactQueryDevtools initialIsOpen={false} />}
+          {typeof import.meta !== 'undefined' && import.meta.env?.DEV && (
+            <ReactQueryDevtools initialIsOpen={false} />
+          )}
         </ThemeProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );
-
-
-

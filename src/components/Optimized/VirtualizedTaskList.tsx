@@ -1,7 +1,7 @@
 /**
  * 🚀 虚拟化任务列表组件
  * 高性能处理大量下载任务的显示
- * 
+ *
  * 优化特性：
  * - 虚拟滚动：只渲染可见项目
  * - 内存高效：动态回收组件
@@ -58,18 +58,22 @@ const TaskItem = React.memo<{
   onSelect: (selected: boolean) => void;
   index: number;
 }>(({ task, style, isSelected, onSelect, index }) => {
-
   const handleSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSelect(e.target.checked);
   };
 
   const statusColor = useMemo(() => {
     switch (task.status) {
-      case 'completed': return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
-      case 'downloading': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
-      case 'failed': return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
-      case 'paused': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
-      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+      case 'completed':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+      case 'downloading':
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'failed':
+        return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+      case 'paused':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
     }
   }, [task.status]);
 
@@ -78,53 +82,78 @@ const TaskItem = React.memo<{
   return (
     <div
       style={style}
-      className={`absolute flex items-center px-4 py-3 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors duration-150 ${isSelected ? 'bg-blue-50 dark:bg-blue-900/10' : ''
-        }`}
+      className={`absolute flex items-center px-4 py-3 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors duration-150 ${
+        isSelected ? 'bg-blue-50 dark:bg-blue-900/10' : ''
+      }`}
+      data-testid='task-item'
+      data-status={task.status}
     >
-      <div className="flex items-center h-full mr-4" onClick={(e) => e.stopPropagation()}>
+      <div className='flex items-center h-full mr-4' onClick={e => e.stopPropagation()}>
         <input
-          type="checkbox"
+          type='checkbox'
           checked={isSelected}
           onChange={handleSelectChange}
-          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+          data-testid='task-checkbox'
+          className='w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600'
         />
       </div>
 
-      <div className="flex-1 min-w-0 pr-4">
-        <div className="flex items-center justify-between mb-1.5">
-          <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate pr-4" title={task.title}>
-            <span className="text-gray-400 dark:text-gray-500 mr-2 font-normal text-xs">#{index + 1}</span>
+      <div className='flex-1 min-w-0 pr-4'>
+        <div className='flex items-center justify-between mb-1.5'>
+          <h4
+            className='text-sm font-medium text-gray-900 dark:text-gray-100 truncate pr-4'
+            title={task.title}
+            data-testid='task-title'
+          >
+            <span className='text-gray-400 dark:text-gray-500 mr-2 font-normal text-xs'>
+              #{index + 1}
+            </span>
             {task.title}
           </h4>
-          <span className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}>
-            {task.status === 'pending' ? '等待中' :
-              task.status === 'downloading' ? '下载中' :
-                task.status === 'completed' ? '已完成' :
-                  task.status === 'failed' ? '失败' :
-                    task.status === 'paused' ? '暂停' : task.status}
+          <span
+            className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}
+            data-testid='task-status'
+          >
+            {task.status === 'pending'
+              ? '等待中'
+              : task.status === 'downloading'
+                ? '下载中'
+                : task.status === 'completed'
+                  ? '已完成'
+                  : task.status === 'failed'
+                    ? '失败'
+                    : task.status === 'paused'
+                      ? '暂停'
+                      : task.status}
           </span>
         </div>
 
-        <div className="flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400">
+        <div className='flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400'>
           {task.status === 'downloading' && (
             <>
-              <span className="w-16">{progressPercentage}%</span>
-              <span className="w-20">{formatSpeed(task.speed)}</span>
+              <span className='w-16'>{progressPercentage}%</span>
+              <span className='w-20'>{formatSpeed(task.speed)}</span>
               <span>剩余: {task.eta ? formatTime(task.eta) : '--'}</span>
             </>
           )}
           {task.status !== 'downloading' && (
-            <span className="truncate text-gray-400">{task.output_path}</span>
+            <span className='truncate text-gray-400'>{task.output_path}</span>
           )}
         </div>
 
         {/* 进度条 */}
-        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1 mt-2 overflow-hidden">
+        <div
+          className='w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1 mt-2 overflow-hidden'
+          data-testid='progress-bar'
+        >
           <div
-            className={`h-full transition-all duration-300 ${task.status === 'failed' ? 'bg-red-500' :
-              task.status === 'completed' ? 'bg-green-500' :
-                'bg-blue-600'
-              }`}
+            className={`h-full transition-all duration-300 ${
+              task.status === 'failed'
+                ? 'bg-red-500'
+                : task.status === 'completed'
+                  ? 'bg-green-500'
+                  : 'bg-blue-600'
+            }`}
             style={{ width: `${progressPercentage}%` }}
           />
         </div>
@@ -140,7 +169,7 @@ TaskItem.displayName = 'TaskItem';
  */
 export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
   overscan = 3,
-  className = ''
+  className = '',
 }) => {
   // 从 Store 获取数据，替代 Props 传递，简化 UnifiedView
   const {
@@ -150,7 +179,7 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     selectedTasks,
     toggleTaskSelection,
     sortBy,
-    sortDirection
+    sortDirection,
   } = useDownloadStore();
 
   // 本地计算过滤列表 (如果 Store 没有直接提供)
@@ -165,7 +194,9 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     // 搜索过滤
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      result = result.filter(t => t.title.toLowerCase().includes(query) || t.url.toLowerCase().includes(query));
+      result = result.filter(
+        t => t.title.toLowerCase().includes(query) || t.url.toLowerCase().includes(query)
+      );
     }
 
     return result;
@@ -253,7 +284,7 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
           index: i,
           task: sortedTasks[i],
           top: i * itemHeight,
-          height: itemHeight
+          height: itemHeight,
         });
       }
     }
@@ -266,23 +297,26 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
 
-  const handleTaskSelect = useCallback((taskId: string, selected: boolean) => {
-    if (selected) {
-      if (!selectedTasks.includes(taskId)) {
-        toggleTaskSelection(taskId); // DownloadStore 里通常是 toggle
+  const handleTaskSelect = useCallback(
+    (taskId: string, selected: boolean) => {
+      if (selected) {
+        if (!selectedTasks.includes(taskId)) {
+          toggleTaskSelection(taskId); // DownloadStore 里通常是 toggle
+        }
+      } else {
+        if (selectedTasks.includes(taskId)) {
+          toggleTaskSelection(taskId);
+        }
       }
-    } else {
-      if (selectedTasks.includes(taskId)) {
-        toggleTaskSelection(taskId);
-      }
-    }
-  }, [selectedTasks, toggleTaskSelection]);
+    },
+    [selectedTasks, toggleTaskSelection]
+  );
 
   return (
-    <div className={`h-full w-full ${className}`}>
+    <div className={`h-full w-full ${className}`} data-testid='task-list'>
       <div
         ref={containerRef}
-        className="h-full w-full overflow-y-auto custom-scrollbar"
+        className='h-full w-full overflow-y-auto custom-scrollbar'
         onScroll={handleScroll}
       >
         <div style={{ height: totalHeight, position: 'relative' }}>
@@ -298,12 +332,12 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
                 right: 0,
               }}
               isSelected={selectedTasks.includes(task.id)}
-              onSelect={(selected) => handleTaskSelect(task.id, selected)}
+              onSelect={selected => handleTaskSelect(task.id, selected)}
             />
           ))}
 
           {sortedTasks.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+            <div className='absolute inset-0 flex items-center justify-center text-gray-400'>
               <p>没有符合条件的任务</p>
             </div>
           )}

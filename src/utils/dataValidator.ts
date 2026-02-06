@@ -1,6 +1,6 @@
 /**
  * 🛡️ 数据验证工具
- * 
+ *
  * 核心功能：
  * - 运行时类型检查和数据验证
  * - 与Zod schemas的无缝集成
@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import {
   VideoTaskSchema,
-  ImportedDataSchema, 
+  ImportedDataSchema,
   ProgressUpdateSchema,
   DownloadConfigSchema,
   AppConfigSchema,
@@ -26,16 +26,16 @@ import {
   safeParse,
   validateArray,
   validateRelatedData,
-  createApiResponseSchema
+  createApiResponseSchema,
 } from '../schemas';
-import type { 
+import type {
   VideoTask,
   ImportedData,
   ProgressUpdate,
   DownloadConfig,
   AppConfig,
   ApiResponse,
-  AppError
+  AppError,
 } from '../schemas';
 import { AppErrorHandler } from './errorHandler';
 
@@ -98,7 +98,7 @@ export class DataValidator {
     context: string,
     errors: ValidationError[],
     originalData: unknown,
-    schemaName: string | undefined,
+    schemaName: string | undefined
   ) {
     console.error(`[验证失败] ${context}`, {
       validationErrors: errors,
@@ -106,11 +106,7 @@ export class DataValidator {
       schemaName,
     });
 
-    AppErrorHandler.handle(
-      `数据验证失败 [${context}]`,
-      new Error(JSON.stringify(errors)),
-      false,
-    );
+    AppErrorHandler.handle(`数据验证失败 [${context}]`, new Error(JSON.stringify(errors)), false);
   }
 
   public validate<T extends z.ZodTypeAny>(
@@ -120,7 +116,7 @@ export class DataValidator {
       sanitize?: boolean;
       strict?: boolean;
       context?: string;
-    } = {},
+    } = {}
   ): ValidationResult<z.infer<T>> {
     const { sanitize = true, strict = false, context = 'unknown' } = options;
 
@@ -166,7 +162,7 @@ export class DataValidator {
       stopOnFirstError?: boolean;
       sanitize?: boolean;
       context?: string;
-    } = {},
+    } = {}
   ): BatchValidationResult<z.infer<T>> {
     const { stopOnFirstError = false, sanitize = true, context = 'batch' } = options;
     const validItems: z.infer<T>[] = [];
@@ -217,7 +213,8 @@ export class DataValidator {
 
       for (const [key, value] of Object.entries(data)) {
         if (value !== undefined) {
-          sanitized[key] = typeof value === 'string' ? value.trim() : this.sanitizeData(value as any);
+          sanitized[key] =
+            typeof value === 'string' ? value.trim() : this.sanitizeData(value as any);
         }
       }
 
@@ -231,8 +228,6 @@ export class DataValidator {
     return data;
   }
 }
-
-
 
 // ====================================================
 // 专用验证函数 - 针对特定数据类型的便捷函数
@@ -255,7 +250,7 @@ export const validateImportedData = (data: unknown): ValidationResult<ImportedDa
 };
 
 /**
- * 验证进度更新数据  
+ * 验证进度更新数据
  */
 export const validateProgressUpdate = (data: unknown): ValidationResult<ProgressUpdate> => {
   return validator.validate(ProgressUpdateSchema, data, { context: 'ProgressUpdate' });
@@ -305,7 +300,9 @@ export const validateUpdateTaskRequest = (data: unknown) => {
  * 验证批量操作请求
  */
 export const validateBatchOperationRequest = (data: unknown) => {
-  return validator.validate(BatchOperationRequestSchema, data, { context: 'BatchOperationRequest' });
+  return validator.validate(BatchOperationRequestSchema, data, {
+    context: 'BatchOperationRequest',
+  });
 };
 
 // ====================================================
@@ -321,7 +318,7 @@ export const validateVideoTaskList = (
 ): BatchValidationResult<VideoTask> => {
   return validator.validateBatch(VideoTaskSchema, tasks, {
     ...options,
-    context: 'VideoTaskList'
+    context: 'VideoTaskList',
   });
 };
 
@@ -334,7 +331,7 @@ export const validateImportDataList = (
 ): BatchValidationResult<ImportedData> => {
   return validator.validateBatch(ImportedDataSchema, data, {
     ...options,
-    context: 'ImportDataList'
+    context: 'ImportDataList',
   });
 };
 
@@ -346,22 +343,33 @@ export const validateImportDataList = (
  * 标准化导入数据 - 将旧格式转换为新格式
  */
 export const normalizeImportedData = (data: any): ImportedData => {
+  const normalizeString = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
   const normalized: ImportedData = {};
-  
+
   // 优先使用新格式，回退到旧格式
-  normalized.zl_id = data.zl_id || data.id;
-  normalized.zl_name = data.zl_name || data.name;
-  normalized.record_url = data.record_url || data.url;
-  normalized.kc_id = data.kc_id || data.course_id;
-  normalized.kc_name = data.kc_name || data.course_name;
-  
+  normalized.zl_id = normalizeString(data.zl_id) || normalizeString(data.id);
+  normalized.zl_name = normalizeString(data.zl_name) || normalizeString(data.name);
+  normalized.record_url = normalizeString(data.record_url) || normalizeString(data.url);
+  normalized.kc_id = normalizeString(data.kc_id) || normalizeString(data.course_id);
+  normalized.kc_name = normalizeString(data.kc_name) || normalizeString(data.course_name);
+
   // 保留原始字段以支持向后兼容
-  if (data.id && !normalized.zl_id) normalized.id = data.id;
-  if (data.name && !normalized.zl_name) normalized.name = data.name;
-  if (data.url && !normalized.record_url) normalized.url = data.url;
-  if (data.course_id && !normalized.kc_id) normalized.course_id = data.course_id;
-  if (data.course_name && !normalized.kc_name) normalized.course_name = data.course_name;
-  
+  if (normalizeString(data.id) && !normalized.zl_id) normalized.id = normalizeString(data.id);
+  if (normalizeString(data.name) && !normalized.zl_name)
+    normalized.name = normalizeString(data.name);
+  if (normalizeString(data.url) && !normalized.record_url)
+    normalized.url = normalizeString(data.url);
+  if (normalizeString(data.course_id) && !normalized.kc_id) {
+    normalized.course_id = normalizeString(data.course_id);
+  }
+  if (normalizeString(data.course_name) && !normalized.kc_name) {
+    normalized.course_name = normalizeString(data.course_name);
+  }
+
   return normalized;
 };
 
@@ -369,6 +377,9 @@ export const normalizeImportedData = (data: any): ImportedData => {
  * 创建任务数据标准化
  */
 export const normalizeTaskData = (data: any): Partial<VideoTask> => {
+  const normalizedVideoInfo = data.video_info ? normalizeImportedData(data.video_info) : undefined;
+  const hasVideoInfo =
+    normalizedVideoInfo && Object.values(normalizedVideoInfo).some(value => value !== undefined);
   return {
     id: data.id || generateTaskId(),
     url: data.url?.trim(),
@@ -380,7 +391,7 @@ export const normalizeTaskData = (data: any): Partial<VideoTask> => {
     speed: Number(data.speed) || 0,
     created_at: data.created_at || new Date().toISOString(),
     updated_at: data.updated_at || new Date().toISOString(),
-    video_info: data.video_info ? normalizeImportedData(data.video_info) : undefined
+    video_info: hasVideoInfo ? normalizedVideoInfo : undefined,
   };
 };
 
@@ -413,7 +424,9 @@ const extractTitleFromUrl = (url: string): string => {
 /**
  * 数据完整性检查
  */
-export const checkDataIntegrity = (data: VideoTask[]): {
+export const checkDataIntegrity = (
+  data: VideoTask[]
+): {
   duplicates: string[];
   orphaned: string[];
   corrupted: string[];
@@ -422,7 +435,7 @@ export const checkDataIntegrity = (data: VideoTask[]): {
   const orphaned: string[] = [];
   const corrupted: string[] = [];
   const seenIds = new Set<string>();
-  
+
   data.forEach(task => {
     // 检查重复ID
     if (seenIds.has(task.id)) {
@@ -430,18 +443,18 @@ export const checkDataIntegrity = (data: VideoTask[]): {
     } else {
       seenIds.add(task.id);
     }
-    
+
     // 检查数据完整性
     if (!task.url || !task.title) {
       corrupted.push(task.id);
     }
-    
+
     // 检查孤立任务 (可以根据业务逻辑扩展)
     if (task.status === 'downloading' && !task.speed) {
       orphaned.push(task.id);
     }
   });
-  
+
   return { duplicates, orphaned, corrupted };
 };
 
@@ -453,7 +466,7 @@ export const createValidationStats = () => {
   let successfulValidations = 0;
   let failedValidations = 0;
   let totalValidationTime = 0;
-  
+
   return {
     recordValidation: (success: boolean, duration: number) => {
       totalValidations++;
@@ -464,21 +477,21 @@ export const createValidationStats = () => {
       }
       totalValidationTime += duration;
     },
-    
+
     getStats: () => ({
       total: totalValidations,
       successful: successfulValidations,
       failed: failedValidations,
       successRate: totalValidations > 0 ? successfulValidations / totalValidations : 0,
-      averageDuration: totalValidations > 0 ? totalValidationTime / totalValidations : 0
+      averageDuration: totalValidations > 0 ? totalValidationTime / totalValidations : 0,
     }),
-    
+
     reset: () => {
       totalValidations = 0;
       successfulValidations = 0;
       failedValidations = 0;
       totalValidationTime = 0;
-    }
+    },
   };
 };
 
@@ -499,5 +512,5 @@ export default {
   normalizeImportedData,
   normalizeTaskData,
   checkDataIntegrity,
-  createValidationStats
+  createValidationStats,
 };

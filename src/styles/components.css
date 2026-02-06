@@ -7,10 +7,10 @@
 }
 
 @keyframes loading-spin {
-  0% { 
+  0% {
     transform: rotate(0deg);
   }
-  100% { 
+  100% {
     transform: rotate(360deg);
   }
 }
@@ -21,7 +21,8 @@
 }
 
 @keyframes pulse-soft {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
@@ -32,20 +33,11 @@
 /* Progress Bar Animations */
 .progress-bar {
   transition: width 0.3s ease-in-out;
-  background: linear-gradient(
-    90deg,
-    currentColor 0%,
-    currentColor 100%
-  );
+  background: linear-gradient(90deg, currentColor 0%, currentColor 100%);
 }
 
 .progress-bar-animated {
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    currentColor 50%,
-    transparent 100%
-  );
+  background: linear-gradient(90deg, transparent 0%, currentColor 50%, transparent 100%);
   background-size: 200% 100%;
   animation: progress-shimmer 1.5s ease-in-out infinite;
 }
@@ -61,12 +53,16 @@
 
 /* Smooth Hover Transitions */
 .hover-lift {
-  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  transition:
+    transform 0.2s ease-in-out,
+    box-shadow 0.2s ease-in-out;
 }
 
 .hover-lift:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  box-shadow:
+    0 10px 25px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
 /* Custom Scrollbar */
@@ -118,7 +114,8 @@
 }
 
 @keyframes badge-pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
@@ -197,12 +194,7 @@
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.2),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
   transition: left 0.5s ease-in-out;
 }
 

@@ -7,12 +7,14 @@
 **位置**: `downloadStore.ts` 第 1623-1658 行
 
 **问题描述**:
+
 - 事件监听器直接使用后端返回的状态值，未通过 `fromBackendStatus()` 映射
 - 后端返回 `"Downloading"`, `"Paused"` (首字母大写)
 - 前端期望 `"downloading"`, `"paused"` (全小写)
 - 导致 UI 无法正确识别任务状态
 
 **当前错误代码**:
+
 ```typescript
 const { task_id, status, error_message } = payload;
 useDownloadStore.setState(state => ({
@@ -20,7 +22,7 @@ useDownloadStore.setState(state => ({
     if (task.id === task_id) {
       return {
         ...task,
-        status,  // ❌ 直接使用，未映射！
+        status, // ❌ 直接使用，未映射！
         error_message,
         updated_at: new Date().toISOString(),
       };
@@ -31,16 +33,17 @@ useDownloadStore.setState(state => ({
 ```
 
 **应该改为**:
+
 ```typescript
 const { task_id, status: rawStatus, error_message } = payload;
-const status = fromBackendStatus(rawStatus);  // ✅ 使用映射函数
+const status = fromBackendStatus(rawStatus); // ✅ 使用映射函数
 
 useDownloadStore.setState(state => ({
   tasks: state.tasks.map(task => {
     if (task.id === task_id) {
       return {
         ...task,
-        status,  // ✅ 现在是映射后的小写状态
+        status, // ✅ 现在是映射后的小写状态
         error_message,
         updated_at: new Date().toISOString(),
       };
@@ -57,16 +60,19 @@ useDownloadStore.setState(state => ({
 **位置**: `downloadStore.ts` 第 753-779 行
 
 **问题描述**:
+
 - 没有对待下载任务进行优先级排序
 - 应该优先下载有进度的任务（paused > failed > pending）
 - fix3_task_priority.ts 中有正确实现，但未应用到主代码
 
 **当前代码**:
+
 ```typescript
 get().enqueueDownloads(pendingTasks.map(task => task.id));
 ```
 
 **应该改为**:
+
 ```typescript
 // 按进度排序,优先继续已有进度的任务
 const sortedPendingTasks = [...pendingTasks].sort((a, b) => {
@@ -77,7 +83,7 @@ const sortedPendingTasks = [...pendingTasks].sort((a, b) => {
     pending: 2,
     downloading: 3,
     completed: 4,
-    cancelled: 5
+    cancelled: 5,
   };
   const statusDiff = statusPriority[a.status] - statusPriority[b.status];
   if (statusDiff !== 0) return statusDiff;
@@ -96,11 +102,13 @@ get().enqueueDownloads(sortedPendingTasks.map(task => task.id));
 **位置**: `downloadStore.ts` 第 824-869 行
 
 **问题描述**:
+
 - 当任务启动返回 `'queued'` 时，函数直接 return
 - 导致队列中后续任务无法处理
 - 应该继续尝试下一个任务
 
 **当前代码**:
+
 ```typescript
 for (const taskId of toStart) {
   const result = await get().startDownload(taskId, {
@@ -113,12 +121,13 @@ for (const taskId of toStart) {
         ? current.pendingStartQueue
         : [taskId, ...current.pendingStartQueue],
     }));
-    return;  // ❌ 提前退出，后续任务未处理
+    return; // ❌ 提前退出，后续任务未处理
   }
 }
 ```
 
 **建议修改**:
+
 ```typescript
 for (const taskId of toStart) {
   try {
@@ -133,7 +142,7 @@ for (const taskId of toStart) {
           ? current.pendingStartQueue
           : [taskId, ...current.pendingStartQueue],
       }));
-      break;  // ✅ 跳出循环，但不退出函数
+      break; // ✅ 跳出循环，但不退出函数
     }
   } catch (error) {
     console.error(`启动任务 ${taskId} 失败:`, error);
@@ -148,10 +157,8 @@ for (const taskId of toStart) {
 
 1. **最高优先级**: 问题 1 (task_status_changed 状态映射)
    - 这是导致进度显示、下载控制等核心功能失效的根本原因
-   
 2. **高优先级**: 问题 2 (任务优先级排序)
    - 影响用户体验，暂停的任务应优先恢复
-   
 3. **中等优先级**: 问题 3 (队列处理逻辑)
    - 可能影响并发下载的正确性
 

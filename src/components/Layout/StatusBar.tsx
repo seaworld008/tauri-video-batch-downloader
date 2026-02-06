@@ -9,47 +9,46 @@ export const StatusBar: React.FC = () => {
   const pausedCount = tasks.filter(t => t.status === 'paused').length;
 
   return (
-    <div className="h-8 bg-gray-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-4 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+    <div className='h-8 bg-gray-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-4 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400'>
       {/* 左侧：下载状态 */}
-      <div className="flex items-center space-x-6">
-        <div className="flex items-center space-x-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+      <div className='flex items-center space-x-6'>
+        <div className='flex items-center space-x-2'>
+          <div className='w-2 h-2 rounded-full bg-green-500 animate-pulse'></div>
           <span>运行</span>
         </div>
 
         {stats.active_downloads > 0 && (
-          <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+          <div className='flex items-center space-x-2'>
+            <div className='w-2 h-2 rounded-full bg-blue-500 animate-pulse'></div>
             <span>{stats.active_downloads} 个任务正在下载</span>
           </div>
         )}
 
         {pausedCount > 0 && (
-          <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+          <div className='flex items-center space-x-2'>
+            <div className='w-2 h-2 rounded-full bg-orange-500'></div>
             <span>{pausedCount} 个任务已暂停</span>
           </div>
         )}
 
-        {stats.average_speed > 0 && (
-          <div>平均速度: {formatSpeed(stats.average_speed)}</div>
-        )}
+        {stats.average_speed > 0 && <div>平均速度: {formatSpeed(stats.average_speed)}</div>}
       </div>
 
       {/* 右侧：系统信息 */}
-      <div className="flex items-center space-x-6">
+      <div className='flex items-center space-x-6'>
         {systemInfo ? (
           <>
             <div>CPU: {systemInfo.cpu_usage.toFixed(1)}%</div>
             <div>内存: {systemInfo.memory_usage.toFixed(1)}%</div>
             {systemInfo.network_speed.download > 0 && (
               <div>
-                下载: ↓{formatSpeed(systemInfo.network_speed.download)} ↑{formatSpeed(systemInfo.network_speed.upload)}
+                下载: ↓{formatSpeed(systemInfo.network_speed.download)} ↑
+                {formatSpeed(systemInfo.network_speed.upload)}
               </div>
             )}
           </>
         ) : (
-          <span className="text-gray-400">
+          <span className='text-gray-400'>
             {isLoading ? '系统信息加载中...' : '系统信息不可用'}
           </span>
         )}
@@ -69,4 +68,3 @@ function formatSpeed(bytesPerSecond: number): string {
 
   return `${parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
-

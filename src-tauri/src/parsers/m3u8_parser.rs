@@ -30,8 +30,8 @@ pub fn parse_m3u8_content(content: &str, base_url: Option<&str>) -> Result<M3u8P
     for line in lines {
         let line = line.trim();
 
-        if line.starts_with("#EXT-X-TARGETDURATION:") {
-            if let Ok(duration) = line["#EXT-X-TARGETDURATION:".len()..].parse::<f64>() {
+        if let Some(stripped) = line.strip_prefix("#EXT-X-TARGETDURATION:") {
+            if let Ok(duration) = stripped.parse::<f64>() {
                 target_duration = Some(duration);
             }
         } else if line.starts_with("#EXTINF:") {
@@ -42,8 +42,7 @@ pub fn parse_m3u8_content(content: &str, base_url: Option<&str>) -> Result<M3u8P
                     }
                 }
             }
-        } else if line.starts_with("#EXT-X-PLAYLIST-TYPE:") {
-            let playlist_type = &line["#EXT-X-PLAYLIST-TYPE:".len()..];
+        } else if let Some(playlist_type) = line.strip_prefix("#EXT-X-PLAYLIST-TYPE:") {
             is_live = playlist_type != "VOD";
         } else if !line.starts_with('#') && !line.is_empty() {
             // This is a segment URL

@@ -509,14 +509,14 @@ impl IntegrityChecker {
         algorithm: HashAlgorithm,
         _file_size: u64,
     ) -> AppResult<String> {
-        let file = File::open(file_path).map_err(|e| AppError::Io(e))?;
+        let file = File::open(file_path).map_err(AppError::Io)?;
 
         let mut reader = BufReader::with_capacity(self.config.buffer_size, file);
         let mut hasher = algorithm.create_hasher();
         let mut buffer = vec![0u8; self.config.buffer_size];
 
         loop {
-            let bytes_read = reader.read(&mut buffer).map_err(|e| AppError::Io(e))?;
+            let bytes_read = reader.read(&mut buffer).map_err(AppError::Io)?;
 
             if bytes_read == 0 {
                 break;
@@ -536,7 +536,7 @@ impl IntegrityChecker {
         algorithm: HashAlgorithm,
         file_size: u64,
     ) -> AppResult<String> {
-        let file = File::open(file_path).map_err(|e| AppError::Io(e))?;
+        let file = File::open(file_path).map_err(AppError::Io)?;
 
         let mut reader = BufReader::with_capacity(self.config.buffer_size, file);
         let mut hasher = algorithm.create_hasher();
@@ -546,7 +546,7 @@ impl IntegrityChecker {
         let mut last_progress_time = start_time;
 
         loop {
-            let bytes_read = reader.read(&mut buffer).map_err(|e| AppError::Io(e))?;
+            let bytes_read = reader.read(&mut buffer).map_err(AppError::Io)?;
 
             if bytes_read == 0 {
                 break;
@@ -637,6 +637,12 @@ impl IntegrityChecker {
     /// Get number of active checks
     pub async fn active_check_count(&self) -> usize {
         self.active_checks.read().await.len()
+    }
+}
+
+impl Default for IntegrityChecker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

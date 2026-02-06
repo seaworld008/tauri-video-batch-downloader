@@ -21,6 +21,8 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+type NetworkBaseline = Arc<RwLock<Option<(u64, u64, Instant)>>>;
+
 use crate::core::error_handling::{ErrorCategory, RetryStats};
 use crate::core::models::AppResult;
 use crate::core::progress_tracker::{EnhancedProgressStats, GlobalProgressStats};
@@ -662,7 +664,7 @@ impl MonitoringSystem {
     /// Collect system metrics
     async fn collect_system_metrics(
         system_info: &Arc<Mutex<System>>,
-        network_baseline: &Arc<RwLock<Option<(u64, u64, Instant)>>>,
+        network_baseline: &NetworkBaseline,
     ) -> AppResult<SystemMetrics> {
         let mut sys = system_info.lock().await;
         sys.refresh_all();
@@ -948,7 +950,7 @@ impl MonitoringSystem {
     ) -> HealthStatus {
         // Calculate component health scores
         let cpu_health = Self::calculate_component_health(
-            system_metrics.cpu_usage as f32,
+            system_metrics.cpu_usage,
             80.0,
             95.0,
             "CPU usage",

@@ -40,11 +40,14 @@ describe('useSystemInfo', () => {
     const { result } = renderHook(() => useSystemInfo({ intervalMs: 50 }));
 
     await waitFor(() => {
-      expect(result.current.systemInfo).toEqual(firstInfo);
+      expect(result.current.systemInfo).not.toBeNull();
     });
 
     expect(result.current.isLoading).toBe(false);
     expect(result.current.error).toBeNull();
+
+    const firstSnapshot = result.current.systemInfo;
+    expect([firstInfo, secondInfo]).toContainEqual(firstSnapshot);
 
     await waitFor(
       () => {

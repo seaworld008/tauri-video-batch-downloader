@@ -8,13 +8,13 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { renderHook, act } from '@testing-library/react';
 import React from 'react';
 import i18n from '../../i18n';
-import { 
-  useI18n, 
-  useLanguage, 
-  useFormattedTranslation, 
+import {
+  useI18n,
+  useLanguage,
+  useFormattedTranslation,
   useSafeTranslation,
   useNumberFormat,
-  useDateFormat
+  useDateFormat,
 } from '../../i18n/hooks';
 import { LanguageSelector } from '../../components/Common/LanguageSelector';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n';
@@ -26,13 +26,13 @@ const mockLocalStorage = {
   clear: vi.fn(),
 };
 Object.defineProperty(window, 'localStorage', {
-  value: mockLocalStorage
+  value: mockLocalStorage,
 });
 
 // Mock window.dispatchEvent
 const mockDispatchEvent = vi.fn();
 Object.defineProperty(window, 'dispatchEvent', {
-  value: mockDispatchEvent
+  value: mockDispatchEvent,
 });
 
 // Test wrapper component
@@ -69,7 +69,7 @@ describe('i18n System', () => {
   describe('Translation Keys', () => {
     it('should translate common keys in English', () => {
       i18n.changeLanguage('en');
-      
+
       expect(tAny('common.loading' as any)).toBe('Loading...');
       expect(tAny('common.error' as any)).toBe('Error');
       expect(tAny('common.success' as any)).toBe('Success');
@@ -78,7 +78,7 @@ describe('i18n System', () => {
 
     it('should translate common keys in Chinese', async () => {
       await i18n.changeLanguage('zh');
-      
+
       expect(tAny('common.loading' as any)).toBe('加载中...');
       expect(tAny('common.error' as any)).toBe('错误');
       expect(tAny('common.success' as any)).toBe('成功');
@@ -104,7 +104,7 @@ describe('i18n System', () => {
   describe('useI18n Hook', () => {
     it('should provide translation function and language info', () => {
       const { result } = renderHook(() => useI18n(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.t).toBeInstanceOf(Function);
@@ -114,7 +114,7 @@ describe('i18n System', () => {
 
     it('should translate keys with type safety', () => {
       const { result } = renderHook(() => useI18n(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const translation = result.current.t('common.loading' as any);
@@ -123,7 +123,7 @@ describe('i18n System', () => {
 
     it('should handle interpolation parameters', () => {
       const { result } = renderHook(() => useI18n(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const translation = result.current.t('formats.percentage', { value: 50 });
@@ -134,7 +134,7 @@ describe('i18n System', () => {
   describe('useLanguage Hook', () => {
     it('should provide current language and available languages', () => {
       const { result } = renderHook(() => useLanguage(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.currentLanguage).toBe('en');
@@ -145,7 +145,7 @@ describe('i18n System', () => {
 
     it('should change language and update state', async () => {
       const { result } = renderHook(() => useLanguage(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       await act(async () => {
@@ -158,7 +158,7 @@ describe('i18n System', () => {
 
     it('should dispatch language change event', async () => {
       const { result } = renderHook(() => useLanguage(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       await act(async () => {
@@ -170,15 +170,15 @@ describe('i18n System', () => {
           type: 'languageChanged',
           detail: {
             language: 'zh',
-            previousLanguage: 'en'
-          }
+            previousLanguage: 'en',
+          },
         })
       );
     });
 
     it('should validate supported languages', () => {
       const { result } = renderHook(() => useLanguage(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.isSupported('en')).toBe(true);
@@ -190,7 +190,7 @@ describe('i18n System', () => {
   describe('useFormattedTranslation Hook', () => {
     it('should format bytes correctly', () => {
       const { result } = renderHook(() => useFormattedTranslation(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.formatBytes(0)).toBe('0 B');
@@ -201,7 +201,7 @@ describe('i18n System', () => {
 
     it('should format speed correctly', () => {
       const { result } = renderHook(() => useFormattedTranslation(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.formatSpeed(1024)).toBe('1.0 KB/s');
@@ -210,7 +210,7 @@ describe('i18n System', () => {
 
     it('should format time remaining correctly', () => {
       const { result } = renderHook(() => useFormattedTranslation(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.formatTimeRemaining(30)).toBe('30s remaining');
@@ -220,7 +220,7 @@ describe('i18n System', () => {
 
     it('should format percentage correctly', () => {
       const { result } = renderHook(() => useFormattedTranslation(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.formatPercentage(75.555)).toBe('75.6%');
@@ -231,7 +231,7 @@ describe('i18n System', () => {
   describe('useSafeTranslation Hook', () => {
     it('should provide safe translation with fallback', () => {
       const { result } = renderHook(() => useSafeTranslation('Default fallback'), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.t('common.loading' as any)).toBe('Loading...');
@@ -239,7 +239,7 @@ describe('i18n System', () => {
 
     it('should return fallback for invalid keys', () => {
       const { result } = renderHook(() => useSafeTranslation('Default fallback'), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.t('invalid.key' as any)).toBe('Default fallback');
@@ -249,7 +249,7 @@ describe('i18n System', () => {
   describe('useNumberFormat Hook', () => {
     it('should format numbers according to locale', () => {
       const { result } = renderHook(() => useNumberFormat(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const formatted = result.current.formatNumber(1234567.89);
@@ -258,7 +258,7 @@ describe('i18n System', () => {
 
     it('should format currency', () => {
       const { result } = renderHook(() => useNumberFormat(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const formatted = result.current.formatCurrency(99.99);
@@ -267,7 +267,7 @@ describe('i18n System', () => {
 
     it('should format percentages', () => {
       const { result } = renderHook(() => useNumberFormat(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       expect(result.current.formatPercent(75.5)).toMatch(/75\.5\s*%/);
@@ -279,7 +279,7 @@ describe('i18n System', () => {
 
     it('should format dates according to locale', () => {
       const { result } = renderHook(() => useDateFormat(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const formatted = result.current.formatDate(testDate);
@@ -289,7 +289,7 @@ describe('i18n System', () => {
 
     it('should format time', () => {
       const { result } = renderHook(() => useDateFormat(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const formatted = result.current.formatTime(testDate);
@@ -298,7 +298,7 @@ describe('i18n System', () => {
 
     it('should format date and time together', () => {
       const { result } = renderHook(() => useDateFormat(), {
-        wrapper: TestWrapper
+        wrapper: TestWrapper,
       });
 
       const formatted = result.current.formatDateTime(testDate);
@@ -316,14 +316,14 @@ describe('LanguageSelector Component', () => {
 
   it('should render with default props', () => {
     render(<LanguageSelector />);
-    
+
     expect(screen.getByText('English')).toBeInTheDocument();
     expect(screen.getByRole('button')).toBeInTheDocument();
   });
 
   it('should show current language flag and name', () => {
     render(<LanguageSelector showName={true} />);
-    
+
     const button = screen.getByRole('button');
     expect(button).toHaveTextContent('🇺🇸');
     expect(button).toHaveTextContent('English');
@@ -331,7 +331,7 @@ describe('LanguageSelector Component', () => {
 
   it('should open dropdown when clicked', async () => {
     render(<LanguageSelector />);
-    
+
     const button = screen.getByRole('button');
     fireEvent.click(button);
 
@@ -346,13 +346,13 @@ describe('LanguageSelector Component', () => {
       return (
         <div>
           <LanguageSelector />
-          <span data-testid="current-lang">{currentLanguage}</span>
+          <span data-testid='current-lang'>{currentLanguage}</span>
         </div>
       );
     };
 
     render(<TestComponent />);
-    
+
     // Open dropdown
     const button = screen.getByRole('button');
     fireEvent.click(button);
@@ -371,14 +371,14 @@ describe('LanguageSelector Component', () => {
 
   it('should be disabled when prop is set', () => {
     render(<LanguageSelector disabled={true} />);
-    
+
     const button = screen.getByRole('button');
     expect(button).toBeDisabled();
   });
 
   it('should show loading state', () => {
     render(<LanguageSelector showLoading={true} />);
-    
+
     // Note: This would need to be tested with a mock that triggers the loading state
     // For now, just check that the component renders without error
     expect(screen.getByRole('button')).toBeInTheDocument();
@@ -388,7 +388,7 @@ describe('LanguageSelector Component', () => {
 describe('Integration Tests', () => {
   it('should persist language preference to localStorage', async () => {
     const { result } = renderHook(() => useLanguage(), {
-      wrapper: TestWrapper
+      wrapper: TestWrapper,
     });
 
     await act(async () => {
@@ -401,32 +401,35 @@ describe('Integration Tests', () => {
   it('should update translations when language changes', async () => {
     // Ensure we start with English
     await i18n.changeLanguage('en');
-    
+
     const TestComponent = () => {
       const { t } = useI18n();
       const { changeLanguage } = useLanguage();
-      
+
       return (
         <div>
-          <span data-testid="translation">{t('common.loading' as any)}</span>
+          <span data-testid='translation'>{t('common.loading' as any)}</span>
           <button onClick={async () => await changeLanguage('zh')}>Change to Chinese</button>
         </div>
       );
     };
 
     render(<TestComponent />);
-    
+
     // Wait for initial render
     await waitFor(() => {
       expect(screen.getByTestId('translation')).toHaveTextContent('Loading...');
     });
-    
+
     // Change to Chinese
     fireEvent.click(screen.getByText('Change to Chinese'));
-    
+
     // Check updated Chinese translation
-    await waitFor(() => {
-      expect(screen.getByTestId('translation')).toHaveTextContent('加载中...');
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('translation')).toHaveTextContent('加载中...');
+      },
+      { timeout: 3000 }
+    );
   });
 });

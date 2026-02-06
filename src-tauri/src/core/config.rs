@@ -479,7 +479,7 @@ impl AppConfig {
             }
 
             if let Some(max_memory) = system.max_memory_usage_mb {
-                if max_memory < 512 || max_memory > 32768 {
+                if !(512..=32768).contains(&max_memory) {
                     anyhow::bail!("Max memory usage should be between 512MB and 32GB");
                 }
             }

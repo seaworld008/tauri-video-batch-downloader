@@ -46,38 +46,41 @@ export const useImportGuide = () => {
   }, [clearAutoHideTimer, hideGuideState]);
 
   // 触发导入成功引导 - 改进版本
-  const triggerImportGuide = useCallback((taskCount: number, selectedCount: number = 0) => {
-    clearAutoHideTimer();
-
-    const newState: ImportGuideState = {
-      showGuide: true,
-      taskCount,
-      selectedCount: selectedCount || taskCount,
-      timestamp: Date.now(),
-    };
-
-    console.log('🎯 触发导入引导:', newState);
-
-    // 同步更新状态
-    setGuideState(newState);
-
-    // 异步保存到 localStorage，避免阻塞UI更新
-    window.setTimeout(() => {
-      try {
-        localStorage.setItem(GUIDE_STORAGE_KEY, JSON.stringify(newState));
-        console.log('💾 引导状态已保存到localStorage');
-      } catch (error) {
-        console.warn('Failed to save import guide state:', error);
-      }
-    }, 0);
-
-    // 延长自动隐藏时间，确保用户能看到引导
-    autoHideTimerRef.current = window.setTimeout(() => {
-      console.log('⏰ 自动隐藏导入引导');
-      hideGuideState();
+  const triggerImportGuide = useCallback(
+    (taskCount: number, selectedCount: number = 0) => {
       clearAutoHideTimer();
-    }, GUIDE_TIMEOUT);
-  }, [clearAutoHideTimer, hideGuideState]);
+
+      const newState: ImportGuideState = {
+        showGuide: true,
+        taskCount,
+        selectedCount: selectedCount || taskCount,
+        timestamp: Date.now(),
+      };
+
+      console.log('🎯 触发导入引导:', newState);
+
+      // 同步更新状态
+      setGuideState(newState);
+
+      // 异步保存到 localStorage，避免阻塞UI更新
+      window.setTimeout(() => {
+        try {
+          localStorage.setItem(GUIDE_STORAGE_KEY, JSON.stringify(newState));
+          console.log('💾 引导状态已保存到localStorage');
+        } catch (error) {
+          console.warn('Failed to save import guide state:', error);
+        }
+      }, 0);
+
+      // 延长自动隐藏时间，确保用户能看到引导
+      autoHideTimerRef.current = window.setTimeout(() => {
+        console.log('⏰ 自动隐藏导入引导');
+        hideGuideState();
+        clearAutoHideTimer();
+      }, GUIDE_TIMEOUT);
+    },
+    [clearAutoHideTimer, hideGuideState]
+  );
 
   // 检查是否应该显示引导（页面刷新后恢复状态）- 改进版本
   const checkAndRestoreGuide = useCallback(() => {

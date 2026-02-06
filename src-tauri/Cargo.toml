@@ -53,6 +53,7 @@ log = "0.4"
 env_logger = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # 文件处理
 csv = "1.3"
@@ -103,6 +104,7 @@ path = "src/main.rs"
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 integration-tests = []
+local-logging = []
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "libloaderapi", "combaseapi"] }

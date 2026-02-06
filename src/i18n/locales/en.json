@@ -62,6 +62,9 @@
   },
   "downloads": {
     "title": "Download Tasks",
+    "preview": {
+      "taskCount": "{{count}} tasks to import"
+    },
     "stats": {
       "totalTasks": "Total Tasks",
       "activeTasks": "Active",
@@ -115,6 +118,9 @@
       "placeholder": "Search tasks by title, URL or path..."
     },
     "empty": {
+      "title": "No Download Tasks",
+      "description": "Click 'Import Tasks' in the sidebar to start batch adding download tasks",
+      "action": "Import Tasks",
       "noTasks": "No Download Tasks",
       "noTasksDescription": "Click 'Import Tasks' in the sidebar to start batch adding download tasks",
       "noMatches": "No Matching Tasks",

@@ -1,9 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   darkMode: 'class',
   theme: {
     extend: {
@@ -100,11 +97,11 @@ export default {
         ],
       },
       spacing: {
-        '18': '4.5rem',
-        '88': '22rem',
-        '100': '25rem',
-        '112': '28rem',
-        '128': '32rem',
+        18: '4.5rem',
+        88: '22rem',
+        100: '25rem',
+        112: '28rem',
+        128: '32rem',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-in-out',
@@ -151,19 +148,19 @@ export default {
       },
       boxShadow: {
         'inner-lg': 'inset 0 4px 8px 0 rgba(0, 0, 0, 0.1)',
-        'glow': '0 0 20px rgba(59, 130, 246, 0.5)',
+        glow: '0 0 20px rgba(59, 130, 246, 0.5)',
         'glow-sm': '0 0 10px rgba(59, 130, 246, 0.3)',
       },
       screens: {
-        'xs': '475px',
+        xs: '475px',
         '3xl': '1600px',
       },
       zIndex: {
-        '60': '60',
-        '70': '70',
-        '80': '80',
-        '90': '90',
-        '100': '100',
+        60: '60',
+        70: '70',
+        80: '80',
+        90: '90',
+        100: '100',
       },
     },
   },
@@ -172,7 +169,7 @@ export default {
     require('@tailwindcss/typography'),
     require('@tailwindcss/aspect-ratio'),
     // 自定义插件：实用工具类
-    function({ addUtilities, theme }) {
+    function ({ addUtilities, theme }) {
       const newUtilities = {
         '.scrollbar-hide': {
           /* IE and Edge */
@@ -181,8 +178,8 @@ export default {
           'scrollbar-width': 'none',
           /* Safari and Chrome */
           '&::-webkit-scrollbar': {
-            display: 'none'
-          }
+            display: 'none',
+          },
         },
         '.scrollbar-default': {
           /* IE and Edge */
@@ -191,28 +188,28 @@ export default {
           'scrollbar-width': 'auto',
           /* Safari and Chrome */
           '&::-webkit-scrollbar': {
-            display: 'block'
-          }
+            display: 'block',
+          },
         },
         '.text-gradient': {
-          'background': 'linear-gradient(45deg, #3b82f6, #8b5cf6)',
+          background: 'linear-gradient(45deg, #3b82f6, #8b5cf6)',
           '-webkit-background-clip': 'text',
           '-webkit-text-fill-color': 'transparent',
           'background-clip': 'text',
         },
         '.glassmorphism': {
-          'background': 'rgba(255, 255, 255, 0.1)',
+          background: 'rgba(255, 255, 255, 0.1)',
           'backdrop-filter': 'blur(10px)',
-          'border': '1px solid rgba(255, 255, 255, 0.2)',
+          border: '1px solid rgba(255, 255, 255, 0.2)',
         },
         '.dark-glassmorphism': {
-          'background': 'rgba(0, 0, 0, 0.1)',
+          background: 'rgba(0, 0, 0, 0.1)',
           'backdrop-filter': 'blur(10px)',
-          'border': '1px solid rgba(255, 255, 255, 0.1)',
-        }
-      }
-      
-      addUtilities(newUtilities)
-    }
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+        },
+      };
+
+      addUtilities(newUtilities);
+    },
   ],
-}
+};

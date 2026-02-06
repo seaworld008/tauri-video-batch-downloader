@@ -7,6 +7,7 @@ export const DEFAULT_DOWNLOAD_STATS: DownloadStats = {
   total_downloaded: 0,
   average_speed: 0,
   active_downloads: 0,
+  queue_paused: false,
 };
 
 export const createDefaultDownloadStats = (): DownloadStats => ({
@@ -57,5 +58,6 @@ export const calculateStatsFromTasks = (tasks: VideoTask[]): DownloadStats => {
     active_downloads: active,
     total_downloaded: totalDownloaded,
     average_speed: active > 0 ? speedSum / active : 0,
+    queue_paused: false,
   };
 };

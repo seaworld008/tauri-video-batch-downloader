@@ -38,30 +38,33 @@ export const useLanguage = () => {
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>(initialLanguage);
   const [isChanging, setIsChanging] = useState(false);
 
-  const changeLanguage = React.useCallback(async (language: SupportedLanguage) => {
-    if (language === currentLanguage) return;
+  const changeLanguage = React.useCallback(
+    async (language: SupportedLanguage) => {
+      if (language === currentLanguage) return;
 
-    setIsChanging(true);
-    try {
-      await i18n.changeLanguage(language);
-      setCurrentLanguage(language);
+      setIsChanging(true);
+      try {
+        await i18n.changeLanguage(language);
+        setCurrentLanguage(language);
 
-      localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
 
-      window.dispatchEvent(
-        new CustomEvent('languageChanged', {
-          detail: {
-            language,
-            previousLanguage: currentLanguage,
-          },
-        })
-      );
-    } catch (error) {
-      console.error('Failed to change language:', error);
-    } finally {
-      setIsChanging(false);
-    }
-  }, [currentLanguage]);
+        window.dispatchEvent(
+          new CustomEvent('languageChanged', {
+            detail: {
+              language,
+              previousLanguage: currentLanguage,
+            },
+          })
+        );
+      } catch (error) {
+        console.error('Failed to change language:', error);
+      } finally {
+        setIsChanging(false);
+      }
+    },
+    [currentLanguage]
+  );
 
   useEffect(() => {
     const savedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -124,7 +127,8 @@ export const useFormattedTranslation = () => {
   const formatTimeRemaining = React.useCallback(
     (seconds: number): string => {
       if (seconds < 60) return t('formats.timeRemaining', { time: `${seconds}s` });
-      if (seconds < 3600) return t('formats.timeRemaining', { time: `${Math.floor(seconds / 60)}m` });
+      if (seconds < 3600)
+        return t('formats.timeRemaining', { time: `${Math.floor(seconds / 60)}m` });
 
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);

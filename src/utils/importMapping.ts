@@ -74,11 +74,7 @@ const mapHeaderToUiField = (header: string): UiFieldKey | undefined => {
     }
   }
 
-  if (
-    containsAny(normalized, VIDEO_KEYWORDS) &&
-    looksLikeName &&
-    !looksLikeUrl
-  ) {
+  if (containsAny(normalized, VIDEO_KEYWORDS) && looksLikeName && !looksLikeUrl) {
     return 'kc_name';
   }
 
@@ -92,10 +88,10 @@ export const detectUiFieldFromHeader = (header: string): UiFieldKey | undefined 
 
 const findVideoUrlHeader = (
   headers: string[],
-  fieldMapping: Record<string, string>,
+  fieldMapping: Record<string, string>
 ): string | undefined => {
-  const mappedEntry = Object.entries(fieldMapping).find(([, value]) =>
-    resolveUiField(value) === 'record_url'
+  const mappedEntry = Object.entries(fieldMapping).find(
+    ([, value]) => resolveUiField(value) === 'record_url'
   );
 
   if (mappedEntry) {
@@ -125,7 +121,7 @@ const mapUiFieldToBackendKey = (field: UiFieldKey): string => {
 export const buildDefaultFieldMapping = (
   headers: string[],
   previewMapping?: ImportPreview['field_mapping'],
-  existingMapping?: Record<string, string>,
+  existingMapping?: Record<string, string>
 ): Record<string, UiFieldKey> => {
   const result: Record<string, UiFieldKey> = {};
 
@@ -159,7 +155,7 @@ export const buildDefaultFieldMapping = (
 };
 
 export const convertFieldMappingToBackend = (
-  fieldMapping: Record<string, string>,
+  fieldMapping: Record<string, string>
 ): Record<string, string> => {
   const backendMapping: Record<string, string> = {};
 
@@ -177,7 +173,7 @@ export const hasRequiredFieldMapping = (fieldMapping: Record<string, string>): b
   const resolvedFields = new Set(
     Object.values(fieldMapping)
       .map(value => resolveUiField(value))
-      .filter((value): value is UiFieldKey => Boolean(value)),
+      .filter((value): value is UiFieldKey => Boolean(value))
   );
 
   return REQUIRED_FIELDS.every(field => resolvedFields.has(field));
@@ -185,7 +181,7 @@ export const hasRequiredFieldMapping = (fieldMapping: Record<string, string>): b
 
 export const buildBackendFieldMapping = (
   headers: string[],
-  fieldMapping: Record<string, string>,
+  fieldMapping: Record<string, string>
 ): Record<string, string> => {
   const backendMapping = convertFieldMappingToBackend(fieldMapping);
 
@@ -201,7 +197,7 @@ export const buildBackendFieldMapping = (
 
 export const canProceedWithImport = (
   headers: string[],
-  fieldMapping: Record<string, string>,
+  fieldMapping: Record<string, string>
 ): boolean => {
   return Boolean(findVideoUrlHeader(headers, fieldMapping));
 };

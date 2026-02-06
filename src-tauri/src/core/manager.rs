@@ -29,12 +29,14 @@ use crate::core::monitoring::{
     PerformanceMetrics, SystemMetrics,
 };
 use crate::core::progress_tracker::{EnhancedProgressStats, ProgressTrackingManager};
+use crate::core::config::AppConfig;
 use crate::core::youtube_downloader::{
     DownloadPriority, YoutubeDownloadFormat, YoutubeDownloadStatus, YoutubeDownloader,
     YoutubeDownloaderConfig, YoutubeVideoInfo,
 };
 
 /// Events that can be emitted by the download manager
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum DownloadEvent {
@@ -186,7 +188,7 @@ pub type EventSender = mpsc::UnboundedSender<DownloadEvent>;
 pub type EventReceiver = mpsc::UnboundedReceiver<DownloadEvent>;
 
 /// Priority queue for task scheduling
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskPriority {
     pub task_id: String,
     pub priority: u8, // Higher number = higher priority
@@ -227,12 +229,22 @@ pub struct DownloadManager {
 
     /// Semaphore to limit concurrent downloads
     download_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Current logical semaphore capacity (total permits)
+    semaphore_capacity: usize,
+    /// Deferred reductions that could not be applied immediately
+    pending_semaphore_reduction: usize,
 
     /// HTTP downloader instance
     http_downloader: Arc<HttpDownloader>,
 
     /// Priority queue for pending tasks
     task_queue: Arc<Mutex<std::collections::BinaryHeap<TaskPriority>>>,
+    /// Whether queue processing is paused (global pause)
+    queue_paused: bool,
+    /// Persisted state file path
+    state_path: PathBuf,
+    /// Whether persistence is enabled for this manager instance
+    persistence_enabled: bool,
 
     /// Rate limiting: bytes per second (0 = unlimited)
     rate_limit: Arc<RwLock<Option<u64>>>,
@@ -266,9 +278,31 @@ struct CompletionMarker {
     completed_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedManagerState {
+    tasks: Vec<VideoTask>,
+    queue: Vec<TaskPriority>,
+    queue_paused: bool,
+}
+
 impl DownloadManager {
     /// Create a new download manager with the given configuration
     pub fn new(config: DownloadConfig) -> AppResult<Self> {
+        let state_path = Self::default_state_path()?;
+        let persistence_enabled = !cfg!(test);
+        Self::new_with_state_path_and_persistence(config, state_path, persistence_enabled)
+    }
+
+    /// Create a new download manager with an explicit state path (useful for tests)
+    pub fn new_with_state_path(config: DownloadConfig, state_path: PathBuf) -> AppResult<Self> {
+        Self::new_with_state_path_and_persistence(config, state_path, true)
+    }
+
+    fn new_with_state_path_and_persistence(
+        config: DownloadConfig,
+        state_path: PathBuf,
+        persistence_enabled: bool,
+    ) -> AppResult<Self> {
         let concurrent_downloads = config.concurrent_downloads;
 
         // Create downloader configuration from manager configuration
@@ -332,15 +366,20 @@ impl DownloadManager {
         // Create monitoring system
         let monitoring_system = MonitoringSystem::new(monitoring_config);
 
-        Ok(Self {
+        let mut manager = Self {
             config,
             tasks: HashMap::new(),
             active_downloads: HashMap::new(),
             event_sender: None,
             stats: ModelsDownloadStats::default(),
             download_semaphore: Arc::new(tokio::sync::Semaphore::new(concurrent_downloads)),
+            semaphore_capacity: concurrent_downloads,
+            pending_semaphore_reduction: 0,
             http_downloader: Arc::new(http_downloader),
             task_queue: Arc::new(Mutex::new(std::collections::BinaryHeap::new())),
+            queue_paused: false,
+            state_path,
+            persistence_enabled,
             rate_limit: rate_limit_handle,
             is_running: false,
             progress_tracker: Arc::new(ProgressTrackingManager::new()),
@@ -349,7 +388,190 @@ impl DownloadManager {
             monitoring_system: Arc::new(monitoring_system),
             youtube_downloader: None, // Initialize as None, can be enabled later
             scheduler_handle: None,
-        })
+        };
+
+        if let Err(err) = manager.load_persisted_state() {
+            warn!("Failed to load persisted manager state: {}", err);
+        }
+
+        Ok(manager)
+    }
+
+    fn default_state_path() -> AppResult<PathBuf> {
+        let data_dir = AppConfig::get_data_dir()
+            .map_err(|e| AppError::System(format!("Failed to get data dir: {}", e)))?;
+        Ok(data_dir.join("download_state.json"))
+    }
+
+    fn load_persisted_state(&mut self) -> AppResult<()> {
+        if !self.persistence_enabled {
+            return Ok(());
+        }
+        if !self.state_path.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&self.state_path).map_err(|e| {
+            AppError::System(format!("Failed to read persisted state {:?}: {}", self.state_path, e))
+        })?;
+        let mut state: PersistedManagerState = serde_json::from_str(&content).map_err(|e| {
+            AppError::System(format!("Failed to parse persisted state {:?}: {}", self.state_path, e))
+        })?;
+
+        self.tasks = state
+            .tasks
+            .drain(..)
+            .map(|task| (task.id.clone(), task))
+            .collect();
+
+        // Convert downloading -> pending on startup so it can be resumed
+        let mut queue = std::collections::BinaryHeap::new();
+        for (task_id, task) in self.tasks.iter_mut() {
+            if task.status == TaskStatus::Downloading {
+                task.status = TaskStatus::Pending;
+                task.updated_at = chrono::Utc::now();
+                queue.push(TaskPriority {
+                    task_id: task_id.clone(),
+                    priority: 10,
+                    created_at: chrono::Utc::now(),
+                });
+            }
+        }
+
+        for item in state.queue.into_iter() {
+            if let Some(task) = self.tasks.get(&item.task_id) {
+                if task.status == TaskStatus::Pending {
+                    queue.push(item);
+                }
+            }
+        }
+
+        // Ensure all pending tasks are queued at least once
+        for task_id in self
+            .tasks
+            .iter()
+            .filter(|(_, task)| task.status == TaskStatus::Pending)
+            .map(|(id, _)| id.clone())
+        {
+            if !queue.iter().any(|item| item.task_id == task_id) {
+                queue.push(TaskPriority {
+                    task_id,
+                    priority: 5,
+                    created_at: chrono::Utc::now(),
+                });
+            }
+        }
+        let queued_count = queue.len();
+
+        if let Ok(mut queue_guard) = self.task_queue.try_lock() {
+            *queue_guard = queue;
+        } else {
+            let mut queue_guard = self.task_queue.blocking_lock();
+            *queue_guard = queue;
+        }
+
+        self.queue_paused = state.queue_paused;
+        self.recompute_stats();
+        info!(
+            "Loaded persisted manager state from {:?}: total={}, pending={}, paused={}, failed={}, completed={}, queued={}, queue_paused={}",
+            self.state_path,
+            self.tasks.len(),
+            self.tasks
+                .values()
+                .filter(|task| task.status == TaskStatus::Pending)
+                .count(),
+            self.tasks
+                .values()
+                .filter(|task| task.status == TaskStatus::Paused)
+                .count(),
+            self.tasks
+                .values()
+                .filter(|task| task.status == TaskStatus::Failed)
+                .count(),
+            self.tasks
+                .values()
+                .filter(|task| task.status == TaskStatus::Completed)
+                .count(),
+            queued_count,
+            self.queue_paused
+        );
+        Ok(())
+    }
+
+    async fn persist_state(&self) -> AppResult<()> {
+        if !self.persistence_enabled {
+            return Ok(());
+        }
+
+        if let Some(parent) = self.state_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AppError::System(format!("Failed to create data dir: {}", e)))?;
+        }
+
+        let queue_items = {
+            let queue = self.task_queue.lock().await;
+            queue.iter().cloned().collect::<Vec<_>>()
+        };
+
+        let state = PersistedManagerState {
+            tasks: self.tasks.values().cloned().collect(),
+            queue: queue_items,
+            queue_paused: self.queue_paused,
+        };
+
+        let json = serde_json::to_string_pretty(&state).map_err(|e| {
+            AppError::System(format!("Failed to serialize persisted state: {}", e))
+        })?;
+
+        fs::write(&self.state_path, json)
+            .await
+            .map_err(|e| AppError::System(format!("Failed to write persisted state: {}", e)))
+    }
+
+    fn recompute_stats(&mut self) {
+        let total_tasks = self.tasks.len();
+        let completed_tasks = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Completed)
+            .count();
+        let failed_tasks = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Failed)
+            .count();
+        let active_downloads = self.active_downloads.len();
+
+        let total_downloaded: u64 = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Completed)
+            .map(|t| t.downloaded_size)
+            .sum();
+
+        let current_speeds: Vec<f64> = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Downloading)
+            .map(|t| t.speed)
+            .collect();
+
+        let average_speed = if current_speeds.is_empty() {
+            0.0
+        } else {
+            current_speeds.iter().sum::<f64>() / current_speeds.len() as f64
+        };
+
+        self.stats = ModelsDownloadStats {
+            total_tasks,
+            completed_tasks,
+            failed_tasks,
+            total_downloaded,
+            average_speed,
+            active_downloads,
+            queue_paused: self.queue_paused,
+        };
     }
 
     /// Start the download manager
@@ -403,15 +625,12 @@ impl DownloadManager {
         let active_downloads: Vec<_> = self.active_downloads.drain().collect();
         for (task_id, handle) in active_downloads {
             handle.abort();
-            self.update_task_status(&task_id, TaskStatus::Cancelled)
+            self.update_task_status(&task_id, TaskStatus::Pending)
                 .await?;
+            let _ = self.enqueue_task(&task_id, 10).await;
         }
 
-        // Clear task queue
-        {
-            let mut queue = self.task_queue.lock().await;
-            queue.clear();
-        }
+        self.queue_paused = false;
 
         // TODO: Stop monitoring system when Arc issue is fixed
         // if let Err(e) = self.monitoring_system.stop().await {
@@ -450,9 +669,7 @@ impl DownloadManager {
             };
         }
 
-        if let Some(existing_id) =
-            self.find_task_by_identity(&normalized_task.url, &normalized_task.output_path)
-        {
+        if let Some(existing_id) = self.find_task_by_task_identity(&normalized_task) {
             self.refresh_task_file_state(&existing_id).await?;
             let existing = self
                 .tasks
@@ -470,6 +687,10 @@ impl DownloadManager {
 
         self.tasks
             .insert(stored_task.id.clone(), stored_task.clone());
+
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after adding task: {}", err);
+        }
 
         tracing::info!(
             "Added video task: {} ({})",
@@ -515,9 +736,7 @@ impl DownloadManager {
 
         // Check for duplicates if not allowing them
         if !allow_duplicates {
-            if let Some(existing_id) =
-                self.find_task_by_identity(&normalized_task.url, &normalized_task.output_path)
-            {
+            if let Some(existing_id) = self.find_task_by_task_identity(&normalized_task) {
                 self.refresh_task_file_state(&existing_id).await?;
                 let existing = self
                     .tasks
@@ -536,6 +755,10 @@ impl DownloadManager {
 
         self.tasks
             .insert(stored_task.id.clone(), stored_task.clone());
+
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after adding task: {}", err);
+        }
 
         tracing::info!(
             "Added video task: {} ({})",
@@ -584,6 +807,8 @@ impl DownloadManager {
             error_message: None,
             created_at: now,
             updated_at: now,
+            paused_at: None,
+            paused_from_active: false,
             downloader_type: None,
             video_info: None, // 没有额外的视频信息
         };
@@ -593,6 +818,9 @@ impl DownloadManager {
         self.tasks.insert(task_id.clone(), task.clone());
 
         self.update_stats().await;
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after adding task: {}", err);
+        }
 
         // Emit task created event
         if let Some(sender) = &self.event_sender {
@@ -632,16 +860,16 @@ impl DownloadManager {
     pub async fn start_download(&mut self, task_id: &str) -> AppResult<()> {
         // 在启动前刷新任务的本地文件状态，确保断点续传能拿到最新已下载大小
         self.refresh_task_file_state(task_id).await?;
+        self.settle_pending_semaphore_reduction();
         let task = self
             .tasks
             .get(task_id)
             .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
             .clone();
 
-        self.remove_task_from_queue(task_id).await;
-
         // 幂等防护：已在下载或句柄存在则直接返回成功
         if task.status == TaskStatus::Downloading || self.active_downloads.contains_key(task_id) {
+            let _ = self.remove_task_from_queue(task_id).await;
             return Ok(());
         }
 
@@ -655,17 +883,48 @@ impl DownloadManager {
             )));
         }
 
+        // 即使 semaphore 仍有可用 permit，也要遵守当前并发配置，避免降配后短时间超发。
+        if self.active_downloads.len() >= self.config.concurrent_downloads {
+            self.enqueue_task(task_id, 5).await;
+            if let Some(task) = self.tasks.get_mut(task_id) {
+                if task.status == TaskStatus::Failed {
+                    task.status = TaskStatus::Pending;
+                    task.error_message = None;
+                    task.updated_at = chrono::Utc::now();
+                    self.update_stats().await;
+                    if let Err(err) = self.persist_state().await {
+                        warn!("Failed to persist state after queueing task: {}", err);
+                    }
+                }
+            }
+            return Err(AppError::Download(
+                "Maximum concurrent downloads reached".to_string(),
+            ));
+        }
+
         // Check if we can start a new download
         let permit = match self.download_semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
                 self.enqueue_task(task_id, 5).await;
+                if let Some(task) = self.tasks.get_mut(task_id) {
+                    if task.status == TaskStatus::Failed {
+                        task.status = TaskStatus::Pending;
+                        task.error_message = None;
+                        task.updated_at = chrono::Utc::now();
+                        self.update_stats().await;
+                        if let Err(err) = self.persist_state().await {
+                            warn!("Failed to persist state after queueing task: {}", err);
+                        }
+                    }
+                }
                 return Err(AppError::Download(
                     "Maximum concurrent downloads reached".to_string(),
                 ));
             }
         };
 
+        self.remove_task_from_queue(task_id).await;
         self.start_download_with_permit(task_id, task, permit)
             .await
     }
@@ -678,6 +937,14 @@ impl DownloadManager {
     ) -> AppResult<()> {
         if let Some(task) = self.tasks.get_mut(task_id) {
             task.error_message = None;
+            task.paused_at = None;
+            task.paused_from_active = false;
+            // Fresh starts with no local bytes should never carry stale 100% progress.
+            if task.downloaded_size == 0 {
+                task.progress = 0.0;
+                task.speed = 0.0;
+                task.eta = None;
+            }
         }
         self.update_task_status(task_id, TaskStatus::Downloading)
             .await?;
@@ -697,6 +964,8 @@ impl DownloadManager {
         let task_id_clone = task_id.to_string();
         let url = task.url.clone();
         let output_path = task.output_path.clone();
+        let initial_downloaded_size = task.downloaded_size;
+        let initial_file_size = task.file_size;
         let event_sender = self.event_sender.as_ref().unwrap().clone();
         let downloader = Arc::clone(&self.http_downloader);
         let progress_tracker = Arc::clone(&self.progress_tracker);
@@ -711,6 +980,8 @@ impl DownloadManager {
                 &task_id_clone,
                 &url,
                 &output_path,
+                initial_downloaded_size,
+                initial_file_size,
                 downloader,
                 event_sender,
                 progress_tracker,
@@ -762,6 +1033,11 @@ impl DownloadManager {
             let _ = self.http_downloader.pause_task(task_id).await;
         }
 
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            task.paused_at = Some(chrono::Utc::now());
+            task.paused_from_active = is_active || task.status == TaskStatus::Downloading;
+        }
+
         if task.status != TaskStatus::Paused {
             self.update_task_status(task_id, TaskStatus::Paused).await?;
         }
@@ -801,9 +1077,20 @@ impl DownloadManager {
             let _ = self.http_downloader.resume_task(task_id).await;
             self.update_task_status(task_id, TaskStatus::Downloading)
                 .await?;
+            if let Some(task) = self.tasks.get_mut(task_id) {
+                task.paused_at = None;
+                task.paused_from_active = false;
+            }
         } else {
             // Resume is essentially the same as starting
             self.start_download(task_id).await?;
+            if let Some(task) = self.tasks.get_mut(task_id) {
+                task.paused_at = None;
+                task.paused_from_active = false;
+            }
+            if let Err(err) = self.persist_state().await {
+                warn!("Failed to persist state after resume download: {}", err);
+            }
         }
 
         // Emit task resumed event
@@ -844,76 +1131,116 @@ impl DownloadManager {
     /// Pause all active downloads
     pub async fn pause_all_downloads(&mut self) -> AppResult<usize> {
         let downloader = Arc::clone(&self.http_downloader);
-        downloader.pause_all().await;
+
+        self.queue_paused = true;
 
         let task_ids: Vec<String> = self.active_downloads.keys().cloned().collect();
         for task_id in &task_ids {
-            let _ = self.update_task_status(task_id, TaskStatus::Paused).await;
-        }
-
-        let queued_task_ids = {
-            let mut queue = self.task_queue.lock().await;
-            let mut ids = Vec::new();
-            while let Some(item) = queue.pop() {
-                ids.push(item.task_id);
+            let _ = downloader.pause_task(task_id).await;
+            if let Some(task) = self.tasks.get_mut(task_id) {
+                task.paused_at = Some(chrono::Utc::now());
+                task.paused_from_active = true;
             }
-            ids
-        };
-
-        for task_id in &queued_task_ids {
             let _ = self.update_task_status(task_id, TaskStatus::Paused).await;
         }
 
         info!(
-            "Paused {} active downloads and {} queued tasks",
-            task_ids.len(),
-            queued_task_ids.len()
+            "Paused {} active downloads (queue remains pending)",
+            task_ids.len()
         );
-        Ok(task_ids.len() + queued_task_ids.len())
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after pause-all: {}", err);
+        }
+        Ok(task_ids.len())
     }
 
     /// Resume all paused downloads
     pub async fn resume_all_downloads(&mut self) -> AppResult<usize> {
         let downloader = Arc::clone(&self.http_downloader);
         downloader.resume_all().await;
+        self.queue_paused = false;
+        let paused_ids = self.collect_paused_task_ids_preferred();
 
-        let paused_ids: Vec<String> = self
-            .tasks
-            .iter()
-            .filter_map(|(task_id, task)| {
-                if task.status == TaskStatus::Paused {
-                    Some(task_id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let mut resumed = 0usize;
-        for task_id in paused_ids {
-            match self.resume_download(&task_id).await {
-                Ok(_) => resumed += 1,
-                Err(e) => warn!("Failed to resume task {}: {}", task_id, e),
-            }
-        }
-
-        info!("Resumed {} paused downloads", resumed);
-        Ok(resumed)
-    }
-
-    /// Start all pending/paused/failed tasks (best-effort)
-    pub async fn start_all_pending(&mut self) -> AppResult<usize> {
-        let candidates = self.collect_task_ids_by_status(&[
-            TaskStatus::Pending,
-            TaskStatus::Paused,
-            TaskStatus::Failed,
-        ]);
-        if candidates.is_empty() {
-            info!("No pending or paused tasks to start");
+        if paused_ids.is_empty() {
+            info!("No paused tasks to resume");
             return Ok(0);
         }
 
+        let resumed = self.resume_task_list(&paused_ids, 9).await;
+
+        info!("Resumed {} paused downloads", resumed);
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after resume-all: {}", err);
+        }
+        Ok(resumed)
+    }
+
+    /// Start all downloads with backend-controlled policy.
+    /// First resume paused tasks, then fill remaining slots with pending tasks.
+    /// Failed tasks should be retried explicitly to avoid repeatedly replaying hard failures.
+    pub async fn start_all_downloads(&mut self) -> AppResult<usize> {
+        let paused_ids = self.collect_paused_task_ids_preferred();
+
+        // Clear global pause and allow queue to run.
+        self.queue_paused = false;
+        self.http_downloader.resume_all().await;
+
+        let mut resumed = 0usize;
+        if !paused_ids.is_empty() {
+            resumed = self.resume_task_list(&paused_ids, 9).await;
+            info!("Start-all resumed {} paused downloads", resumed);
+            if let Err(err) = self.persist_state().await {
+                warn!("Failed to persist state after start-all (resume): {}", err);
+            }
+        }
+
+        // Fill remaining slots with pending tasks only.
+        let started_pending = self.start_tasks_by_status(&[TaskStatus::Pending], "start_all").await?;
+        if resumed > 0 || started_pending > 0 {
+            info!(
+                "Start-all summary: resumed {}, started pending {}",
+                resumed, started_pending
+            );
+        }
+
+        Ok(resumed + started_pending)
+    }
+
+    /// Start all pending/failed tasks (best-effort)
+    pub async fn start_all_pending(&mut self) -> AppResult<usize> {
+        self.start_tasks_by_status(
+            &[TaskStatus::Pending, TaskStatus::Failed],
+            "start_all_pending",
+        )
+        .await
+    }
+
+    async fn start_tasks_by_status(
+        &mut self,
+        statuses: &[TaskStatus],
+        context: &str,
+    ) -> AppResult<usize> {
+        self.queue_paused = false;
+        self.http_downloader.resume_all().await;
+        let candidates = self.collect_task_ids_by_status(statuses);
+        if candidates.is_empty() {
+            info!(
+                "[{}] No tasks to start for statuses: {:?}",
+                context, statuses
+            );
+            return Ok(0);
+        }
+
+        info!(
+            "[{}] Starting tasks by statuses {:?}: candidates={}",
+            context,
+            statuses,
+            candidates.len()
+        );
+
         let mut started = 0usize;
+        let mut queued = 0usize;
+        let mut normalized_pending = false;
         for (idx, task_id) in candidates.iter().enumerate() {
             match self.start_download(task_id).await {
                 Ok(_) => started += 1,
@@ -923,7 +1250,17 @@ impl DownloadManager {
                         started
                     );
                     for remaining_id in candidates.iter().skip(idx + 1) {
-                        let _ = self.enqueue_task(remaining_id, 5).await;
+                        if let Some(task) = self.tasks.get_mut(remaining_id) {
+                            if task.status == TaskStatus::Failed {
+                                task.status = TaskStatus::Pending;
+                                task.error_message = None;
+                                task.updated_at = chrono::Utc::now();
+                                normalized_pending = true;
+                            }
+                        }
+                        if self.enqueue_task(remaining_id, 5).await {
+                            queued += 1;
+                        }
                     }
                     break;
                 }
@@ -936,7 +1273,20 @@ impl DownloadManager {
             }
         }
 
-        info!("Started {} tasks via start_all_pending", started);
+        if normalized_pending {
+            self.update_stats().await;
+        }
+
+        info!(
+            "[{}] Start summary: started={}, queued={}, total_candidates={}",
+            context,
+            started,
+            queued,
+            candidates.len()
+        );
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after {}: {}", context, err);
+        }
         Ok(started)
     }
 
@@ -960,6 +1310,9 @@ impl DownloadManager {
         }
 
         info!("Cancelled {} downloads", cancelled);
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after cancel_all_downloads: {}", err);
+        }
         Ok(cancelled)
     }
 
@@ -972,7 +1325,16 @@ impl DownloadManager {
     }
 
     pub async fn start_download_impl(&mut self, task_id: &str) -> AppResult<()> {
-        self.start_download(task_id).await
+        let status = self
+            .tasks
+            .get(task_id)
+            .map(|task| task.status.clone())
+            .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
+
+        match status {
+            TaskStatus::Paused => self.resume_download(task_id).await,
+            _ => self.start_download(task_id).await,
+        }
     }
 
     pub async fn pause_download_impl(&mut self, task_id: &str) -> AppResult<()> {
@@ -995,6 +1357,10 @@ impl DownloadManager {
         self.resume_all_downloads().await
     }
 
+    pub async fn start_all_downloads_impl(&mut self) -> AppResult<usize> {
+        self.start_all_downloads().await
+    }
+
     pub async fn start_all_pending_impl(&mut self) -> AppResult<usize> {
         self.start_all_pending().await
     }
@@ -1008,7 +1374,7 @@ impl DownloadManager {
             .tasks
             .iter()
             .filter_map(|(task_id, task)| {
-                if statuses.iter().any(|status| task.status == *status) {
+                if statuses.contains(&task.status) {
                     Some((task_id.clone(), task.created_at))
                 } else {
                     None
@@ -1019,41 +1385,125 @@ impl DownloadManager {
         entries.into_iter().map(|(task_id, _)| task_id).collect()
     }
 
-    async fn enqueue_task(&self, task_id: &str, priority: u8) -> bool {
-        let mut queue = self.task_queue.lock().await;
-        if queue.iter().any(|item| item.task_id == task_id) {
-            return false;
+    fn collect_paused_task_ids_preferred(&self) -> Vec<String> {
+        let paused_entries: Vec<(String, VideoTask)> = self
+            .tasks
+            .iter()
+            .filter_map(|(task_id, task)| {
+                if task.status == TaskStatus::Paused {
+                    Some((task_id.clone(), task.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if paused_entries.is_empty() {
+            return Vec::new();
         }
 
-        queue.push(TaskPriority {
-            task_id: task_id.to_string(),
-            priority,
-            created_at: chrono::Utc::now(),
+        let mut preferred: Vec<(String, VideoTask)> = paused_entries
+            .iter()
+            .filter(|(_, task)| task.paused_from_active)
+            .cloned()
+            .collect();
+
+        if preferred.is_empty() {
+            preferred = paused_entries;
+        }
+
+        preferred.sort_by(|a, b| {
+            let a_time = a.1.paused_at.unwrap_or(a.1.updated_at);
+            let b_time = b.1.paused_at.unwrap_or(b.1.updated_at);
+            a_time
+                .cmp(&b_time)
+                .then_with(|| a.1.created_at.cmp(&b.1.created_at))
         });
-        true
+
+        preferred.into_iter().map(|(id, _)| id).collect()
+    }
+
+    async fn resume_task_list(&mut self, task_ids: &[String], priority: u8) -> usize {
+        let mut resumed = 0usize;
+        for (idx, task_id) in task_ids.iter().enumerate() {
+            match self.resume_download(task_id).await {
+                Ok(_) => resumed += 1,
+                Err(AppError::Download(msg)) if msg.contains("Maximum concurrent downloads") => {
+                    info!(
+                        "Reached concurrency limit while resuming tasks (resumed {})",
+                        resumed
+                    );
+                    for remaining_id in task_ids.iter().skip(idx) {
+                        let _ = self.enqueue_task(remaining_id, priority).await;
+                    }
+                    break;
+                }
+                Err(e) => warn!("Failed to resume task {}: {}", task_id, e),
+            }
+        }
+        resumed
+    }
+
+    async fn enqueue_task(&self, task_id: &str, priority: u8) -> bool {
+        let inserted = {
+            let mut queue = self.task_queue.lock().await;
+            if queue.iter().any(|item| item.task_id == task_id) {
+                return false;
+            }
+
+            queue.push(TaskPriority {
+                task_id: task_id.to_string(),
+                priority,
+                created_at: chrono::Utc::now(),
+            });
+            true
+        };
+
+        if inserted {
+            if let Err(err) = self.persist_state().await {
+                warn!("Failed to persist state after enqueue: {}", err);
+            }
+        }
+        inserted
     }
 
     async fn remove_task_from_queue(&self, task_id: &str) -> bool {
-        let mut queue = self.task_queue.lock().await;
-        if queue.is_empty() {
-            return false;
+        let removed = {
+            let mut queue = self.task_queue.lock().await;
+            if queue.is_empty() {
+                return false;
+            }
+
+            let mut items = Vec::with_capacity(queue.len());
+            while let Some(item) = queue.pop() {
+                items.push(item);
+            }
+
+            let before = items.len();
+            items.retain(|item| item.task_id != task_id);
+            let removed = items.len() != before;
+
+            *queue = items.into_iter().collect();
+            removed
+        };
+
+        if removed {
+            if let Err(err) = self.persist_state().await {
+                warn!("Failed to persist state after dequeue: {}", err);
+            }
         }
-
-        let mut items = Vec::with_capacity(queue.len());
-        while let Some(item) = queue.pop() {
-            items.push(item);
-        }
-
-        let before = items.len();
-        items.retain(|item| item.task_id != task_id);
-        let removed = items.len() != before;
-
-        *queue = items.into_iter().collect();
         removed
     }
 
     async fn process_task_queue(&mut self) {
+        if self.queue_paused {
+            return;
+        }
         loop {
+            self.settle_pending_semaphore_reduction();
+            if self.active_downloads.len() >= self.config.concurrent_downloads {
+                break;
+            }
             if self.download_semaphore.available_permits() == 0 {
                 break;
             }
@@ -1099,6 +1549,31 @@ impl DownloadManager {
         }
     }
 
+    /// Apply deferred semaphore reductions when permits become available.
+    /// This keeps effective concurrency aligned with runtime config updates.
+    fn settle_pending_semaphore_reduction(&mut self) {
+        if self.pending_semaphore_reduction == 0 {
+            return;
+        }
+
+        let available = self.download_semaphore.available_permits();
+        if available == 0 {
+            return;
+        }
+
+        let to_forget = available.min(self.pending_semaphore_reduction);
+        let forgotten = self.download_semaphore.forget_permits(to_forget);
+
+        if forgotten > 0 {
+            self.pending_semaphore_reduction -= forgotten;
+            self.semaphore_capacity = self.semaphore_capacity.saturating_sub(forgotten);
+            debug!(
+                "Settled semaphore reduction: forgotten={}, pending={}, capacity={}",
+                forgotten, self.pending_semaphore_reduction, self.semaphore_capacity
+            );
+        }
+    }
+
     pub fn spawn_queue_scheduler(
         manager: Arc<RwLock<DownloadManager>>,
     ) -> tokio::task::JoinHandle<()> {
@@ -1128,14 +1603,17 @@ impl DownloadManager {
 
         match task.status {
             TaskStatus::Downloading => {
-                return Err(AppError::Download(
+                Err(AppError::Download(
                     "Cannot remove active download".to_string(),
-                ));
+                ))
             }
             _ => {
                 let _ = self.remove_task_from_queue(task_id).await;
                 self.tasks.remove(task_id);
                 self.update_stats().await;
+                if let Err(err) = self.persist_state().await {
+                    warn!("Failed to persist state after removing task: {}", err);
+                }
                 info!("🗑️ Removed task: {}", task_id);
                 Ok(())
             }
@@ -1154,20 +1632,46 @@ impl DownloadManager {
 
     /// Update the download configuration
     pub async fn update_config(&mut self, config: DownloadConfig) -> AppResult<()> {
-        let old_concurrent = self.config.concurrent_downloads;
-        let new_concurrent = config.concurrent_downloads;
+        // First settle any deferred changes so bookkeeping starts from latest real capacity.
+        self.settle_pending_semaphore_reduction();
+
+        let old_target = self
+            .semaphore_capacity
+            .saturating_sub(self.pending_semaphore_reduction);
 
         self.config = config;
+        let new_target = self.config.concurrent_downloads.max(1);
 
-        // Update semaphore if concurrent downloads changed
-        if old_concurrent != new_concurrent {
-            self.download_semaphore = Arc::new(tokio::sync::Semaphore::new(new_concurrent));
-            info!(
-                "🔧 Updated concurrent downloads: {} -> {}",
-                old_concurrent, new_concurrent
-            );
+        if new_target > old_target {
+            // Grow target: cancel deferred reductions first, then add new permits if needed.
+            let mut grow_by = new_target - old_target;
+            if self.pending_semaphore_reduction > 0 {
+                let cancelled = grow_by.min(self.pending_semaphore_reduction);
+                self.pending_semaphore_reduction -= cancelled;
+                grow_by -= cancelled;
+            }
+
+            if grow_by > 0 {
+                self.download_semaphore.add_permits(grow_by);
+                self.semaphore_capacity += grow_by;
+            }
+        } else if new_target < old_target {
+            // Shrink target: schedule deferred reduction and settle immediately when possible.
+            let reduce_by = old_target - new_target;
+            self.pending_semaphore_reduction =
+                self.pending_semaphore_reduction.saturating_add(reduce_by);
+            self.settle_pending_semaphore_reduction();
         }
 
+        info!(
+            "🔧 Updated concurrent downloads: target {} -> {}, capacity={}, pending_reduction={}",
+            old_target, new_target, self.semaphore_capacity, self.pending_semaphore_reduction
+        );
+
+        // If queue is active, immediately attempt to fill newly available slots.
+        if !self.queue_paused {
+            self.process_task_queue().await;
+        }
         Ok(())
     }
 
@@ -1178,6 +1682,9 @@ impl DownloadManager {
         self.tasks
             .retain(|_id, task| task.status != TaskStatus::Completed);
         self.update_stats().await;
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after clear_completed: {}", err);
+        }
 
         let removed_count = initial_count - self.tasks.len();
         info!("🧹 Cleared {} completed tasks", removed_count);
@@ -1314,34 +1821,39 @@ impl DownloadManager {
             let existing_size = metadata.len();
             if existing_size > 0 {
                 task.downloaded_size = existing_size;
+            }
+        }
 
-                let resume_total = self
-                    .load_resume_total_size(task)
-                    .await
-                    .filter(|total| *total > 0);
+        if let Some((resume_downloaded, resume_total)) = self.load_resume_snapshot(task).await {
+            if resume_total > 0 && task.file_size.is_none() {
+                task.file_size = Some(resume_total);
+            }
+            if resume_downloaded > 0 {
+                task.downloaded_size = task.downloaded_size.max(resume_downloaded);
+            }
+        }
 
-                if let Some(total) = resume_total {
-                    task.file_size = Some(total);
-                    if existing_size >= total {
-                        task.status = TaskStatus::Completed;
-                        task.downloaded_size = total;
-                        task.progress = 100.0;
-                        task.speed = 0.0;
-                        task.eta = None;
-                        return Ok(());
-                    }
-                }
-
-                if let Some(total) = task.file_size {
-                    if total > 0 {
-                        task.progress = ((existing_size as f64 / total as f64) * 100.0).min(100.0);
-                    }
-                }
-
-                if task.status == TaskStatus::Pending {
-                    task.status = TaskStatus::Paused;
+        if task.downloaded_size > 0 {
+            if let Some(total) = task.file_size {
+                if total > 0 && task.downloaded_size >= total {
+                    task.status = TaskStatus::Completed;
+                    task.downloaded_size = total;
+                    task.progress = 100.0;
+                    task.speed = 0.0;
+                    task.eta = None;
+                    return Ok(());
                 }
             }
+
+            if let Some(total) = task.file_size {
+                if total > 0 {
+                    task.progress =
+                        ((task.downloaded_size as f64 / total as f64) * 100.0).min(100.0);
+                }
+            }
+
+            // Keep pending tasks in pending state even if partial files exist.
+            // This matches "等待中" semantics: tasks haven't been explicitly paused yet.
         }
 
         Ok(())
@@ -1368,7 +1880,7 @@ impl DownloadManager {
 
     fn normalize_output_path(output_path: &str) -> String {
         output_path
-            .trim_end_matches(|c| c == '/' || c == '\\')
+            .trim_end_matches(['/', '\\'])
             .to_string()
     }
 
@@ -1419,28 +1931,70 @@ impl DownloadManager {
 
     fn build_identity_key(&self, url: &str, output_path: &str) -> String {
         let (output_dir, filename) = Self::split_output_path(url, output_path);
-        format!("{}|{}|{}", url, output_dir, filename)
+        format!("url:{}|dir:{}|file:{}", url, output_dir, filename)
     }
 
     fn build_identity_key_for_task(&self, task: &VideoTask) -> String {
         let (output_dir, filename) = self.identity_parts_from_task(task);
-        format!("{}|{}|{}", task.url, output_dir, filename)
+        format!("url:{}|dir:{}|file:{}", task.url, output_dir, filename)
+    }
+
+    fn business_identity_key_for_task(&self, task: &VideoTask) -> Option<String> {
+        let info = task.video_info.as_ref()?;
+        let zl_id = info
+            .zl_id
+            .as_ref()
+            .or(info.id.as_ref())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())?;
+        let record_url = info
+            .record_url
+            .as_ref()
+            .or(info.url.as_ref())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())?;
+        Some(format!("biz:{}|{}", zl_id, record_url))
+    }
+
+    fn identity_keys_for_task(&self, task: &VideoTask) -> Vec<String> {
+        let mut keys = Vec::new();
+        if let Some(business_key) = self.business_identity_key_for_task(task) {
+            keys.push(business_key);
+        }
+        keys.push(self.build_identity_key_for_task(task));
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    fn find_task_by_task_identity(&self, task: &VideoTask) -> Option<String> {
+        let keys = self.identity_keys_for_task(task);
+        if keys.is_empty() {
+            return None;
+        }
+        self.tasks
+            .values()
+            .find(|existing| {
+                let existing_keys = self.identity_keys_for_task(existing);
+                existing_keys.iter().any(|key| keys.contains(key))
+            })
+            .map(|task| task.id.clone())
     }
 
     fn find_task_by_identity(&self, url: &str, output_path: &str) -> Option<String> {
         let identity = self.build_identity_key(url, output_path);
         self.tasks
             .values()
-            .find(|task| self.build_identity_key_for_task(task) == identity)
+            .find(|task| self.identity_keys_for_task(task).iter().any(|key| key == &identity))
             .map(|task| task.id.clone())
     }
 
-    async fn load_resume_total_size(&self, task: &VideoTask) -> Option<u64> {
+    async fn load_resume_snapshot(&self, task: &VideoTask) -> Option<(u64, u64)> {
         let resume_key = self.build_resume_key(task)?;
         self.http_downloader
             .load_resume_info(&resume_key)
             .await
-            .map(|info| info.total_size)
+            .map(|info| (info.downloaded_total, info.total_size))
     }
 
     fn completion_marker_path(file_path: &Path) -> PathBuf {
@@ -1486,52 +2040,21 @@ impl DownloadManager {
             task.updated_at = chrono::Utc::now();
             self.update_stats().await;
         }
+        if let Err(err) = self.persist_state().await {
+            warn!("Failed to persist state after status update: {}", err);
+        }
         Ok(())
     }
 
     /// Update download statistics
     async fn update_stats(&mut self) {
-        let total_tasks = self.tasks.len();
-        let completed_tasks = self
-            .tasks
-            .values()
-            .filter(|t| t.status == TaskStatus::Completed)
-            .count();
-        let failed_tasks = self
-            .tasks
-            .values()
-            .filter(|t| t.status == TaskStatus::Failed)
-            .count();
-        let active_downloads = self.active_downloads.len();
-
-        let total_downloaded: u64 = self
-            .tasks
-            .values()
-            .filter(|t| t.status == TaskStatus::Completed)
-            .map(|t| t.downloaded_size)
-            .sum();
-
         let current_speeds: Vec<f64> = self
             .tasks
             .values()
             .filter(|t| t.status == TaskStatus::Downloading)
             .map(|t| t.speed)
             .collect();
-
-        let average_speed = if !current_speeds.is_empty() {
-            current_speeds.iter().sum::<f64>() / current_speeds.len() as f64
-        } else {
-            0.0
-        };
-
-        self.stats = ModelsDownloadStats {
-            total_tasks,
-            completed_tasks,
-            failed_tasks,
-            total_downloaded,
-            average_speed,
-            active_downloads,
-        };
+        self.recompute_stats();
 
         // Emit stats updated event
         if let Some(sender) = &self.event_sender {
@@ -1550,6 +2073,7 @@ impl DownloadManager {
 
     /// Apply state updates based on download events so backend state stays consistent with UI
     pub async fn apply_event_side_effects(&mut self, event: &DownloadEvent) -> AppResult<()> {
+        let mut should_replenish_queue = false;
         match event {
             DownloadEvent::TaskProgress { progress, .. } => {
                 self.update_task_progress_snapshot(progress).await?;
@@ -1557,6 +2081,7 @@ impl DownloadManager {
             DownloadEvent::TaskCompleted { task_id, file_path } => {
                 self.finalize_task_state(task_id, TaskStatus::Completed, Some(file_path), None)
                     .await?;
+                should_replenish_queue = true;
             }
             DownloadEvent::TaskFailed { task_id, error } => {
                 self.finalize_task_state(
@@ -1566,21 +2091,28 @@ impl DownloadManager {
                     Some(error.to_string()),
                 )
                 .await?;
+                should_replenish_queue = true;
             }
             DownloadEvent::TaskCancelled { task_id } => {
                 self.finalize_task_state(task_id, TaskStatus::Cancelled, None, None)
                     .await?;
+                should_replenish_queue = true;
             }
             DownloadEvent::TaskPaused { task_id } => {
                 let _ = self.remove_task_from_queue(task_id).await;
                 self.drop_active_handle(task_id);
                 self.update_task_status(task_id, TaskStatus::Paused).await?;
+                should_replenish_queue = true;
             }
             DownloadEvent::TaskResumed { task_id } | DownloadEvent::TaskStarted { task_id } => {
                 self.update_task_status(task_id, TaskStatus::Downloading)
                     .await?;
             }
             _ => {}
+        }
+
+        if should_replenish_queue {
+            self.process_task_queue().await;
         }
 
         Ok(())
@@ -1593,6 +2125,9 @@ impl DownloadManager {
                 return Ok(());
             }
 
+            let previous_downloaded = task.downloaded_size;
+            let previous_progress = task.progress;
+
             task.downloaded_size = progress.downloaded_size;
             if let Some(total) = progress.total_size {
                 task.file_size = Some(total);
@@ -1600,11 +2135,48 @@ impl DownloadManager {
             task.speed = progress.speed;
             task.eta = progress.eta;
 
-            task.progress = (progress.progress * 100.0).clamp(0.0, 100.0);
+            let mut next_progress = (progress.progress * 100.0).clamp(0.0, 100.0);
+            let total_unknown = progress.total_size.is_none();
+            let effective_total = progress.total_size.or(task.file_size);
+
+            if total_unknown && progress.downloaded_size > 0 && next_progress == 0.0 {
+                // 续传时服务端未返回 total，避免把已有进度清零。
+                // 但不要保留到 100%，否则会出现“下载中显示 100%”。
+                if previous_progress > 0.0 && previous_progress < 100.0 {
+                    next_progress = previous_progress;
+                }
+            }
+
+            if progress.downloaded_size >= previous_downloaded
+                && next_progress > 0.0
+                && next_progress < previous_progress
+                && previous_progress < 100.0
+            {
+                // 防止进度倒退（仅在下载量不回退时）
+                next_progress = previous_progress;
+            }
+
+            // Downloading 状态下，如果总大小未知，不允许“卡在 100%”假完成。
+            if task.status == TaskStatus::Downloading {
+                if let Some(total) = effective_total {
+                    if total > 0 {
+                        let calculated =
+                            ((progress.downloaded_size as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
+                        if calculated < 100.0 && next_progress >= 100.0 {
+                            next_progress = calculated;
+                        }
+                    }
+                } else if next_progress >= 100.0 && progress.downloaded_size > 0 {
+                    next_progress = 99.0;
+                }
+            }
+
+            task.progress = next_progress;
             task.updated_at = chrono::Utc::now();
         }
 
-        self.update_stats().await;
+        // Progress events are high frequency; keep this path lightweight to avoid lock contention.
+        self.recompute_stats();
         Ok(())
     }
 
@@ -1664,7 +2236,7 @@ impl DownloadManager {
     /// Extract title from URL (simple heuristic)
     fn extract_title_from_url(url: &str) -> String {
         url.split('/')
-            .last()
+            .next_back()
             .and_then(|s| s.split('?').next())
             .unwrap_or("Unknown")
             .to_string()
@@ -1695,10 +2267,13 @@ impl DownloadManager {
     }
 
     /// Execute the actual download using HttpDownloader with retry mechanism
+    #[allow(clippy::too_many_arguments)]
     async fn execute_download(
         task_id: &str,
         url: &str,
         output_path: &str,
+        initial_downloaded_size: u64,
+        initial_file_size: Option<u64>,
         downloader: Arc<HttpDownloader>,
         event_sender: EventSender,
         progress_tracker: Arc<ProgressTrackingManager>,
@@ -1739,6 +2314,8 @@ impl DownloadManager {
                         &task_id,
                         &url,
                         &output_path,
+                        initial_downloaded_size,
+                        initial_file_size,
                         downloader,
                         event_sender.clone(),
                         progress_tracker,
@@ -1789,10 +2366,13 @@ impl DownloadManager {
     }
 
     /// Execute a single download attempt without retry logic
+    #[allow(clippy::too_many_arguments)]
     async fn execute_download_attempt(
         task_id: &str,
         url: &str,
         output_path: &str,
+        initial_downloaded_size: u64,
+        initial_file_size: Option<u64>,
         downloader: Arc<HttpDownloader>,
         event_sender: EventSender,
         progress_tracker: Arc<ProgressTrackingManager>,
@@ -1808,6 +2388,14 @@ impl DownloadManager {
         let mut download_task =
             DownloadTask::new(url.to_string(), output_dir.to_string(), filename);
         download_task.id = task_id.to_string();
+        download_task.stats.downloaded_bytes = initial_downloaded_size;
+        download_task.stats.total_bytes = initial_file_size;
+        if let Some(total) = initial_file_size {
+            if total > 0 {
+                download_task.stats.progress =
+                    (initial_downloaded_size as f64 / total as f64).clamp(0.0, 1.0);
+            }
+        }
 
         // Create progress channel for downloader callback
         let (download_progress_tx, mut download_progress_rx) =
@@ -1886,7 +2474,7 @@ impl DownloadManager {
                         file_path: file_path.clone(),
                     });
 
-                    if let Err(err) = Self::persist_completion_marker(&file_path_buf, &url).await {
+                    if let Err(err) = Self::persist_completion_marker(&file_path_buf, url).await {
                         warn!(
                             "Failed to persist completion marker for {}: {}",
                             task_id, err
@@ -2483,6 +3071,8 @@ impl DownloadManager {
             created_at,
             updated_at: created_at,
             error_message: None,
+            paused_at: None,
+            paused_from_active: false,
             downloader_type: None,
             video_info: None, // 没有额外的视频信息
         };
@@ -2694,6 +3284,7 @@ impl DownloadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::models::{DownloaderType, VideoInfo};
 
     #[tokio::test]
     async fn test_download_manager_creation() -> AppResult<()> {
@@ -2701,6 +3292,155 @@ mod tests {
         let manager = DownloadManager::new(config)?;
         assert!(!manager.is_running);
         assert_eq!(manager.tasks.len(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_persisted_state_converts_downloading_to_pending() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("download_state.json");
+        let config = DownloadConfig::default();
+
+        let mut manager = DownloadManager::new_with_state_path(config.clone(), state_path.clone())?;
+
+        let task_id_1 = manager
+            .add_task(
+                "https://example.com/video1.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let task_id_2 = manager
+            .add_task(
+                "https://example.com/video2.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        manager
+            .update_task_status(&task_id_1, TaskStatus::Downloading)
+            .await?;
+
+        drop(manager);
+
+        let manager = DownloadManager::new_with_state_path(config, state_path)?;
+
+        let task = manager.tasks.get(&task_id_1).unwrap();
+        assert_eq!(task.status, TaskStatus::Pending);
+
+        let queue = manager.task_queue.lock().await;
+        let queued_ids: Vec<String> = queue.iter().map(|item| item.task_id.clone()).collect();
+        assert!(queued_ids.contains(&task_id_1));
+        assert!(queued_ids.contains(&task_id_2));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_persisted_state_keeps_queue_paused() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("download_state.json");
+        let config = DownloadConfig::default();
+
+        let mut manager = DownloadManager::new_with_state_path(config.clone(), state_path.clone())?;
+
+        let _task_id = manager
+            .add_task(
+                "https://example.com/video3.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        manager.pause_all_downloads().await?;
+
+        drop(manager);
+
+        let manager = DownloadManager::new_with_state_path(config, state_path)?;
+        assert!(manager.queue_paused);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_business_identity_deduplication() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+        let now = chrono::Utc::now();
+
+        let base_task = VideoTask {
+            id: "task-1".to_string(),
+            url: "https://example.com/video.mp4".to_string(),
+            title: "Test Video".to_string(),
+            output_path: "./downloads".to_string(),
+            resolved_path: None,
+            status: TaskStatus::Pending,
+            progress: 0.0,
+            file_size: None,
+            downloaded_size: 0,
+            speed: 0.0,
+            eta: None,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+            paused_at: None,
+            paused_from_active: false,
+            downloader_type: Some(DownloaderType::Http),
+            video_info: Some(VideoInfo {
+                zl_id: Some("zl-123".to_string()),
+                zl_name: None,
+                record_url: Some("https://example.com/record.mp4".to_string()),
+                kc_id: None,
+                kc_name: None,
+                id: None,
+                name: None,
+                url: None,
+                course_id: None,
+                course_name: None,
+            }),
+        };
+
+        let duplicate_task = VideoTask {
+            id: "task-2".to_string(),
+            url: "https://example.com/another.mp4".to_string(),
+            title: "Duplicate Video".to_string(),
+            output_path: "./other".to_string(),
+            resolved_path: None,
+            status: TaskStatus::Pending,
+            progress: 0.0,
+            file_size: None,
+            downloaded_size: 0,
+            speed: 0.0,
+            eta: None,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+            paused_at: None,
+            paused_from_active: false,
+            downloader_type: Some(DownloaderType::Http),
+            video_info: Some(VideoInfo {
+                zl_id: Some("zl-123".to_string()),
+                zl_name: None,
+                record_url: Some("https://example.com/record.mp4".to_string()),
+                kc_id: None,
+                kc_name: None,
+                id: None,
+                name: None,
+                url: None,
+                course_id: None,
+                course_name: None,
+            }),
+        };
+
+        let first = manager.add_video_task(base_task).await?;
+        let second = manager.add_video_task(duplicate_task).await?;
+
+        assert!(first.created);
+        assert!(!second.created);
+        assert_eq!(manager.tasks.len(), 1);
+
         Ok(())
     }
 

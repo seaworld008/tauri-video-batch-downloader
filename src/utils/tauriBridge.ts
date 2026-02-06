@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from '@tauri-apps/api/tauri';
 
 export const invokeTauri = async <T>(
   command: string,
-  args?: Record<string, unknown>,
+  args?: Record<string, unknown>
 ): Promise<T> => {
   if (!args) {
     return invoke<T>(command);
@@ -10,4 +10,3 @@ export const invokeTauri = async <T>(
 
   return invoke<T>(command, args);
 };
-

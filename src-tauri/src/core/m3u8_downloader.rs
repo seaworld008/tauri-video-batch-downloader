@@ -28,6 +28,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use url::Url;
 
+type ProgressSender = Arc<ParkingRwLock<Option<mpsc::UnboundedSender<(String, DownloadStats)>>>>;
+
 /// M3U8下载器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct M3U8DownloaderConfig {
@@ -119,7 +121,7 @@ pub struct M3U8Downloader {
     config: M3U8DownloaderConfig,
     client: Client,
     active_downloads: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
-    progress_tx: Arc<ParkingRwLock<Option<mpsc::UnboundedSender<(String, DownloadStats)>>>>,
+    progress_tx: ProgressSender,
     semaphore: Arc<Semaphore>,
     is_paused: Arc<AtomicBool>,
 }
@@ -505,8 +507,6 @@ impl M3U8Downloader {
             let byte_range = segment.byte_range;
             let encryption = segment.encryption.clone();
             let segment_index = segment.index;
-            let total_bytes_hint = total_bytes_hint;
-            let start_time = start_time;
             let pause_flag = Arc::clone(&pause_flag);
             let global_pause = Arc::clone(&self.is_paused);
 
@@ -620,6 +620,7 @@ impl M3U8Downloader {
     }
 
     /// 静态方法下载单个片段
+    #[allow(clippy::too_many_arguments)]
     async fn download_segment_static(
         client: &Client,
         config: &M3U8DownloaderConfig,
@@ -675,6 +676,7 @@ impl M3U8Downloader {
     }
 
     /// 单次片段下载尝试
+    #[allow(clippy::too_many_arguments)]
     async fn download_segment_attempt(
         client: &Client,
         segment_url: &str,
