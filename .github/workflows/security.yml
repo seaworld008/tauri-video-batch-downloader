@@ -370,6 +370,7 @@ jobs:
       - name: Generate Node.js SBOM
         run: |
           pnpm dlx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file nodejs-sbom.json
+        continue-on-error: true
 
       # Combine SBOMs
       - name: Combine SBOMs
