@@ -277,14 +277,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript, typescript]
+        language: [javascript-typescript]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
@@ -304,10 +304,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build project
-        run: pnpm build
+        run: pnpm exec vite build
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
 
@@ -364,18 +364,18 @@ jobs:
       - name: Generate Rust SBOM
         run: |
           cd src-tauri
-          cargo cyclonedx --format json --output-file ../rust-sbom.json
+          cargo cyclonedx --format json --override-filename rust-sbom
 
       # Generate SBOM for Node.js dependencies
       - name: Generate Node.js SBOM
         run: |
-          npx @cyclonedx/cyclonedx-npm --output-file nodejs-sbom.json
+          pnpm dlx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file nodejs-sbom.json
 
       # Combine SBOMs
       - name: Combine SBOMs
         run: |
           echo "Creating combined SBOM manifest..."
-          cat > combined-sbom.json << 'EOF'
+          cat > combined-sbom.json << EOF
           {
             "bomFormat": "CycloneDX",
             "specVersion": "1.4",
@@ -408,8 +408,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom-reports
+          if-no-files-found: warn
           path: |
-            *sbom.json
+            src-tauri/rust-sbom.json
+            nodejs-sbom.json
+            combined-sbom.json
           retention-days: 90
 
       # Attest SBOM to release
@@ -418,7 +421,7 @@ jobs:
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: |
-            rust-sbom.json
+            src-tauri/rust-sbom.json
             nodejs-sbom.json
 
   # Security Summary
