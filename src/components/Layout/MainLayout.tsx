@@ -9,7 +9,9 @@ interface MainLayoutProps {
 }
 
 export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
-  const { sidebarOpen, globalLoading, loadingMessage } = useUIStore();
+  const sidebarOpen = useUIStore(state => state.sidebarOpen);
+  const globalLoading = useUIStore(state => state.globalLoading);
+  const loadingMessage = useUIStore(state => state.loadingMessage);
 
   return (
     <div className='h-screen flex flex-col bg-gray-50 dark:bg-gray-900'>

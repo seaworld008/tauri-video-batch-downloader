@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useDownloadStore } from '../downloadStore';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { TaskStatus, VideoTask } from '../../types';
 
 // Mock Tauri API
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue([]),
 }));
 
@@ -278,6 +278,72 @@ describe('downloadStore', () => {
         'resume_download',
         expect.objectContaining({ task_id: taskId, taskId })
       );
+    });
+
+    it('does not optimistically mutate status for control actions', async () => {
+      const { result } = renderHook(() => useDownloadStore());
+
+      useDownloadStore.setState({
+        tasks: [
+          buildTask('pending-task', 'pending'),
+          buildTask('paused-task', 'paused'),
+          buildTask('downloading-task', 'downloading'),
+        ],
+      });
+
+      vi.mocked(invoke).mockImplementation((command: any) => {
+        if (
+          command === 'start_download' ||
+          command === 'resume_download' ||
+          command === 'cancel_download' ||
+          command === 'pause_all_downloads'
+        ) {
+          return Promise.resolve(undefined);
+        }
+        if (command === 'get_download_tasks') {
+          return Promise.resolve([]);
+        }
+        if (command === 'get_download_stats') {
+          return Promise.resolve({
+            total_tasks: 3,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            total_downloaded: 0,
+            average_speed: 0,
+            active_downloads: 1,
+            queue_paused: false,
+          });
+        }
+        return Promise.resolve([]);
+      });
+
+      await act(async () => {
+        await result.current.startDownload('pending-task');
+      });
+      expect(
+        useDownloadStore.getState().tasks.find(task => task.id === 'pending-task')?.status
+      ).toBe('pending');
+
+      await act(async () => {
+        await result.current.resumeDownload('paused-task');
+      });
+      expect(
+        useDownloadStore.getState().tasks.find(task => task.id === 'paused-task')?.status
+      ).toBe('paused');
+
+      await act(async () => {
+        await result.current.cancelDownload('downloading-task');
+      });
+      expect(
+        useDownloadStore.getState().tasks.find(task => task.id === 'downloading-task')?.status
+      ).toBe('downloading');
+
+      await act(async () => {
+        await result.current.pauseAllDownloads();
+      });
+      expect(
+        useDownloadStore.getState().tasks.find(task => task.id === 'downloading-task')?.status
+      ).toBe('downloading');
     });
 
     it('handles initialization correctly', async () => {

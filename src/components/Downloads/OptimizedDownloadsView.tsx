@@ -37,23 +37,21 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
 
   // const { memoryUsage, takeSnapshot } = useMemoryMonitor(10000); // 每10秒检查内存
 
-  const {
-    tasks,
-    stats,
-    isLoading,
-    filterStatus,
-    searchQuery,
-    selectedTasks,
-    refreshTasks,
-    refreshStats,
-    startAllDownloads,
-    pauseAllDownloads,
-    removeTasks,
-    setSearchQuery,
-    setFilterStatus,
-    getValidationStats,
-    runDataIntegrityCheck,
-  } = useDownloadStore();
+  const tasks = useDownloadStore(state => state.tasks);
+  const stats = useDownloadStore(state => state.stats);
+  const isLoading = useDownloadStore(state => state.isLoading);
+  const filterStatus = useDownloadStore(state => state.filterStatus);
+  const searchQuery = useDownloadStore(state => state.searchQuery);
+  const selectedTasks = useDownloadStore(state => state.selectedTasks);
+  const refreshTasks = useDownloadStore(state => state.refreshTasks);
+  const refreshStats = useDownloadStore(state => state.refreshStats);
+  const startAllDownloads = useDownloadStore(state => state.startAllDownloads);
+  const pauseAllDownloads = useDownloadStore(state => state.pauseAllDownloads);
+  const removeTasks = useDownloadStore(state => state.removeTasks);
+  const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
+  const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
+  const getValidationStats = useDownloadStore(state => state.getValidationStats);
+  const runDataIntegrityCheck = useDownloadStore(state => state.runDataIntegrityCheck);
 
   const safeStats = useMemo(() => ensureDownloadStats(stats), [stats]);
 

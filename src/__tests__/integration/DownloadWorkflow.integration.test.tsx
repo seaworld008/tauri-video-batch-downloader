@@ -207,10 +207,10 @@ describe('下载流程集成测试 - Store Level', () => {
     // 验证IPC调用
     expect(downloadStarted).toBe(true);
 
-    // 验证任务状态已更新
+    // 前端不做乐观状态更新，等待后端事件或同步结果
     const updatedState = useDownloadStore.getState();
     const task = updatedState.tasks.find(t => t.id === 'task-1');
-    expect(task?.status).toBe('downloading');
+    expect(task?.status).toBe('pending');
   });
 
   it('应该能够管理任务选择状态', () => {

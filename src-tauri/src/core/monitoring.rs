@@ -949,12 +949,8 @@ impl MonitoringSystem {
         _performance_metrics: &PerformanceMetrics,
     ) -> HealthStatus {
         // Calculate component health scores
-        let cpu_health = Self::calculate_component_health(
-            system_metrics.cpu_usage,
-            80.0,
-            95.0,
-            "CPU usage",
-        );
+        let cpu_health =
+            Self::calculate_component_health(system_metrics.cpu_usage, 80.0, 95.0, "CPU usage");
 
         let memory_health = Self::calculate_component_health(
             system_metrics.memory_usage,

@@ -127,6 +127,10 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
 
       - name: Run security audit
         run: cargo audit
@@ -134,7 +138,7 @@ jobs:
         continue-on-error: true
 
       - name: Check licenses
-        run: cargo audit licenses
+        run: cargo deny --log-level error check licenses
         working-directory: ./src-tauri
         continue-on-error: true
 

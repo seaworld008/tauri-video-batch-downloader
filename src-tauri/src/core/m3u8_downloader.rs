@@ -635,13 +635,13 @@ impl M3U8Downloader {
         let mut retry_count = 0;
 
         while retry_count <= config.retry_attempts {
-        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-            return Err(if cancel_flag.load(Ordering::Relaxed) {
-                anyhow::anyhow!("download_cancelled")
-            } else {
-                anyhow::anyhow!("download_paused")
-                        });
-                    }
+            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+                return Err(if cancel_flag.load(Ordering::Relaxed) {
+                    anyhow::anyhow!("download_cancelled")
+                } else {
+                    anyhow::anyhow!("download_paused")
+                });
+            }
             match Self::download_segment_attempt(
                 client,
                 segment_url,

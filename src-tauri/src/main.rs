@@ -1,5 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use tauri::Emitter;
 
 use serde_json::json;
 use std::sync::Arc;
@@ -317,7 +318,7 @@ fn main() {
                                     progress_event_count, task_id, progress.progress * 100.0, progress.speed, progress.downloaded_size
                                 );
                             }
-                            if let Err(e) = app_handle_clone.emit_all("download_progress", &progress) {
+                            if let Err(e) = app_handle_clone.emit("download_progress", &progress) {
                                 error!("[EVENT_BRIDGE] Failed to emit download_progress: {}", e);
                             }
                         }
@@ -328,7 +329,7 @@ fn main() {
                                 "status": "Downloading",
                                 "error_message": null
                             });
-                            if let Err(e) = app_handle_clone.emit_all("task_status_changed", payload) {
+                            if let Err(e) = app_handle_clone.emit("task_status_changed", payload) {
                                 error!("[EVENT_BRIDGE] Failed to emit task_status_changed: {}", e);
                             }
                         }
@@ -341,7 +342,7 @@ fn main() {
                                 "status": "Completed",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskFailed { task_id, error } => {
                             let payload = json!({
@@ -349,7 +350,7 @@ fn main() {
                                 "status": "Failed",
                                 "error_message": error
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskPaused { task_id } => {
                             let payload = json!({
@@ -357,7 +358,7 @@ fn main() {
                                 "status": "Paused",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskResumed { task_id } => {
                             let payload = json!({
@@ -365,7 +366,7 @@ fn main() {
                                 "status": "Downloading",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskCancelled { task_id } => {
                             let payload = json!({
@@ -373,10 +374,10 @@ fn main() {
                                 "status": "Cancelled",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::StatsUpdated { stats } => {
-                            let _ = app_handle_clone.emit_all("download_stats", stats);
+                            let _ = app_handle_clone.emit("download_stats", stats);
                         }
                         _ => {}
                     }
@@ -412,7 +413,7 @@ fn main() {
                 {
                     Ok(Ok(_)) => {
                         info!("✅ [MANAGER_INIT] Download manager started successfully");
-                        if let Err(e) = app_handle_for_manager.emit_all("download_manager_ready", true) {
+                        if let Err(e) = app_handle_for_manager.emit("download_manager_ready", true) {
                             error!("[MANAGER_INIT] Failed to emit download_manager_ready event: {}", e);
                         } else {
                             info!("[MANAGER_INIT] ✅ download_manager_ready event emitted");
@@ -420,14 +421,14 @@ fn main() {
                     }
                     Ok(Err(e)) => {
                         error!("❌ [MANAGER_INIT] Download manager failed to start: {}", e);
-                        let _ = app_handle_for_manager.emit_all(
+                        let _ = app_handle_for_manager.emit(
                             "download_manager_error",
                             format!("Download manager failed: {}", e),
                         );
                     }
                     Err(_) => {
                         error!("❌ [MANAGER_INIT] Download manager startup timed out");
-                        let _ = app_handle_for_manager.emit_all(
+                        let _ = app_handle_for_manager.emit(
                             "download_manager_error",
                             "Download manager startup timed out".to_string(),
                         );
@@ -437,7 +438,7 @@ fn main() {
 
             // 后台维持并发数：持续填充空槽位（仅后端调度）
             // 立即发送应用准备就绪信号
-            if let Err(e) = app.emit_all("app_ready", true) {
+            if let Err(e) = app.emit("app_ready", true) {
                 error!("Failed to emit app_ready event: {}", e);
             } else {
                 info!("✅ App ready event emitted");
@@ -445,8 +446,8 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|event| {
-            if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event.event() {
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event {
                 info!("📦 Application closing requested");
 
                 // 移除 prevent_close() 调用，允许直接关闭

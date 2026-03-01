@@ -50,11 +50,7 @@ export default defineConfig({
 
     // 并发配置
     pool: 'threads',
-    poolOptions: {
-      threads: {
-        singleThread: true, // E2E测试需要单线程运行
-      },
-    },
+    maxWorkers: 1, // 集成/E2E测试串行执行，避免并发互相影响
 
     // 全局变量
     globals: true,

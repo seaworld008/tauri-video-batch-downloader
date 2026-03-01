@@ -84,12 +84,12 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use directories::ProjectDirs;
 use crate::core::m3u8_downloader::{M3U8Downloader, M3U8DownloaderConfig};
 use crate::core::models::*;
 use crate::core::resume_downloader::{
     ResumeDownloader, ResumeDownloaderConfig, ResumeInfo, ResumeProgressCallback,
 };
+use directories::ProjectDirs;
 use sha2::{Digest, Sha256};
 
 /// HTTP下载器配置
@@ -220,8 +220,7 @@ impl DownloadControl {
     fn new(global_pause: &Arc<AtomicBool>) -> Self {
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let pause_flag = Arc::new(AtomicBool::new(false));
-        let effective_pause_flag =
-            Arc::new(AtomicBool::new(global_pause.load(Ordering::Relaxed)));
+        let effective_pause_flag = Arc::new(AtomicBool::new(global_pause.load(Ordering::Relaxed)));
         Self {
             cancel_flag,
             pause_flag,
@@ -350,9 +349,7 @@ impl HttpDownloader {
     }
 
     fn normalize_output_path(output_path: &str) -> String {
-        output_path
-            .trim_end_matches(['/', '\\'])
-            .to_string()
+        output_path.trim_end_matches(['/', '\\']).to_string()
     }
 
     fn build_resume_key(&self, task: &DownloadTask) -> String {
@@ -364,8 +361,8 @@ impl HttpDownloader {
     }
 
     fn recalc_effective_pause(&self, control: &DownloadControl) {
-        let paused = control.pause_flag.load(Ordering::Relaxed)
-            || self.is_paused.load(Ordering::Relaxed);
+        let paused =
+            control.pause_flag.load(Ordering::Relaxed) || self.is_paused.load(Ordering::Relaxed);
         control
             .effective_pause_flag
             .store(paused, Ordering::Relaxed);
@@ -412,11 +409,14 @@ impl HttpDownloader {
         self.recalc_effective_pause(&control);
         {
             let mut downloads = self.active_downloads.write().await;
-            downloads.insert(task.id.clone(), DownloadControl {
-                cancel_flag: Arc::clone(&control.cancel_flag),
-                pause_flag: Arc::clone(&control.pause_flag),
-                effective_pause_flag: Arc::clone(&control.effective_pause_flag),
-            });
+            downloads.insert(
+                task.id.clone(),
+                DownloadControl {
+                    cancel_flag: Arc::clone(&control.cancel_flag),
+                    pause_flag: Arc::clone(&control.pause_flag),
+                    effective_pause_flag: Arc::clone(&control.effective_pause_flag),
+                },
+            );
             tracing::info!(
                 "🔵 [DOWNLOAD_ENTRY] Registered task {} in active_downloads (total: {})",
                 task.id,
@@ -535,9 +535,7 @@ impl HttpDownloader {
         );
         if is_m3u8 {
             tracing::info!("🟢 [SMART_DOWNLOAD] M3U8 URL detected, using M3U8 downloader");
-            return self
-                .download_with_m3u8(task, cancel_flag, pause_flag)
-                .await;
+            return self.download_with_m3u8(task, cancel_flag, pause_flag).await;
         }
 
         // 对于非M3U8 URL，尝试获取文件大小
@@ -600,7 +598,8 @@ impl HttpDownloader {
                 .await
         } else {
             tracing::info!("小文件检测：使用传统HTTP下载");
-            self.download_with_resume(task, cancel_flag, pause_flag).await
+            self.download_with_resume(task, cancel_flag, pause_flag)
+                .await
         }
     }
 
@@ -647,8 +646,10 @@ impl HttpDownloader {
                 }
             }
             if resume_info.downloaded_total > 0 {
-                task.stats.downloaded_bytes =
-                    task.stats.downloaded_bytes.max(resume_info.downloaded_total);
+                task.stats.downloaded_bytes = task
+                    .stats
+                    .downloaded_bytes
+                    .max(resume_info.downloaded_total);
             }
         }
 
@@ -1618,8 +1619,7 @@ mod test_support {
                     data.len().saturating_sub(1),
                     data.len()
                 );
-                write_response_with_headers(socket, 206, "Partial Content", body, &header)
-                    .await?;
+                write_response_with_headers(socket, 206, "Partial Content", body, &header).await?;
                 return Ok(());
             }
 

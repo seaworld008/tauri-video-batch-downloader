@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import toast from 'react-hot-toast';
 import { AppErrorHandler, handleError, withRetry, withTimeout } from '../utils/errorHandler';
@@ -755,12 +755,7 @@ export const useDownloadStore = create<DownloadState>()(
         console.log('[START_DOWNLOAD] Calling invoke start_download...');
         await invoke('start_download', buildTaskIdPayload(taskId));
         console.log('[START_DOWNLOAD] invoke returned successfully for task:', taskId);
-
-        set(state => ({
-          tasks: state.tasks.map(task =>
-            task.id === taskId ? { ...task, status: 'downloading' as TaskStatus } : task
-          ),
-        }));
+        // 不做前端乐观状态写入，等待后端事件/同步结果作为唯一真值。
 
         void get()
           .refreshTasks()
@@ -773,13 +768,6 @@ export const useDownloadStore = create<DownloadState>()(
         return 'started';
       } catch (error) {
         if (isConcurrencyError(error)) {
-          set(state => ({
-            tasks: state.tasks.map(task =>
-              task.id === taskId
-                ? { ...task, status: 'pending' as TaskStatus, error_message: undefined }
-                : task
-            ),
-          }));
           if (!suppressConcurrencyToast) {
             const now = Date.now();
             if (now - lastConcurrencyNotice > CONCURRENCY_NOTICE_INTERVAL) {
@@ -809,15 +797,12 @@ export const useDownloadStore = create<DownloadState>()(
         await invoke('pause_download', buildTaskIdPayload(taskId));
         console.log('[PAUSE_DOWNLOAD] invoke returned successfully for task:', taskId);
 
-        set(state => {
-          const updatedTasks = state.tasks.map(task =>
-            task.id === taskId ? { ...task, status: 'paused' as TaskStatus } : task
-          );
-          console.log('[PAUSE_DOWNLOAD] Updated task state to paused:', taskId);
-          return {
-            tasks: updatedTasks,
-          };
-        });
+        // Do not optimistically set status to 'paused'.
+        // Wait for the backend to sync status after file flush is complete to avoid progress resetting.
+        console.log(
+          '[PAUSE_DOWNLOAD] Waiting for backend to confirm pause state for task:',
+          taskId
+        );
 
         void get()
           .refreshTasks()
@@ -836,12 +821,7 @@ export const useDownloadStore = create<DownloadState>()(
     resumeDownload: async taskId => {
       try {
         await invoke('resume_download', buildTaskIdPayload(taskId));
-
-        set(state => ({
-          tasks: state.tasks.map(task =>
-            task.id === taskId ? { ...task, status: 'downloading' as TaskStatus } : task
-          ),
-        }));
+        // 不做前端乐观状态写入，等待后端事件/同步结果作为唯一真值。
 
         void get()
           .refreshTasks()
@@ -851,13 +831,6 @@ export const useDownloadStore = create<DownloadState>()(
           .catch(err => console.warn('[resumeDownload] stats sync failed', err));
       } catch (error) {
         if (isConcurrencyError(error)) {
-          set(state => ({
-            tasks: state.tasks.map(task =>
-              task.id === taskId
-                ? { ...task, status: 'pending' as TaskStatus, error_message: undefined }
-                : task
-            ),
-          }));
           toast('当前下载达到最大并发，任务已加入队列等待恢复。');
           void get()
             .refreshTasks()
@@ -877,12 +850,7 @@ export const useDownloadStore = create<DownloadState>()(
     cancelDownload: async taskId => {
       try {
         await invoke('cancel_download', buildTaskIdPayload(taskId));
-
-        set(state => ({
-          tasks: state.tasks.map(task =>
-            task.id === taskId ? { ...task, status: 'cancelled' as TaskStatus } : task
-          ),
-        }));
+        // 不做前端乐观状态写入，等待后端事件/同步结果作为唯一真值。
 
         void get()
           .refreshTasks()
@@ -941,12 +909,7 @@ export const useDownloadStore = create<DownloadState>()(
 
       try {
         await invoke<number>('pause_all_downloads');
-
-        set(state => ({
-          tasks: state.tasks.map(task =>
-            task.status === 'downloading' ? { ...task, status: 'paused' } : task
-          ),
-        }));
+        // 不做前端乐观状态写入，等待后端事件/同步结果作为唯一真值。
 
         void get()
           .refreshTasks()

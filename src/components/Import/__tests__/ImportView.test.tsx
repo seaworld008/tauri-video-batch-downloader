@@ -25,9 +25,9 @@ const uiStoreMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@tauri-apps/api/dialog', () => dialogMocks);
+vi.mock('@tauri-apps/plugin-dialog', () => dialogMocks);
 
-vi.mock('@tauri-apps/api/tauri', () => tauriApiMocks);
+vi.mock('@tauri-apps/api/core', () => tauriApiMocks);
 
 vi.mock('../../../stores/downloadStore', () => {
   const storeState = {
@@ -79,8 +79,8 @@ vi.mock('../../../stores/uiStore', () => ({
   notify: uiStoreMocks.notify,
 }));
 
-import { open } from '@tauri-apps/api/dialog';
-import { invoke } from '@tauri-apps/api/tauri';
+import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 describe('ImportView', () => {
   let ImportView: typeof import('../ImportView').ImportView;

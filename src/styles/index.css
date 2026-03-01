@@ -1,9 +1,20 @@
-@import 'tailwindcss/base';
-@import 'tailwindcss/components';
-@import 'tailwindcss/utilities';
-
+@import 'tailwindcss';
 /* 自定义组件样式 */
 @import './components.css';
+
+/* Tailwind v4 主题色扩展：补齐 primary 色阶，保持既有 primary-* utility 可用 */
+@theme {
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+}
 
 /* 自定义 CSS 变量 - 支持主题切换 */
 :root {
@@ -234,7 +245,9 @@ body {
 }
 
 .card-hover {
-  @apply card hover:shadow-md transition-shadow duration-200;
+  @apply bg-white dark:bg-gray-800 
+         shadow-sm border border-gray-200 dark:border-gray-700 
+         rounded-lg hover:shadow-md transition-shadow duration-200;
 }
 
 /* 徽章样式 */
@@ -243,23 +256,28 @@ body {
 }
 
 .badge-primary {
-  @apply badge bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200;
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+         bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200;
 }
 
 .badge-success {
-  @apply badge bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200;
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+         bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200;
 }
 
 .badge-warning {
-  @apply badge bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200;
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+         bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200;
 }
 
 .badge-error {
-  @apply badge bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200;
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+         bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200;
 }
 
 .badge-gray {
-  @apply badge bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200;
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+         bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200;
 }
 
 /* 分隔线 */

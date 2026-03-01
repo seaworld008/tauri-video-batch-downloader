@@ -7,11 +7,11 @@ edition = "2021"
 license = "MIT"
 
 [build-dependencies]
-tauri-build = { version = "1.5.0", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # Tauri 核心
-tauri = { version = "1.5", features = [ "window-set-icon", "dialog-message", "app-show", "window-set-always-on-top", "window-set-title", "window-set-position", "path-all", "system-tray", "fs-remove-file", "global-shortcut-all", "window-print", "fs-write-file", "fs-read-dir", "shell-execute", "notification-all", "window-show", "window-set-fullscreen", "shell-open", "window-maximize", "window-set-skip-taskbar", "window-set-size", "http-all", "window-set-min-size", "os-all", "fs-rename-file", "fs-remove-dir", "window-set-resizable", "fs-exists", "fs-read-file", "dialog-save", "window-set-max-size", "shell-sidecar", "fs-create-dir", "fs-copy-file", "dialog-open", "dialog-ask", "window-minimize", "window-hide", "dialog-confirm", "window-start-dragging", "window-set-focus", "window-request-user-attention", "window-center", "app-hide", "window-close"] }
+tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
@@ -90,6 +90,12 @@ dashmap = "5.5"
 
 # 随机数生成
 rand = "0.8"
+tauri-plugin-fs = "2.4.5"
+tauri-plugin-dialog = "2.6.0"
+tauri-plugin-os = "2.3.2"
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-mcp-bridge = "0.9.0"
 
 [dev-dependencies]
 # 测试依赖

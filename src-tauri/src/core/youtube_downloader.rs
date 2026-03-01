@@ -490,10 +490,7 @@ impl YoutubeDownloader {
         let response = reqwest::get(&thumbnail_url)
             .await
             .map_err(AppError::Network)?;
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(AppError::Network)?;
+        let bytes = response.bytes().await.map_err(AppError::Network)?;
 
         let output_path = self.config.output_dir.join(output_filename);
         if let Some(parent) = output_path.parent() {
@@ -987,17 +984,11 @@ impl YoutubeDownloader {
                 .into_iter()
                 .min_by(|a, b| Self::compare_height_to_target(a, b, height))
         } else if prefer_highest {
-            muxed
-                .into_iter()
-                .max_by(|a, b| Self::compare_height(a, b))
+            muxed.into_iter().max_by(|a, b| Self::compare_height(a, b))
         } else if prefer_lowest {
-            muxed
-                .into_iter()
-                .min_by(|a, b| Self::compare_height(a, b))
+            muxed.into_iter().min_by(|a, b| Self::compare_height(a, b))
         } else {
-            muxed
-                .into_iter()
-                .max_by(|a, b| Self::compare_height(a, b))
+            muxed.into_iter().max_by(|a, b| Self::compare_height(a, b))
         }
     }
 

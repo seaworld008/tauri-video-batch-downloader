@@ -8,7 +8,7 @@ import {
 import { formatBytes } from '../../utils/format';
 
 export const StatusBar: React.FC = () => {
-  const { tasks } = useDownloadStore();
+  const tasks = useDownloadStore(state => state.tasks);
 
   // Calculate real-time stats
   const activeStats = React.useMemo(() => {

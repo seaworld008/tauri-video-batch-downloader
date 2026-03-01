@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import {
   PlayIcon,
   ArrowDownTrayIcon,
@@ -18,7 +18,8 @@ export const YoutubeUrlInput: React.FC<YoutubeUrlInputProps> = () => {
   const [videoInfo, setVideoInfo] = useState<YoutubeVideoInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [outputDir, setOutputDir] = useState<string>('');
-  const { addTasks, startDownload } = useDownloadStore();
+  const addTasks = useDownloadStore(state => state.addTasks);
+  const startDownload = useDownloadStore(state => state.startDownload);
 
   // 获取视频信息
   const handleGetVideoInfo = async () => {

@@ -413,9 +413,7 @@ async fn import_file_impl(
     }
 
     // Get file size
-    let file_size = std::fs::metadata(file_path)
-        .map_err(AppError::Io)?
-        .len();
+    let file_size = std::fs::metadata(file_path).map_err(AppError::Io)?.len();
 
     // Create parser configuration
     let mut config = FileParserConfig {

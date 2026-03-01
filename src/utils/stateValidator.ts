@@ -2,7 +2,7 @@
  * 状态一致性验证机制
  * 确保前端状态与后端状态保持同步
  */
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import { handleError } from './errorHandler';
 import type { VideoTask, DownloadStats } from '../types';
 
@@ -170,10 +170,12 @@ export class StateValidator {
 
     const statsFields = [
       'total_tasks',
-      'pending_tasks',
-      'downloading_tasks',
       'completed_tasks',
       'failed_tasks',
+      'active_downloads',
+      'total_downloaded',
+      'average_speed',
+      'queue_paused',
     ] as const;
 
     for (const field of statsFields) {

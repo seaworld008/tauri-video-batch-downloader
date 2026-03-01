@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
-import { open } from '@tauri-apps/api/dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
   DocumentArrowUpIcon,
   TableCellsIcon,
@@ -47,15 +47,13 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [outputDir, setOutputDir] = useState<string>('');
 
-  const {
-    addTasks,
-    refreshTasks,
-    setFilterStatus,
-    setSearchQuery,
-    setSortBy,
-    recordRecentImport,
-    tasks,
-  } = useDownloadStore();
+  const addTasks = useDownloadStore(state => state.addTasks);
+  const refreshTasks = useDownloadStore(state => state.refreshTasks);
+  const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
+  const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
+  const setSortBy = useDownloadStore(state => state.setSortBy);
+  const recordRecentImport = useDownloadStore(state => state.recordRecentImport);
+  const tasks = useDownloadStore(state => state.tasks);
 
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory

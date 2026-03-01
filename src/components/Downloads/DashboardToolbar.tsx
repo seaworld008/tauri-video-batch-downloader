@@ -1,8 +1,8 @@
 import React, { useMemo } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { useConfigStore } from '../../stores/configStore';
-import { open } from '@tauri-apps/api/dialog';
-import { invoke } from '@tauri-apps/api/tauri';
+import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import toast from 'react-hot-toast';
 import {
   PlayIcon,
@@ -23,26 +23,25 @@ interface DashboardToolbarProps {
 }
 
 export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh }) => {
-  const {
-    tasks,
-    selectedTasks,
-    startAllDownloads,
-    pauseAllDownloads,
-    removeTasks,
-    clearSelection,
-    startDownload,
-    pauseDownload,
-    filterStatus,
-    setFilterStatus,
-    searchQuery,
-    setSearchQuery,
-    refreshTasks,
-    refreshStats,
-    forceSync,
-    stats: backendStats,
-  } = useDownloadStore();
+  const tasks = useDownloadStore(state => state.tasks);
+  const selectedTasks = useDownloadStore(state => state.selectedTasks);
+  const startAllDownloads = useDownloadStore(state => state.startAllDownloads);
+  const pauseAllDownloads = useDownloadStore(state => state.pauseAllDownloads);
+  const removeTasks = useDownloadStore(state => state.removeTasks);
+  const clearSelection = useDownloadStore(state => state.clearSelection);
+  const startDownload = useDownloadStore(state => state.startDownload);
+  const pauseDownload = useDownloadStore(state => state.pauseDownload);
+  const filterStatus = useDownloadStore(state => state.filterStatus);
+  const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
+  const searchQuery = useDownloadStore(state => state.searchQuery);
+  const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
+  const refreshTasks = useDownloadStore(state => state.refreshTasks);
+  const refreshStats = useDownloadStore(state => state.refreshStats);
+  const forceSync = useDownloadStore(state => state.forceSync);
+  const backendStats = useDownloadStore(state => state.stats);
 
-  const { config, updateDownloadConfig } = useConfigStore();
+  const config = useConfigStore(state => state.config);
+  const updateDownloadConfig = useConfigStore(state => state.updateDownloadConfig);
   const [startConfirmOpen, setStartConfirmOpen] = React.useState(false);
   const [startConfirmWorking, setStartConfirmWorking] = React.useState(false);
   const pendingStartActionRef = React.useRef<(() => Promise<void>) | null>(null);

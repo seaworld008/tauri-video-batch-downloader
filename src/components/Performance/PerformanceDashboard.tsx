@@ -132,7 +132,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
   className = '',
 }) => {
   const { memoryUsage } = useMemoryMonitor(2000); // 每2秒检查内存
-  const { getValidationStats } = useDownloadStore();
+  const getValidationStats = useDownloadStore(state => state.getValidationStats);
   const [performanceReport, setPerformanceReport] = useState(perfMonitor.getPerformanceReport());
 
   // 定期更新性能报告

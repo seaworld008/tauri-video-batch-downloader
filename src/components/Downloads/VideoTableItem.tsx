@@ -28,14 +28,12 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({
   onSelect,
   isSelected: propIsSelected,
 }) => {
-  const {
-    selectedTasks,
-    toggleTaskSelection,
-    startDownload,
-    pauseDownload,
-    cancelDownload,
-    removeTasks,
-  } = useDownloadStore();
+  const selectedTasks = useDownloadStore(state => state.selectedTasks);
+  const toggleTaskSelection = useDownloadStore(state => state.toggleTaskSelection);
+  const startDownload = useDownloadStore(state => state.startDownload);
+  const pauseDownload = useDownloadStore(state => state.pauseDownload);
+  const cancelDownload = useDownloadStore(state => state.cancelDownload);
+  const removeTasks = useDownloadStore(state => state.removeTasks);
 
   const isSelected = propIsSelected ?? selectedTasks.includes(task.id);
 

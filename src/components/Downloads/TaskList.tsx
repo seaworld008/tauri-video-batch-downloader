@@ -9,7 +9,9 @@ interface TaskListProps {
 }
 
 export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
-  const { sortBy, sortDirection, setSortBy } = useDownloadStore();
+  const sortBy = useDownloadStore(state => state.sortBy);
+  const sortDirection = useDownloadStore(state => state.sortDirection);
+  const setSortBy = useDownloadStore(state => state.setSortBy);
   const parentRef = React.useRef<HTMLDivElement>(null);
 
   // 排序任务

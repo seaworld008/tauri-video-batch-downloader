@@ -556,12 +556,14 @@ impl ResumeDownloader {
             handles.push(handle);
         }
 
-        // 等待所有分片下载完成
+        // 等待所有分片下载完成：
+        // 不在首个错误处提前返回，先回收全部任务并尽可能同步本地进度，避免状态落后导致“回退”。
         let mut chunk_results = Vec::new();
+        let mut first_error: Option<anyhow::Error> = None;
         for handle in handles {
-            match handle.await? {
-                Ok(chunk_info) => chunk_results.push(chunk_info),
-                Err(e) => {
+            match handle.await {
+                Ok(Ok(chunk_info)) => chunk_results.push(chunk_info),
+                Ok(Err(e)) => {
                     if Self::is_pause_error(&e) {
                         tracing::info!("分片下载已暂停: {}", e);
                     } else if Self::is_cancel_error(&e) {
@@ -569,7 +571,15 @@ impl ResumeDownloader {
                     } else {
                         tracing::error!("分片下载失败: {}", e);
                     }
-                    return Err(e);
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
+                Err(join_err) => {
+                    tracing::error!("分片任务 Join 失败: {}", join_err);
+                    if first_error.is_none() {
+                        first_error = Some(anyhow::anyhow!("分片任务 Join 失败: {}", join_err));
+                    }
                 }
             }
         }
@@ -581,12 +591,19 @@ impl ResumeDownloader {
             }
         }
 
+        // 磁盘优先同步（本地断点优先），兜底收敛未回传的分片进度
+        self.sync_chunks_with_temp_files(resume_info).await?;
+
         // 重新计算总下载量
         resume_info.downloaded_total = resume_info.chunks.iter().map(|c| c.downloaded).sum();
         resume_info.last_modified = SystemTime::now();
 
         // 保存进度
         self.save_resume_info(resume_info).await?;
+
+        if let Some(e) = first_error {
+            return Err(e);
+        }
 
         Ok(())
     }
@@ -718,10 +735,14 @@ impl ResumeDownloader {
             return Ok(());
         }
 
-        // 构建Range请求
+        // 构建 Range 请求：
+        // - 多分片下载始终使用 Range
+        // - 单分片在断点续传（downloaded > 0）时也必须使用 Range，避免从头内容被追加写入
         let mut request = client.get(url);
+        let using_range_request = resume_info.server_capabilities.supports_ranges
+            && (resume_info.chunks.len() > 1 || chunk.downloaded > 0);
 
-        if resume_info.server_capabilities.supports_ranges && resume_info.chunks.len() > 1 {
+        if using_range_request {
             let range_header = format!("bytes={}-{}", range_start, range_end);
             request = request.header("Range", range_header);
         }
@@ -733,6 +754,9 @@ impl ResumeDownloader {
         if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
             bail!("HTTP错误: {}", status);
         }
+        if using_range_request && status != StatusCode::PARTIAL_CONTENT {
+            bail!("服务器未返回分片响应(206)，无法安全续传: {}", status);
+        }
 
         // 创建或打开分片临时文件
         let temp_file_path = Self::get_chunk_temp_path(config, &resume_info.task_id, chunk.index);
@@ -742,6 +766,8 @@ impl ResumeDownloader {
         let mut stream = response.bytes_stream();
         while let Some(chunk_data) = stream.next().await {
             if Self::should_interrupt(&cancel_flag, &pause_flag) {
+                let _ = file.flush().await;
+                let _ = file.sync_all().await;
                 bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
             }
             let chunk_data = chunk_data?;
@@ -892,7 +918,7 @@ impl ResumeDownloader {
             if temp_path.exists() {
                 let metadata = tokio::fs::metadata(&temp_path).await?;
                 let size = metadata.len().min(chunk.size());
-                if size > chunk.downloaded {
+                if size != chunk.downloaded {
                     chunk.downloaded = size;
                     updated = true;
                 }
@@ -900,7 +926,14 @@ impl ResumeDownloader {
                     chunk.status = ChunkStatus::Completed;
                 } else if chunk.downloaded > 0 {
                     chunk.status = ChunkStatus::Paused;
+                } else {
+                    chunk.status = ChunkStatus::Pending;
                 }
+            } else if chunk.downloaded != 0 {
+                // 本地分片文件不存在时，优先以本地实际状态为准，避免使用过期进度导致 range 偏移。
+                chunk.downloaded = 0;
+                chunk.status = ChunkStatus::Pending;
+                updated = true;
             }
         }
 

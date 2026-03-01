@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import {
   CogIcon,
   FolderIcon,
@@ -15,7 +15,9 @@ import type { AppConfig } from '../../types';
 interface SettingsViewProps {}
 
 export const SettingsView: React.FC<SettingsViewProps> = () => {
-  const { config, updateConfig, resetConfig } = useConfigStore();
+  const config = useConfigStore(state => state.config);
+  const updateConfig = useConfigStore(state => state.updateConfig);
+  const resetConfig = useConfigStore(state => state.resetConfig);
   const [localConfig, setLocalConfig] = useState<AppConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);

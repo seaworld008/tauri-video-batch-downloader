@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
-import { open } from '@tauri-apps/api/dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
   PlusIcon,
   LinkIcon,
@@ -33,7 +33,9 @@ export const ManualInputPanel: React.FC = () => {
   const [outputDir, setOutputDir] = useState<string>('');
   const [isValidatingUrls, setIsValidatingUrls] = useState(false);
 
-  const { addTasks, enqueueDownloads, recordRecentImport } = useDownloadStore();
+  const addTasks = useDownloadStore(state => state.addTasks);
+  const enqueueDownloads = useDownloadStore(state => state.enqueueDownloads);
+  const recordRecentImport = useDownloadStore(state => state.recordRecentImport);
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
   );

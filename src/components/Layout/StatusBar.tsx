@@ -3,7 +3,8 @@ import { useDownloadStore } from '../../stores/downloadStore';
 import { useSystemInfo } from '../../hooks/useSystemInfo';
 
 export const StatusBar: React.FC = () => {
-  const { stats, tasks } = useDownloadStore();
+  const stats = useDownloadStore(state => state.stats);
+  const tasks = useDownloadStore(state => state.tasks);
   const { systemInfo, isLoading } = useSystemInfo();
 
   const pausedCount = tasks.filter(t => t.status === 'paused').length;

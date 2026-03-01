@@ -23,7 +23,7 @@ export const UnifiedView: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [isInputCollapsed, setIsInputCollapsed] = useState(false);
-  const { tasks } = useDownloadStore();
+  const tasks = useDownloadStore(state => state.tasks);
 
   const toggleSettings = () => setShowSettings(!showSettings);
 

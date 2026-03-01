@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import { invokeTauri } from '../tauriBridge';
 
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 

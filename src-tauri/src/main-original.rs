@@ -1,3 +1,4 @@
+use tauri::Emitter;
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -164,14 +165,14 @@ fn main() {
                     Ok(_) => {
                         info!("✅ Download manager started successfully");
                         // 通知前端下载管理器已就绪
-                        if let Err(e) = app_handle.emit_all("download_manager_ready", true) {
+                        if let Err(e) = app_handle.emit("download_manager_ready", true) {
                             error!("Failed to emit download_manager_ready event: {}", e);
                         }
                     }
                     Err(e) => {
                         error!("❌ Failed to start download manager: {}", e);
                         // 通知前端下载管理器启动失败
-                        if let Err(emit_err) = app_handle.emit_all("download_manager_error", e.to_string()) {
+                        if let Err(emit_err) = app_handle.emit("download_manager_error", e.to_string()) {
                             error!("Failed to emit download_manager_error event: {}", emit_err);
                         }
                     }

@@ -75,13 +75,13 @@ jobs:
           echo "## License Audit Results" >> ../audit-results.md
           echo "" >> ../audit-results.md
 
-          if cargo audit licenses --json > licenses.json 2>&1; then
+          if cargo deny --log-level error check licenses > licenses.log 2>&1; then
             echo "✅ All licenses are compatible" >> ../audit-results.md
             echo "license_status=compatible" >> $GITHUB_OUTPUT
           else
             echo "⚠️  License compatibility issues:" >> ../audit-results.md
             echo "" >> ../audit-results.md
-            cargo audit licenses --color never >> ../audit-results.md || true
+            cat licenses.log >> ../audit-results.md || true
             echo "license_status=issues" >> $GITHUB_OUTPUT
           fi
         continue-on-error: true
@@ -95,7 +95,7 @@ jobs:
           echo "## Dependency Policy Check (cargo-deny)" >> ../audit-results.md
           echo "" >> ../audit-results.md
 
-          if cargo deny check --log-level error 2>&1 | tee deny.log; then
+          if cargo deny --log-level error check 2>&1 | tee deny.log; then
             echo "✅ All dependency policies passed" >> ../audit-results.md
             echo "deny_status=passed" >> $GITHUB_OUTPUT
           else
@@ -116,7 +116,7 @@ jobs:
           path: |
             audit-results.md
             src-tauri/audit.json
-            src-tauri/licenses.json
+            src-tauri/licenses.log
             src-tauri/deny.log
           retention-days: 90
 
@@ -148,7 +148,6 @@ jobs:
                 body: comment
               });
             }
-          }
 
       # Fail job if critical security issues found
       - name: Check security status

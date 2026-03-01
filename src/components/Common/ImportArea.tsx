@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
-import { open } from '@tauri-apps/api/dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
   DocumentArrowUpIcon,
   FolderOpenIcon,
@@ -39,7 +39,7 @@ export const ImportArea: React.FC<ImportAreaProps> = ({ className = '' }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
-  const { addTasks } = useDownloadStore();
+  const addTasks = useDownloadStore(state => state.addTasks);
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
   );

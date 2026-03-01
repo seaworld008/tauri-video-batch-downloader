@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import toast from 'react-hot-toast';
 import { handleError } from '../utils/errorHandler';
 import type { AppConfig, DownloadConfig } from '../types';

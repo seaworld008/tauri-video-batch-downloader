@@ -1,10 +1,16 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'path';
+import tailwindcss from '@tailwindcss/vite';
+import tsconfigPaths from 'vite-tsconfig-paths';
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
-  plugins: [react()],
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+    tsconfigPaths()
+  ],
 
   // Vite options tailored for Tauri development
   clearScreen: false,
@@ -18,26 +24,13 @@ export default defineConfig(async () => ({
     },
   },
 
-  // Development source maps
+  // Build options
   build: {
     sourcemap: true,
-    target: process.env.TAURI_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
+    target: 'esnext',
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     rollupOptions: {
       external: ['@tauri-apps/api'],
-    },
-  },
-
-  // Path resolution
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-      '@/components': resolve(__dirname, 'src/components'),
-      '@/hooks': resolve(__dirname, 'src/hooks'),
-      '@/stores': resolve(__dirname, 'src/stores'),
-      '@/types': resolve(__dirname, 'src/types'),
-      '@/utils': resolve(__dirname, 'src/utils'),
-      '@/styles': resolve(__dirname, 'src/styles'),
     },
   },
 
@@ -46,8 +39,6 @@ export default defineConfig(async () => ({
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
     __TAURI_DEBUG__: JSON.stringify(process.env.TAURI_DEBUG === 'true'),
   },
-
-  // CSS configuration is handled by postcss.config.js
 
   // Test configuration
   test: {
@@ -73,4 +64,4 @@ export default defineConfig(async () => ({
       'clsx',
     ],
   },
-}));
+});

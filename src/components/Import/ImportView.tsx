@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
-import { open } from '@tauri-apps/api/dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
   DocumentArrowUpIcon,
   TableCellsIcon,
@@ -88,18 +88,16 @@ export const ImportView: React.FC<ImportViewProps> = () => {
   const [outputDir, setOutputDir] = useState<string>('');
   const [isValidatingUrls, setIsValidatingUrls] = useState(false);
 
-  const {
-    addTasks,
-    tasks,
-    enqueueDownloads,
-    setSelectedTasks,
-    refreshTasks,
-    setFilterStatus,
-    setSearchQuery,
-    setSortBy,
-    recentImportTaskIds,
-    recentImportSnapshot,
-  } = useDownloadStore();
+  const addTasks = useDownloadStore(state => state.addTasks);
+  const tasks = useDownloadStore(state => state.tasks);
+  const enqueueDownloads = useDownloadStore(state => state.enqueueDownloads);
+  const setSelectedTasks = useDownloadStore(state => state.setSelectedTasks);
+  const refreshTasks = useDownloadStore(state => state.refreshTasks);
+  const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
+  const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
+  const setSortBy = useDownloadStore(state => state.setSortBy);
+  const recentImportTaskIds = useDownloadStore(state => state.recentImportTaskIds);
+  const recentImportSnapshot = useDownloadStore(state => state.recentImportSnapshot);
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
   );

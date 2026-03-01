@@ -123,8 +123,7 @@ mod tests {
         let output_path = dir.path().join("video.mp4");
         fs::write(&output_path, vec![1u8; 128]).expect("write partial file");
 
-        let config =
-            create_test_config_with_output_dir(dir.path().to_string_lossy().to_string());
+        let config = create_test_config_with_output_dir(dir.path().to_string_lossy().to_string());
         let mut manager = DownloadManager::new(config).unwrap();
         manager.start().await?;
 

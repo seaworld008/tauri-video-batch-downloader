@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import { UnifiedView } from './components/Unified/UnifiedView';
 import { NotificationCenter } from './components/Common/NotificationCenter';
 import { useDownloadStore, initializeProgressListener } from './stores/downloadStore';
@@ -10,8 +10,8 @@ function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
-  const { initializeStore: initDownloadStore } = useDownloadStore();
-  const { loadConfig } = useConfigStore();
+  const initDownloadStore = useDownloadStore(state => state.initializeStore);
+  const loadConfig = useConfigStore(state => state.loadConfig);
 
   useEffect(() => {
     // 初始化进度监听器

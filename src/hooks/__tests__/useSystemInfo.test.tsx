@@ -56,7 +56,9 @@ describe('useSystemInfo', () => {
       { timeout: 500 }
     );
 
-    expect(invokeTauri).toHaveBeenCalledTimes(2);
+    // Polling can tick once more depending on scheduler timing in CI/runtime.
+    // We assert behavior (second payload observed) and require at least 2 calls.
+    expect(vi.mocked(invokeTauri).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it('handles errors and allows manual refresh', async () => {

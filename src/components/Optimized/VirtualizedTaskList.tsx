@@ -172,15 +172,13 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
   className = '',
 }) => {
   // 从 Store 获取数据，替代 Props 传递，简化 UnifiedView
-  const {
-    tasks,
-    filterStatus,
-    searchQuery,
-    selectedTasks,
-    toggleTaskSelection,
-    sortBy,
-    sortDirection,
-  } = useDownloadStore();
+  const tasks = useDownloadStore(state => state.tasks);
+  const filterStatus = useDownloadStore(state => state.filterStatus);
+  const searchQuery = useDownloadStore(state => state.searchQuery);
+  const selectedTasks = useDownloadStore(state => state.selectedTasks);
+  const toggleTaskSelection = useDownloadStore(state => state.toggleTaskSelection);
+  const sortBy = useDownloadStore(state => state.sortBy);
+  const sortDirection = useDownloadStore(state => state.sortDirection);
 
   // 本地计算过滤列表 (如果 Store 没有直接提供)
   const filteredTasks = useMemo(() => {

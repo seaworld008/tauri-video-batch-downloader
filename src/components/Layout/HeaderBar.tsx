@@ -9,22 +9,23 @@ import {
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../stores/uiStore';
 import { useTheme } from '../../contexts/ThemeContext';
-import { appWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 export const HeaderBar: React.FC = () => {
-  const { sidebarOpen, toggleSidebar } = useUIStore();
+  const sidebarOpen = useUIStore(state => state.sidebarOpen);
+  const toggleSidebar = useUIStore(state => state.toggleSidebar);
   const { theme, setTheme, isDark } = useTheme();
 
   const handleMinimize = async () => {
-    await appWindow.minimize();
+    await getCurrentWindow().minimize();
   };
 
   const handleMaximize = async () => {
-    await appWindow.toggleMaximize();
+    await getCurrentWindow().toggleMaximize();
   };
 
   const handleClose = async () => {
-    await appWindow.close();
+    await getCurrentWindow().close();
   };
 
   const getThemeIcon = () => {

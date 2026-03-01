@@ -18,8 +18,11 @@ interface SidebarItem {
 }
 
 export const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView, sidebarOpen } = useUIStore();
-  const { stats, tasks } = useDownloadStore();
+  const currentView = useUIStore(state => state.currentView);
+  const setCurrentView = useUIStore(state => state.setCurrentView);
+  const sidebarOpen = useUIStore(state => state.sidebarOpen);
+  const stats = useDownloadStore(state => state.stats);
+  const tasks = useDownloadStore(state => state.tasks);
 
   const pendingCount = useMemo(() => tasks.filter(t => t.status === 'pending').length, [tasks]);
 

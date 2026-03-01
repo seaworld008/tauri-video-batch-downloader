@@ -35,11 +35,10 @@ export function useDebounce<T>(value: T, delay: number): T {
  */
 export function useDebouncedCallback<T extends (...args: any[]) => void>(
   callback: T,
-  delay: number,
-  dependencies?: React.DependencyList
+  delay: number
 ): T {
   const callbackRef = useRef(callback);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // 更新回调引用
   useEffect(() => {
@@ -55,7 +54,6 @@ export function useDebouncedCallback<T extends (...args: any[]) => void>(
     };
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useCallback(
     ((...args: any[]) => {
       if (timeoutRef.current) {
@@ -66,7 +64,7 @@ export function useDebouncedCallback<T extends (...args: any[]) => void>(
         callbackRef.current(...args);
       }, delay);
     }) as T,
-    [delay, ...(dependencies || [])]
+    [delay]
   );
 }
 
@@ -103,12 +101,11 @@ export function useThrottle<T>(value: T, interval: number): T {
  */
 export function useThrottledCallback<T extends (...args: any[]) => void>(
   callback: T,
-  interval: number,
-  dependencies?: React.DependencyList
+  interval: number
 ): T {
   const callbackRef = useRef(callback);
   const lastExecuted = useRef<number>(0);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // 更新回调引用
   useEffect(() => {
@@ -124,7 +121,6 @@ export function useThrottledCallback<T extends (...args: any[]) => void>(
     };
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useCallback(
     ((...args: any[]) => {
       const now = Date.now();
@@ -141,7 +137,7 @@ export function useThrottledCallback<T extends (...args: any[]) => void>(
         }, remaining);
       }
     }) as T,
-    [interval, ...(dependencies || [])]
+    [interval]
   );
 }
 

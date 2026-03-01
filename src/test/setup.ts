@@ -1,13 +1,13 @@
 import '@testing-library/jest-dom';
 
 // Mock Tauri APIs that are used in the application
-vi.mock('@tauri-apps/api/tauri', async () => {
+vi.mock('@tauri-apps/api/core', async () => {
   const actual =
-    await vi.importActual<typeof import('@tauri-apps/api/tauri')>('@tauri-apps/api/tauri');
+    await vi.importActual<typeof import('@tauri-apps/api/core')>('@tauri-apps/api/core');
   return {
     ...actual,
     invoke: vi.fn((cmd: string, args?: Record<string, unknown>) => {
-      if (typeof window !== 'undefined' && typeof window.__TAURI_IPC__ === 'function') {
+      if (typeof window !== 'undefined' && typeof (window as any).__TAURI_IPC__ === 'function') {
         return actual.invoke(cmd, args);
       }
       return Promise.resolve({});
@@ -33,7 +33,7 @@ vi.mock('@tauri-apps/api/path', () => ({
   downloadDir: vi.fn().mockResolvedValue('/downloads'),
 }));
 
-vi.mock('@tauri-apps/api/dialog', () => ({
+vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn().mockResolvedValue(''),
   save: vi.fn().mockResolvedValue(''),
   message: vi.fn().mockResolvedValue({}),
@@ -56,18 +56,22 @@ Object.defineProperty(window, 'matchMedia', {
 });
 
 // Mock IntersectionObserver
-global.IntersectionObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}));
+class MockIntersectionObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+global.IntersectionObserver = MockIntersectionObserver as any;
+global.window.IntersectionObserver = MockIntersectionObserver as any;
 
 // Mock ResizeObserver
-global.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}));
+class MockResizeObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+global.ResizeObserver = MockResizeObserver as any;
+global.window.ResizeObserver = MockResizeObserver as any;
 
 const originalError = console.error;
 const originalWarn = console.warn;

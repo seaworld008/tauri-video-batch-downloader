@@ -5,8 +5,8 @@ pub fn local_logging_enabled() -> bool {
 }
 
 pub fn resolve_log_dir() -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| format!("Failed to resolve current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("Failed to resolve current directory: {e}"))?;
     Ok(cwd.join("log"))
 }
 
@@ -25,18 +25,14 @@ pub fn init_tracing() {
             Ok(dir) => dir,
             Err(err) => {
                 eprintln!("{err}");
-                let _ = tracing_subscriber::fmt()
-                    .with_env_filter(filter)
-                    .try_init();
+                let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
                 return;
             }
         };
 
         if let Err(err) = std::fs::create_dir_all(&log_dir) {
             eprintln!("Failed to create log directory: {err}");
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .try_init();
+            let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
             return;
         }
 
@@ -54,8 +50,6 @@ pub fn init_tracing() {
 
     #[cfg(not(feature = "local-logging"))]
     {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .try_init();
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
     }
 }
