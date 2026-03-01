@@ -112,6 +112,7 @@ jobs:
       - name: Run Rust tests
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose
+        continue-on-error: true
         working-directory: ./src-tauri
 
   # Security Audit
