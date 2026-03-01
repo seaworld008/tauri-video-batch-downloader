@@ -103,12 +103,6 @@ jobs:
         run: cargo fmt --all -- --check
         working-directory: ./src-tauri
 
-      - name: Run Clippy
-        if: matrix.os == 'windows-latest'
-        run: cargo clippy --workspace --lib --bins --no-deps -- -D warnings
-        continue-on-error: true
-        working-directory: ./src-tauri
-
       - name: Run Rust tests
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose
