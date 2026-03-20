@@ -1148,12 +1148,14 @@ impl DownloadManager {
         let downloader = Arc::clone(&self.http_downloader);
 
         self.queue_paused = true;
+        let pause_moment = chrono::Utc::now();
 
         let task_ids: Vec<String> = self.active_downloads.keys().cloned().collect();
         for task_id in &task_ids {
             let _ = downloader.pause_task(task_id).await;
             if let Some(task) = self.tasks.get_mut(task_id) {
-                task.paused_at = Some(chrono::Utc::now());
+                // 使用同一批次时间戳，避免 HashMap 遍历顺序导致恢复顺序随机。
+                task.paused_at = Some(pause_moment);
                 task.paused_from_active = true;
             }
             let _ = self.update_task_status(task_id, TaskStatus::Paused).await;
@@ -1409,6 +1411,15 @@ impl DownloadManager {
     ) -> Option<mpsc::UnboundedSender<DownloadEvent>> {
         let guard = manager.read().await;
         guard.event_sender.clone()
+    }
+
+    /// Runtime command entry: apply download-event side effects in serialized runtime lane.
+    pub async fn runtime_apply_event_side_effects(
+        manager: &Arc<RwLock<Self>>,
+        event: &DownloadEvent,
+    ) -> AppResult<()> {
+        let mut guard = manager.write().await;
+        guard.apply_event_side_effects(event).await
     }
 
     async fn runtime_hydrate_task_file_state(
@@ -1837,66 +1848,20 @@ impl DownloadManager {
 
     /// Runtime command entry: start all tasks.
     pub async fn runtime_start_all_downloads(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
-        let task_ids = {
-            let guard = manager.read().await;
-            guard.collect_task_ids_by_status(&[
-                TaskStatus::Pending,
-                TaskStatus::Paused,
-                TaskStatus::Failed,
-            ])
-        };
-
-        let mut started = 0usize;
-        for task_id in task_ids {
-            match Self::runtime_start_download(manager, &task_id).await {
-                Ok(_) => started += 1,
-                Err(err) => warn!(
-                    "Failed to start task {} in runtime_start_all_downloads: {}",
-                    task_id, err
-                ),
-            }
-        }
-        Ok(started)
+        let mut guard = manager.write().await;
+        guard.start_all_downloads().await
     }
 
     /// Runtime command entry: pause all tasks.
     pub async fn runtime_pause_all_downloads(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
-        let task_ids = {
-            let guard = manager.read().await;
-            guard.collect_task_ids_by_status(&[TaskStatus::Downloading, TaskStatus::Pending])
-        };
-
-        let mut paused = 0usize;
-        for task_id in task_ids {
-            match Self::runtime_pause_download(manager, &task_id).await {
-                Ok(_) => paused += 1,
-                Err(err) => warn!(
-                    "Failed to pause task {} in runtime_pause_all_downloads: {}",
-                    task_id, err
-                ),
-            }
-        }
-        Ok(paused)
+        let mut guard = manager.write().await;
+        guard.pause_all_downloads().await
     }
 
     /// Runtime command entry: resume all tasks.
     pub async fn runtime_resume_all_downloads(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
-        let task_ids = {
-            let guard = manager.read().await;
-            guard.collect_paused_task_ids_preferred()
-        };
-
-        let mut resumed = 0usize;
-        for task_id in task_ids {
-            match Self::runtime_resume_download(manager, &task_id).await {
-                Ok(_) => resumed += 1,
-                Err(err) => warn!(
-                    "Failed to resume task {} in runtime_resume_all_downloads: {}",
-                    task_id, err
-                ),
-            }
-        }
-        Ok(resumed)
+        let mut guard = manager.write().await;
+        guard.resume_all_downloads().await
     }
 
     /// Runtime command entry: cancel all tasks.
@@ -1970,8 +1935,9 @@ impl DownloadManager {
         preferred.sort_by(|a, b| {
             let a_time = a.1.paused_at.unwrap_or(a.1.updated_at);
             let b_time = b.1.paused_at.unwrap_or(b.1.updated_at);
-            a_time
-                .cmp(&b_time)
+            // 优先恢复“最近一次暂停”的任务，才能稳定接续用户刚暂停的并发集合。
+            b_time
+                .cmp(&a_time)
                 .then_with(|| a.1.created_at.cmp(&b.1.created_at))
         });
 
@@ -3971,6 +3937,148 @@ mod tests {
         let manager = DownloadManager::new_with_state_path(config, state_path)?;
         assert!(manager.queue_paused);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_runtime_pause_all_only_pauses_active_downloads() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("download_state.json");
+        let mut manager =
+            DownloadManager::new_with_state_path(DownloadConfig::default(), state_path)?;
+
+        let active_task_id = manager
+            .add_task(
+                "https://example.com/active.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let pending_task_id = manager
+            .add_task(
+                "https://example.com/pending.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        manager
+            .update_task_status(&active_task_id, TaskStatus::Downloading)
+            .await?;
+        manager
+            .active_downloads
+            .insert(active_task_id.clone(), tokio::spawn(async {}));
+
+        let manager = Arc::new(RwLock::new(manager));
+        let paused = DownloadManager::runtime_pause_all_downloads(&manager).await?;
+        assert_eq!(paused, 1);
+
+        let guard = manager.read().await;
+        assert_eq!(
+            guard.tasks.get(&active_task_id).map(|task| &task.status),
+            Some(&TaskStatus::Paused)
+        );
+        assert_eq!(
+            guard.tasks.get(&pending_task_id).map(|task| &task.status),
+            Some(&TaskStatus::Pending)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_runtime_start_all_keeps_failed_outside_queue_when_slots_full() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("download_state.json");
+        let mut config = DownloadConfig::default();
+        config.concurrent_downloads = 1;
+        let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
+
+        let paused_task_id = manager
+            .add_task(
+                "https://example.com/paused.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let pending_task_id = manager
+            .add_task(
+                "https://example.com/pending-2.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let failed_task_id = manager
+            .add_task(
+                "https://example.com/failed.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        if let Some(task) = manager.tasks.get_mut(&paused_task_id) {
+            task.status = TaskStatus::Paused;
+            task.paused_from_active = true;
+            task.paused_at = Some(chrono::Utc::now());
+        }
+        if let Some(task) = manager.tasks.get_mut(&failed_task_id) {
+            task.status = TaskStatus::Failed;
+            task.error_message = Some("boom".to_string());
+        }
+
+        manager
+            .active_downloads
+            .insert("occupy".to_string(), tokio::spawn(async {}));
+
+        let manager = Arc::new(RwLock::new(manager));
+        let started = DownloadManager::runtime_start_all_downloads(&manager).await?;
+        assert_eq!(started, 0);
+
+        let guard = manager.read().await;
+        let queue = guard.task_queue.lock().await;
+        let queued_ids: Vec<String> = queue.iter().map(|item| item.task_id.clone()).collect();
+        assert!(queued_ids.contains(&paused_task_id));
+        assert!(queued_ids.contains(&pending_task_id));
+        assert!(!queued_ids.contains(&failed_task_id));
+        assert_eq!(
+            guard.tasks.get(&failed_task_id).map(|task| &task.status),
+            Some(&TaskStatus::Failed)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_collect_paused_task_ids_prefers_recent_batch() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let old_id = manager
+            .add_task(
+                "https://example.com/old.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let new_id = manager
+            .add_task(
+                "https://example.com/new.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        let now = chrono::Utc::now();
+        if let Some(task) = manager.tasks.get_mut(&old_id) {
+            task.status = TaskStatus::Paused;
+            task.paused_from_active = true;
+            task.paused_at = Some(now - chrono::Duration::minutes(5));
+        }
+        if let Some(task) = manager.tasks.get_mut(&new_id) {
+            task.status = TaskStatus::Paused;
+            task.paused_from_active = true;
+            task.paused_at = Some(now);
+        }
+
+        let ordered = manager.collect_paused_task_ids_preferred();
+        assert_eq!(ordered, vec![new_id, old_id]);
         Ok(())
     }
 

@@ -291,17 +291,15 @@ fn main() {
             // Create event channel for DownloadManager
             let (sender, mut receiver) = mpsc::unbounded_channel::<core::manager::DownloadEvent>();
 
-            let download_manager_for_events = app_state.download_manager.clone();
+            let download_runtime_for_events = app_state.download_runtime.clone();
             // Spawn event handler to bridge DownloadManager events to Tauri events
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 info!("🔌 Event bridge started - listening for DownloadManager events");
                 let mut progress_event_count = 0u64;
                 while let Some(event) = receiver.recv().await {
-                    if let Err(sync_err) = {
-                        let mut manager = download_manager_for_events.write().await;
-                        manager.apply_event_side_effects(&event).await
-                    } {
+                    if let Err(sync_err) = download_runtime_for_events.apply_event(event.clone()).await
+                    {
                         error!("[EVENT_BRIDGE] Failed to sync manager state: {}", sync_err);
                     }
 
