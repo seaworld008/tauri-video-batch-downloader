@@ -9,7 +9,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, instrument};
 
-use crate::core::manager::DownloadManager;
+use crate::core::manager::{DownloadEvent, DownloadManager};
 use crate::core::models::{AppError, AppResult};
 
 /// Commands understood by the runtime router.
@@ -42,6 +42,10 @@ pub enum RuntimeCommand {
     },
     CancelAll {
         respond_to: oneshot::Sender<AppResult<usize>>,
+    },
+    ApplyEvent {
+        event: DownloadEvent,
+        respond_to: oneshot::Sender<AppResult<()>>,
     },
 }
 
@@ -119,6 +123,14 @@ impl DownloadRuntimeHandle {
     pub async fn cancel_all(&self) -> AppResult<usize> {
         self.send_command(|tx| RuntimeCommand::CancelAll { respond_to: tx })
             .await
+    }
+
+    pub async fn apply_event(&self, event: DownloadEvent) -> AppResult<()> {
+        self.send_command(|tx| RuntimeCommand::ApplyEvent {
+            event,
+            respond_to: tx,
+        })
+        .await
     }
 }
 
@@ -253,6 +265,10 @@ async fn handle_command(manager: &Arc<RwLock<DownloadManager>>, command: Runtime
         }
         RuntimeCommand::CancelAll { respond_to } => {
             let result = DownloadManager::runtime_cancel_all_downloads(manager).await;
+            let _ = respond_to.send(result);
+        }
+        RuntimeCommand::ApplyEvent { event, respond_to } => {
+            let result = DownloadManager::runtime_apply_event_side_effects(manager, &event).await;
             let _ = respond_to.send(result);
         }
     }
