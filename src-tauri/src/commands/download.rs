@@ -368,15 +368,16 @@ pub async fn clear_completed_tasks(state: State<'_, AppState>) -> Result<(), Str
 
 #[command]
 pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String> {
-    let mut manager = state.download_manager.write().await;
-
-    let failed_task_ids: Vec<String> = manager
-        .get_tasks()
-        .await
-        .into_iter()
-        .filter(|task| task.status == TaskStatus::Failed)
-        .map(|task| task.id.clone())
-        .collect();
+    let failed_task_ids: Vec<String> = {
+        let manager = state.download_manager.read().await;
+        manager
+            .get_tasks()
+            .await
+            .into_iter()
+            .filter(|task| task.status == TaskStatus::Failed)
+            .map(|task| task.id.clone())
+            .collect()
+    };
 
     if failed_task_ids.is_empty() {
         tracing::info!("No failed tasks to retry");
@@ -385,16 +386,19 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
 
     tracing::info!("Retrying {} failed tasks", failed_task_ids.len());
 
-    manager
-        .retry_failed()
-        .await
-        .map_err(|e| format!("Failed to reset failed tasks: {}", e))?;
+    {
+        let mut manager = state.download_manager.write().await;
+        manager
+            .retry_failed()
+            .await
+            .map_err(|e| format!("Failed to reset failed tasks: {}", e))?;
+    }
 
     let mut started = 0usize;
     let mut start_errors = Vec::new();
 
     for task_id in failed_task_ids {
-        match manager.start_download(&task_id).await {
+        match state.download_runtime.start_task(task_id.clone()).await {
             Ok(_) => {
                 started += 1;
                 tracing::info!("Restarted download for task: {}", task_id);
