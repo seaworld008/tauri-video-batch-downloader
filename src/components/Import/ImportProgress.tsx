@@ -3,13 +3,13 @@
  * 提供更详细的导入状态反馈
  */
 import React from 'react';
-import { 
-  CheckCircleIcon, 
-  ExclamationTriangleIcon, 
+import {
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
   ArrowPathIcon,
   DocumentTextIcon,
   PlayIcon,
-  ClockIcon
+  ClockIcon,
 } from '@heroicons/react/24/outline';
 
 export interface ImportProgressStep {
@@ -38,13 +38,13 @@ export const ImportProgress: React.FC<ImportProgressProps> = ({
   const getStepIcon = (step: ImportProgressStep) => {
     switch (step.status) {
       case 'completed':
-        return <CheckCircleIcon className="w-5 h-5 text-green-500" />;
+        return <CheckCircleIcon className='w-5 h-5 text-green-500' />;
       case 'processing':
-        return <ArrowPathIcon className="w-5 h-5 text-blue-500 animate-spin" />;
+        return <ArrowPathIcon className='w-5 h-5 text-blue-500 animate-spin' />;
       case 'error':
-        return <ExclamationTriangleIcon className="w-5 h-5 text-red-500" />;
+        return <ExclamationTriangleIcon className='w-5 h-5 text-red-500' />;
       default:
-        return <ClockIcon className="w-5 h-5 text-gray-400" />;
+        return <ClockIcon className='w-5 h-5 text-gray-400' />;
     }
   };
 
@@ -92,42 +92,37 @@ export const ImportProgress: React.FC<ImportProgressProps> = ({
             ${step.id === currentStep ? 'ring-2 ring-blue-300' : ''}
           `}
         >
-          <div className="flex items-start space-x-3">
-            <div className="flex-shrink-0 mt-0.5">
-              {getStepIcon(step)}
-            </div>
-            
-            <div className="flex-grow min-w-0">
-              <div className="flex items-center justify-between">
-                <h4 className={`text-sm font-medium ${getStepTextColor(step)}`}>
-                  {step.title}
-                </h4>
-                
+          <div className='flex items-start space-x-3'>
+            <div className='flex-shrink-0 mt-0.5'>{getStepIcon(step)}</div>
+
+            <div className='flex-grow min-w-0'>
+              <div className='flex items-center justify-between'>
+                <h4 className={`text-sm font-medium ${getStepTextColor(step)}`}>{step.title}</h4>
+
                 {showTimings && step.startTime && (
-                  <span className="text-xs text-gray-500 ml-2">
+                  <span className='text-xs text-gray-500 ml-2'>
                     {formatDuration(step.startTime, step.endTime)}
                   </span>
                 )}
               </div>
-              
-              {step.description && (
-                <p className="text-sm text-gray-600 mt-1">
-                  {step.description}
-                </p>
-              )}
-              
+
+              {step.description && <p className='text-sm text-gray-600 mt-1'>{step.description}</p>}
+
               {step.status === 'error' && step.errorMessage && (
-                <div className="mt-2 text-sm text-red-600 bg-red-100 p-2 rounded">
+                <div className='mt-2 text-sm text-red-600 bg-red-100 p-2 rounded'>
                   {step.errorMessage}
                 </div>
               )}
             </div>
           </div>
-          
+
           {/* 处理中的步骤显示进度条 */}
           {step.status === 'processing' && (
-            <div className="mt-3 w-full bg-gray-200 rounded-full h-1.5">
-              <div className="bg-blue-600 h-1.5 rounded-full animate-pulse" style={{ width: '60%' }} />
+            <div className='mt-3 w-full bg-gray-200 rounded-full h-1.5'>
+              <div
+                className='bg-blue-600 h-1.5 rounded-full animate-pulse'
+                style={{ width: '60%' }}
+              />
             </div>
           )}
         </div>
@@ -157,7 +152,7 @@ export const SimpleProgress: React.FC<SimpleProgressProps> = ({
   className = '',
 }) => {
   const percentage = total > 0 ? (current / total) * 100 : 0;
-  
+
   const getProgressColor = () => {
     switch (status) {
       case 'completed':
@@ -172,43 +167,33 @@ export const SimpleProgress: React.FC<SimpleProgressProps> = ({
   const getStatusIcon = () => {
     switch (status) {
       case 'completed':
-        return <CheckCircleIcon className="w-4 h-4 text-green-600" />;
+        return <CheckCircleIcon className='w-4 h-4 text-green-600' />;
       case 'error':
-        return <ExclamationTriangleIcon className="w-4 h-4 text-red-600" />;
+        return <ExclamationTriangleIcon className='w-4 h-4 text-red-600' />;
       default:
-        return <ArrowPathIcon className="w-4 h-4 text-blue-600 animate-spin" />;
+        return <ArrowPathIcon className='w-4 h-4 text-blue-600 animate-spin' />;
     }
   };
 
   return (
     <div className={`space-y-2 ${className}`}>
-      <div className="flex items-center justify-between text-sm">
-        <div className="flex items-center space-x-2">
+      <div className='flex items-center justify-between text-sm'>
+        <div className='flex items-center space-x-2'>
           {getStatusIcon()}
-          <span className="font-medium">
-            {message || `处理中 ${current}/${total}`}
-          </span>
+          <span className='font-medium'>{message || `处理中 ${current}/${total}`}</span>
         </div>
-        
-        {showPercentage && (
-          <span className="text-gray-500">
-            {percentage.toFixed(0)}%
-          </span>
-        )}
+
+        {showPercentage && <span className='text-gray-500'>{percentage.toFixed(0)}%</span>}
       </div>
-      
-      <div className="w-full bg-gray-200 rounded-full h-2">
+
+      <div className='w-full bg-gray-200 rounded-full h-2'>
         <div
           className={`h-2 rounded-full transition-all duration-300 ${getProgressColor()}`}
           style={{ width: `${Math.min(percentage, 100)}%` }}
         />
       </div>
-      
-      {status === 'processing' && (
-        <div className="text-xs text-gray-500">
-          正在处理，请稍候...
-        </div>
-      )}
+
+      {status === 'processing' && <div className='text-xs text-gray-500'>正在处理，请稍候...</div>}
     </div>
   );
 };

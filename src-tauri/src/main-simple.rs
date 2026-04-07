@@ -1,3 +1,4 @@
+use tauri::Emitter;
 // 最简化的Tauri应用，用于测试连接问题
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -30,7 +31,7 @@ fn main() {
             info!("🔧 Setting up simplified application");
 
             // 立即通知前端应用已就绪
-            if let Err(e) = app.emit_all("app_ready", true) {
+            if let Err(e) = app.emit("app_ready", true) {
                 error!("Failed to emit app_ready event: {}", e);
             } else {
                 info!("✅ App ready event emitted");

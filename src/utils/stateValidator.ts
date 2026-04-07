@@ -2,7 +2,7 @@
  * 状态一致性验证机制
  * 确保前端状态与后端状态保持同步
  */
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import { handleError } from './errorHandler';
 import type { VideoTask, DownloadStats } from '../types';
 
@@ -30,7 +30,7 @@ export class StateValidator {
    * 验证前端和后端状态是否一致
    */
   static async validateState(
-    frontendTasks: VideoTask[], 
+    frontendTasks: VideoTask[],
     frontendStats: DownloadStats
   ): Promise<StateValidationResult> {
     if (this.validationInProgress) {
@@ -52,7 +52,7 @@ export class StateValidator {
 
       // 比较任务状态
       const taskIssues = this.compareTasks(frontendTasks, backendTasks);
-      
+
       // 比较统计信息
       const statsIssues = this.compareStats(frontendStats, backendStats);
 
@@ -63,7 +63,7 @@ export class StateValidator {
         是否一致: isConsistent,
         问题数量: allIssues.length,
         任务问题: taskIssues.length,
-        统计问题: statsIssues.length
+        统计问题: statsIssues.length,
       });
 
       return {
@@ -71,7 +71,6 @@ export class StateValidator {
         issues: allIssues,
         syncSuggestion: this.determineSyncStrategy(allIssues),
       };
-
     } catch (error) {
       handleError('状态一致性验证', error, false);
       return { isConsistent: false, issues: [], syncSuggestion: 'USE_BACKEND' };
@@ -129,12 +128,16 @@ export class StateValidator {
   /**
    * 比较单个任务的字段
    */
-  private static compareTaskFields(taskId: string, frontendTask: VideoTask, backendTask: VideoTask): StateIssue[] {
+  private static compareTaskFields(
+    taskId: string,
+    frontendTask: VideoTask,
+    backendTask: VideoTask
+  ): StateIssue[] {
     const issues: StateIssue[] = [];
 
     // 关键字段比较
     const criticalFields = ['status', 'progress', 'downloaded_size'] as const;
-    
+
     for (const field of criticalFields) {
       if (frontendTask[field] !== backendTask[field]) {
         // 对于progress，允许小误差（因为可能存在更新延迟）
@@ -159,10 +162,21 @@ export class StateValidator {
   /**
    * 比较统计信息
    */
-  private static compareStats(frontendStats: DownloadStats, backendStats: DownloadStats): StateIssue[] {
+  private static compareStats(
+    frontendStats: DownloadStats,
+    backendStats: DownloadStats
+  ): StateIssue[] {
     const issues: StateIssue[] = [];
 
-    const statsFields = ['total_tasks', 'pending_tasks', 'downloading_tasks', 'completed_tasks', 'failed_tasks'] as const;
+    const statsFields = [
+      'total_tasks',
+      'completed_tasks',
+      'failed_tasks',
+      'active_downloads',
+      'total_downloaded',
+      'average_speed',
+      'queue_paused',
+    ] as const;
 
     for (const field of statsFields) {
       if (frontendStats[field] !== backendStats[field]) {
@@ -186,11 +200,11 @@ export class StateValidator {
 
     // 分析问题类型
     const hasDataCorruption = issues.some(issue => issue.type === 'DATA_CORRUPTION');
-    const hasCriticalMismatches = issues.some(issue => 
-      issue.type === 'MISSING_TASK' || issue.type === 'EXTRA_TASK'
+    const hasCriticalMismatches = issues.some(
+      issue => issue.type === 'MISSING_TASK' || issue.type === 'EXTRA_TASK'
     );
-    const hasMinorMismatches = issues.every(issue => 
-      issue.type === 'STATUS_MISMATCH' || issue.type === 'STATS_MISMATCH'
+    const hasMinorMismatches = issues.every(
+      issue => issue.type === 'STATUS_MISMATCH' || issue.type === 'STATS_MISMATCH'
     );
 
     // 根据问题严重程度决定策略
@@ -261,7 +275,7 @@ export class StateValidator {
 
       console.log('✅ 已从后端同步状态:', {
         任务数: backendTasks.length,
-        统计: backendStats
+        统计: backendStats,
       });
 
       return true;
@@ -284,7 +298,7 @@ export class StateValidator {
     try {
       // 对于合并策略，我们仍然以后端为准，但会保留一些前端的临时状态
       console.log('🔀 执行状态合并...');
-      
+
       const [backendTasks, backendStats] = await Promise.all([
         invoke<VideoTask[]>('get_download_tasks'),
         invoke<DownloadStats>('get_download_stats'),

@@ -12,7 +12,8 @@ const mockUseSystemInfo = vi.mocked(useSystemInfo);
 
 describe('StatusBar', () => {
   beforeEach(() => {
-    mockUseDownloadStore.mockReturnValue({
+    const mockState = {
+      tasks: [],
       stats: {
         total_tasks: 4,
         completed_tasks: 1,
@@ -21,7 +22,11 @@ describe('StatusBar', () => {
         active_downloads: 2,
         average_speed: 2048,
       },
-    } as any);
+    };
+
+    mockUseDownloadStore.mockImplementation((selector?: any) =>
+      typeof selector === 'function' ? selector(mockState) : (mockState as any)
+    );
 
     mockUseSystemInfo.mockReturnValue({
       systemInfo: null,
@@ -59,4 +64,3 @@ describe('StatusBar', () => {
     expect(screen.getByText(/下载:/)).toHaveTextContent('下载: ↓2 KB/s ↑1 KB/s');
   });
 });
-

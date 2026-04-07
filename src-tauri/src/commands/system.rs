@@ -4,7 +4,6 @@
 //! and system utilities like opening folders and checking tool availability.
 
 use chrono::Local;
-use directories::ProjectDirs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -12,6 +11,7 @@ use tauri::{AppHandle, State};
 use tracing::{error, info, warn};
 
 use crate::core::models::{AppError, AppResult, SystemInfo};
+use crate::utils::logging;
 use crate::AppState;
 
 /// Get current system information
@@ -234,7 +234,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     if !Path::new(folder_path).exists() {
         tokio::fs::create_dir_all(folder_path)
             .await
-            .map_err(|e| AppError::Io(e))?;
+            .map_err(AppError::Io)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -460,7 +460,7 @@ async fn get_video_info_impl(url: &str) -> AppResult<serde_json::Value> {
 
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<serde_json::Value> {
     let output = tokio::process::Command::new("yt-dlp")
-        .args(&["--dump-json", "--no-download", url])
+        .args(["--dump-json", "--no-download", url])
         .output()
         .await
         .map_err(|e| AppError::System(format!("Failed to execute yt-dlp: {}", e)))?;
@@ -479,7 +479,7 @@ async fn get_video_info_with_ytdlp(url: &str) -> AppResult<serde_json::Value> {
 
 async fn get_video_info_with_youtubedl(url: &str) -> AppResult<serde_json::Value> {
     let output = tokio::process::Command::new("youtube-dl")
-        .args(&["--dump-json", "--no-download", url])
+        .args(["--dump-json", "--no-download", url])
         .output()
         .await
         .map_err(|e| AppError::System(format!("Failed to execute youtube-dl: {}", e)))?;
@@ -508,7 +508,7 @@ fn extract_title_from_url(url: &url::Url) -> String {
     }
 
     // Extract filename from path if it looks like a video file
-    if let Some(filename) = path.split('/').last() {
+    if let Some(filename) = path.split('/').next_back() {
         if filename.contains('.') {
             return filename.to_string();
         }
@@ -541,30 +541,20 @@ fn extract_youtube_video_id(url: &url::Url) -> Option<String> {
 /// Append frontend log entries to the persistent log file
 #[tauri::command]
 pub async fn log_frontend_event(
-    app: AppHandle,
+    _app: AppHandle,
     level: Option<String>,
     message: String,
 ) -> Result<(), String> {
-    let log_root = if let Some(mut dir) = app.path_resolver().app_config_dir() {
-        dir.push("logs");
-        dir
-    } else if let Some(mut dir) = app.path_resolver().app_data_dir() {
-        dir.push("logs");
-        dir
-    } else if let Some(mut dir) = app.path_resolver().app_local_data_dir() {
-        dir.push("logs");
-        dir
-    } else {
-        let dirs = ProjectDirs::from("com", "videodownloader", "pro")
-            .ok_or_else(|| "Failed to resolve application data directory".to_string())?;
-        dirs.config_dir().join("logs")
-    };
+    if !logging::local_logging_enabled() {
+        return Ok(());
+    }
+
+    let log_root = logging::resolve_log_dir()?;
 
     std::fs::create_dir_all(&log_root)
         .map_err(|e| format!("Failed to create log directory: {e}"))?;
 
     let log_path = log_root.join("frontend.log");
-    info!("Frontend log path: {}", log_path.display());
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -589,20 +579,20 @@ async fn get_cpu_usage() -> Option<f32> {
     #[cfg(target_os = "windows")]
     {
         // Windows-specific CPU usage detection
-        return None;
+        None
     }
 
     #[cfg(target_os = "macos")]
     {
         // macOS-specific CPU usage detection
-        return None;
+        None
     }
 
     #[cfg(target_os = "linux")]
     {
         // Linux-specific CPU usage detection
         // Could parse /proc/stat
-        return None;
+        None
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -616,20 +606,20 @@ async fn get_memory_usage() -> Option<f32> {
     #[cfg(target_os = "windows")]
     {
         // Windows-specific memory usage detection
-        return None;
+        None
     }
 
     #[cfg(target_os = "macos")]
     {
         // macOS-specific memory usage detection
-        return None;
+        None
     }
 
     #[cfg(target_os = "linux")]
     {
         // Linux-specific memory usage detection
         // Could parse /proc/meminfo
-        return None;
+        None
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -643,20 +633,20 @@ async fn get_disk_usage() -> Option<f32> {
     #[cfg(target_os = "windows")]
     {
         // Windows-specific disk usage detection
-        return None;
+        None
     }
 
     #[cfg(target_os = "macos")]
     {
         // macOS-specific disk usage detection
-        return None;
+        None
     }
 
     #[cfg(target_os = "linux")]
     {
         // Linux-specific disk usage detection
         // Could use statvfs system call
-        return None;
+        None
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]

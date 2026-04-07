@@ -507,6 +507,12 @@ impl ProgressTrackingManager {
     }
 }
 
+impl Default for ProgressTrackingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global progress statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalProgressStats {
@@ -548,12 +554,13 @@ mod tests {
         let stats1 = tracker.update_progress(10000).unwrap();
         assert_eq!(stats1.downloaded_bytes, 10000);
         assert_eq!(stats1.progress_percent, 1.0);
-        assert!(stats1.current_speed > 0.0);
+        assert!(stats1.current_speed >= 0.0);
 
         sleep(Duration::from_millis(100)).await;
         let stats2 = tracker.update_progress(50000).unwrap();
         assert_eq!(stats2.downloaded_bytes, 50000);
         assert_eq!(stats2.progress_percent, 5.0);
+        assert!(stats2.current_speed > 0.0);
         assert!(stats2.smoothed_speed > 0.0);
     }
 
@@ -588,9 +595,11 @@ mod tests {
 
         // Simulate variable speed download
         let speeds = vec![100000, 150000, 120000, 180000, 90000];
+        let mut cumulative_bytes = 0u64;
         for (i, &bytes) in speeds.iter().enumerate() {
             sleep(Duration::from_millis(50)).await;
-            let stats = tracker.update_progress((i + 1) as u64 * bytes).unwrap();
+            cumulative_bytes += bytes;
+            let stats = tracker.update_progress(cumulative_bytes).unwrap();
 
             if i > 0 {
                 assert!(stats.current_speed > 0.0);

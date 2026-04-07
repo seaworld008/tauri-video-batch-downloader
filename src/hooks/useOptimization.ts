@@ -1,7 +1,7 @@
 /**
  * 🚀 React性能优化Hook
  * 专为工具软件设计：简洁、实用、高效
- * 
+ *
  * 集成功能：
  * - 智能Memoization (useMemo, useCallback)
  * - 防抖和节流处理
@@ -35,11 +35,10 @@ export function useDebounce<T>(value: T, delay: number): T {
  */
 export function useDebouncedCallback<T extends (...args: any[]) => void>(
   callback: T,
-  delay: number,
-  dependencies?: React.DependencyList
+  delay: number
 ): T {
   const callbackRef = useRef(callback);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // 更新回调引用
   useEffect(() => {
@@ -55,18 +54,17 @@ export function useDebouncedCallback<T extends (...args: any[]) => void>(
     };
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useCallback(
     ((...args: any[]) => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
-      
+
       timeoutRef.current = setTimeout(() => {
         callbackRef.current(...args);
       }, delay);
     }) as T,
-    [delay, ...(dependencies || [])]
+    [delay]
   );
 }
 
@@ -103,12 +101,11 @@ export function useThrottle<T>(value: T, interval: number): T {
  */
 export function useThrottledCallback<T extends (...args: any[]) => void>(
   callback: T,
-  interval: number,
-  dependencies?: React.DependencyList
+  interval: number
 ): T {
   const callbackRef = useRef(callback);
   const lastExecuted = useRef<number>(0);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // 更新回调引用
   useEffect(() => {
@@ -124,11 +121,10 @@ export function useThrottledCallback<T extends (...args: any[]) => void>(
     };
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useCallback(
     ((...args: any[]) => {
       const now = Date.now();
-      
+
       if (now - lastExecuted.current >= interval) {
         lastExecuted.current = now;
         callbackRef.current(...args);
@@ -141,7 +137,7 @@ export function useThrottledCallback<T extends (...args: any[]) => void>(
         }, remaining);
       }
     }) as T,
-    [interval, ...(dependencies || [])]
+    [interval]
   );
 }
 
@@ -168,17 +164,20 @@ export function usePagination<T>(
   const [currentPage, setCurrentPage] = useState(1);
 
   const totalPages = Math.ceil(data.length / pageSize);
-  
+
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
     return data.slice(startIndex, endIndex);
   }, [data, currentPage, pageSize]);
 
-  const goToPage = useCallback((page: number) => {
-    const newPage = Math.max(1, Math.min(page, totalPages));
-    setCurrentPage(newPage);
-  }, [totalPages]);
+  const goToPage = useCallback(
+    (page: number) => {
+      const newPage = Math.max(1, Math.min(page, totalPages));
+      setCurrentPage(newPage);
+    },
+    [totalPages]
+  );
 
   const nextPage = useCallback(() => {
     if (currentPage < totalPages) {
@@ -207,7 +206,7 @@ export function usePagination<T>(
     nextPage,
     prevPage,
     canGoNext: currentPage < totalPages,
-    canGoPrev: currentPage > 1
+    canGoPrev: currentPage > 1,
   };
 }
 
@@ -233,7 +232,7 @@ export function useVirtualScroll(
       itemCount - 1,
       Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
     );
-    
+
     return { start, end };
   }, [scrollTop, itemHeight, containerHeight, overscan, itemCount]);
 
@@ -243,7 +242,7 @@ export function useVirtualScroll(
     scrollTop,
     setScrollTop,
     visibleRange,
-    totalHeight
+    totalHeight,
   };
 }
 
@@ -265,50 +264,51 @@ export function useOptimizedSearch<T>(
   matchCount: number;
 } {
   const [isSearching, setIsSearching] = useState(false);
-  const debouncedQuery = useDebounce(searchQuery.toLowerCase().trim(), debounceMs);
+  const normalizedQuery = searchQuery.toLowerCase().trim();
+  const debouncedQuery = useDebounce(normalizedQuery, debounceMs);
 
   const results = useMemo(() => {
     if (!debouncedQuery) {
-      setIsSearching(false);
       return data;
     }
 
-    setIsSearching(true);
-    
     const filtered = perfMonitor.measure(
       'OptimizedSearch.filter',
-      () => data.filter(item => 
-        searchFields.some(field => {
-          const value = item[field];
-          return value && 
-                 String(value).toLowerCase().includes(debouncedQuery);
-        })
-      ),
+      () =>
+        data.filter(item =>
+          searchFields.some(field => {
+            const value = item[field];
+            return value && String(value).toLowerCase().includes(debouncedQuery);
+          })
+        ),
       'data',
       { itemCount: data.length, queryLength: debouncedQuery.length }
     );
-
-    setIsSearching(false);
     return filtered;
   }, [data, debouncedQuery, searchFields]);
+
+  useEffect(() => {
+    if (!normalizedQuery) {
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(debouncedQuery !== normalizedQuery);
+  }, [debouncedQuery, normalizedQuery]);
 
   return {
     results,
     isSearching,
-    matchCount: results.length
+    matchCount: results.length,
   };
 }
 
 /**
  * 多条件过滤Hook
  */
-export function useMultiFilter<T>(
-  data: T[],
-  filters: Record<string, (item: T) => boolean>
-): T[] {
+export function useMultiFilter<T>(data: T[], filters: Record<string, (item: T) => boolean>): T[] {
   return useMemo(() => {
     const activeFilters = Object.values(filters).filter(Boolean);
-    
+
     if (activeFilters.length === 0) return data;
 
     return perfMonitor.measure(
@@ -342,41 +342,45 @@ export function useComponentPerformance(componentName: string): {
   const [performanceData, setPerformanceData] = useState({
     renderCount: 0,
     averageRenderTime: 0,
-    lastRenderTime: 0
+    lastRenderTime: 0,
   });
 
   const measureRender = useCallback(() => {
     const renderTime = performance.now();
     renderCountRef.current += 1;
     renderTimesRef.current.push(renderTime);
-    
+
     // 保持最近的50次渲染记录
     if (renderTimesRef.current.length > 50) {
       renderTimesRef.current = renderTimesRef.current.slice(-50);
     }
 
-    const averageTime = renderTimesRef.current.reduce((sum, time, index, arr) => {
-      if (index === 0) return 0;
-      return sum + (arr[index] - arr[index - 1]);
-    }, 0) / Math.max(1, renderTimesRef.current.length - 1);
+    const averageTime =
+      renderTimesRef.current.reduce((sum, time, index, arr) => {
+        if (index === 0) return 0;
+        return sum + (arr[index] - arr[index - 1]);
+      }, 0) / Math.max(1, renderTimesRef.current.length - 1);
 
     setPerformanceData({
       renderCount: renderCountRef.current,
       averageRenderTime: averageTime,
-      lastRenderTime: renderTime
+      lastRenderTime: renderTime,
     });
 
     perfMonitor.recordRender(componentName, renderTime);
   }, [componentName]);
 
-  const measureEffect = useCallback(async (effectName: string, fn: () => void | Promise<void>) => {
-    await trackEffect(effectName, fn);
-  }, [trackEffect]);
+  const measureEffect = useCallback(
+    async (effectName: string, fn: () => void | Promise<void>) => {
+      await trackEffect(effectName, fn);
+    },
+    [trackEffect]
+  );
 
   return {
     measureRender,
     measureEffect,
-    performanceData
+    performanceData,
   };
 }
 
@@ -403,7 +407,7 @@ export function useMemoryMonitor(intervalMs: number = 5000): {
       setMemoryUsage({
         used: snapshot.usedJSHeapSize,
         total: snapshot.totalJSHeapSize,
-        percentage: (snapshot.usedJSHeapSize / snapshot.jsHeapSizeLimit) * 100
+        percentage: (snapshot.usedJSHeapSize / snapshot.jsHeapSizeLimit) * 100,
       });
     }
   }, []);
@@ -420,7 +424,7 @@ export function useMemoryMonitor(intervalMs: number = 5000): {
 
   return {
     memoryUsage,
-    takeSnapshot
+    takeSnapshot,
   };
 }
 
@@ -447,7 +451,7 @@ export function useSmartCache<K, V>(
   const cleanup = useCallback(() => {
     const now = Date.now();
     const cache = cacheRef.current;
-    
+
     for (const [key, entry] of cache.entries()) {
       if (now - entry.timestamp > ttl) {
         cache.delete(key);
@@ -456,35 +460,43 @@ export function useSmartCache<K, V>(
 
     // 如果仍然超过最大大小，删除最旧的条目
     if (cache.size > maxSize) {
-      const entries = Array.from(cache.entries())
-        .sort((a, b) => a[1].timestamp - b[1].timestamp);
-      
+      const entries = Array.from(cache.entries()).sort((a, b) => a[1].timestamp - b[1].timestamp);
+
       const toDelete = entries.slice(0, cache.size - maxSize);
       toDelete.forEach(([key]) => cache.delete(key));
     }
   }, [maxSize, ttl]);
 
-  const get = useCallback((key: K): V | undefined => {
-    const entry = cacheRef.current.get(key);
-    if (!entry) return undefined;
+  const get = useCallback(
+    (key: K): V | undefined => {
+      const entry = cacheRef.current.get(key);
+      if (!entry) return undefined;
 
-    const now = Date.now();
-    if (now - entry.timestamp > ttl) {
-      cacheRef.current.delete(key);
-      return undefined;
-    }
+      const now = Date.now();
+      if (now - entry.timestamp > ttl) {
+        cacheRef.current.delete(key);
+        return undefined;
+      }
 
-    return entry.value;
-  }, [ttl]);
+      return entry.value;
+    },
+    [ttl]
+  );
 
-  const set = useCallback((key: K, value: V) => {
-    cleanup();
-    cacheRef.current.set(key, { value, timestamp: Date.now() });
-  }, [cleanup]);
+  const set = useCallback(
+    (key: K, value: V) => {
+      cleanup();
+      cacheRef.current.set(key, { value, timestamp: Date.now() });
+    },
+    [cleanup]
+  );
 
-  const has = useCallback((key: K): boolean => {
-    return get(key) !== undefined;
-  }, [get]);
+  const has = useCallback(
+    (key: K): boolean => {
+      return get(key) !== undefined;
+    },
+    [get]
+  );
 
   const deleteKey = useCallback((key: K): boolean => {
     return cacheRef.current.delete(key);
@@ -508,7 +520,7 @@ export function useSmartCache<K, V>(
     clear,
     get size() {
       return cacheRef.current.size;
-    }
+    },
   };
 }
 
@@ -527,5 +539,5 @@ export default {
   useMultiFilter,
   useComponentPerformance,
   useMemoryMonitor,
-  useSmartCache
+  useSmartCache,
 };

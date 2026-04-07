@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { TaskList } from '../TaskList'
-import type { VideoTask } from '../../../types'
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { TaskList } from '../TaskList';
+import type { VideoTask } from '../../../types';
 
 // Mock @tanstack/react-virtual
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: () => ({
     getVirtualItems: () => [],
     getTotalSize: () => 0,
-    scrollToIndex: vi.fn()
-  })
-}))
+    scrollToIndex: vi.fn(),
+  }),
+}));
 
 describe('TaskList', () => {
   const mockTasks: VideoTask[] = [
@@ -24,7 +24,7 @@ describe('TaskList', () => {
       downloaded_size: 0,
       speed: 0,
       created_at: '2024-01-01T10:00:00Z',
-      updated_at: '2024-01-01T10:00:00Z'
+      updated_at: '2024-01-01T10:00:00Z',
     },
     {
       id: '2',
@@ -36,66 +36,66 @@ describe('TaskList', () => {
       downloaded_size: 1024 * 1024,
       speed: 1024 * 500,
       created_at: '2024-01-01T10:30:00Z',
-      updated_at: '2024-01-01T10:35:00Z'
-    }
-  ]
+      updated_at: '2024-01-01T10:35:00Z',
+    },
+  ];
 
   beforeEach(() => {
-    vi.clearAllMocks()
-  })
+    vi.clearAllMocks();
+  });
 
   it('renders task list component without crashing', () => {
-    render(<TaskList tasks={mockTasks} />)
-    
+    render(<TaskList tasks={mockTasks} />);
+
     // TaskList should render some content
-    expect(screen.getByRole('region')).toBeInTheDocument()
-  })
+    expect(screen.getByRole('region')).toBeInTheDocument();
+  });
 
   it('renders virtual scrolling container', () => {
-    render(<TaskList tasks={mockTasks} />)
-    
+    render(<TaskList tasks={mockTasks} />);
+
     // Should render the virtualized list container
-    const listContainer = screen.getByRole('region')
-    expect(listContainer).toBeInTheDocument()
-  })
+    const listContainer = screen.getByRole('region');
+    expect(listContainer).toBeInTheDocument();
+  });
 
   it('handles empty task list', () => {
-    render(<TaskList tasks={[]} />)
-    
+    render(<TaskList tasks={[]} />);
+
     // Should still render the container
-    expect(screen.getByRole('region')).toBeInTheDocument()
-  })
+    expect(screen.getByRole('region')).toBeInTheDocument();
+  });
 
   it('handles large task lists with virtual scrolling', () => {
     const largeTasks = Array.from({ length: 1000 }, (_, i) => ({
       ...mockTasks[0],
       id: `task-${i}`,
-      title: `Video ${i}`
-    }))
+      title: `Video ${i}`,
+    }));
 
-    const { container } = render(<TaskList tasks={largeTasks} />)
-    
+    const { container } = render(<TaskList tasks={largeTasks} />);
+
     // Should render without performance issues due to virtualization
-    expect(container).toBeInTheDocument()
-  })
+    expect(container).toBeInTheDocument();
+  });
 
   it('provides correct ARIA attributes', () => {
-    render(<TaskList tasks={mockTasks} />)
-    
-    const container = screen.getByRole('region')
-    expect(container).toHaveAttribute('aria-label', '下载任务列表')
-  })
+    render(<TaskList tasks={mockTasks} />);
+
+    const container = screen.getByRole('region');
+    expect(container).toHaveAttribute('aria-label', '下载任务列表');
+  });
 
   it('re-renders when tasks prop changes', () => {
-    const { rerender } = render(<TaskList tasks={[mockTasks[0]]} />)
-    
+    const { rerender } = render(<TaskList tasks={[mockTasks[0]]} />);
+
     // Initial render with one task
-    expect(screen.getByRole('region')).toBeInTheDocument()
-    
+    expect(screen.getByRole('region')).toBeInTheDocument();
+
     // Re-render with different tasks
-    rerender(<TaskList tasks={mockTasks} />)
-    
+    rerender(<TaskList tasks={mockTasks} />);
+
     // Should still render properly
-    expect(screen.getByRole('region')).toBeInTheDocument()
-  })
-})
+    expect(screen.getByRole('region')).toBeInTheDocument();
+  });
+});

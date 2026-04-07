@@ -1,7 +1,7 @@
 //! Download management commands
+use tauri::Emitter;
 
-use serde::Deserialize;
-use tauri::{command, Manager, State};
+use tauri::{command, State};
 
 use crate::{core::models::*, AppState};
 
@@ -44,7 +44,7 @@ pub async fn debug_download_test(
     tracing::info!("🧪 [DEBUG_TEST] {}", task_check);
 
     // 4. 尝试发送一个测试事件到前端
-    let emit_result = app_handle.emit_all(
+    let emit_result = app_handle.emit(
         "debug_test_event",
         serde_json::json!({
             "message": "Debug test from backend",
@@ -125,15 +125,8 @@ pub async fn start_download(task_id: String, state: State<'_, AppState>) -> Resu
         task_id
     );
 
-    // 直接调用 DownloadManager，不经过 runtime 层
-    let result = {
-        let mut manager = state.download_manager.write().await;
-        tracing::info!(
-            "[START_DOWNLOAD_CMD] Got write lock, calling start_download_impl for: {}",
-            task_id
-        );
-        manager.start_download_impl(&task_id).await
-    };
+    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
+    let result = state.download_runtime.start_task(task_id.clone()).await;
 
     match result {
         Ok(_) => {
@@ -158,15 +151,8 @@ pub async fn start_download(task_id: String, state: State<'_, AppState>) -> Resu
 pub async fn pause_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     tracing::info!("[PAUSE_CMD] Received pause request for task: {}", task_id);
 
-    // 直接调用 DownloadManager
-    let result = {
-        let mut manager = state.download_manager.write().await;
-        tracing::info!(
-            "[PAUSE_CMD] Got write lock, calling pause_download_impl for: {}",
-            task_id
-        );
-        manager.pause_download_impl(&task_id).await
-    };
+    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
+    let result = state.download_runtime.pause_task(task_id.clone()).await;
 
     match result {
         Ok(_) => {
@@ -184,11 +170,8 @@ pub async fn pause_download(task_id: String, state: State<'_, AppState>) -> Resu
 pub async fn resume_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     tracing::info!("[RESUME_CMD] Resuming download for task: {}", task_id);
 
-    // 直接调用 DownloadManager
-    let result = {
-        let mut manager = state.download_manager.write().await;
-        manager.resume_download_impl(&task_id).await
-    };
+    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
+    let result = state.download_runtime.resume_task(task_id.clone()).await;
 
     match result {
         Ok(_) => {
@@ -206,11 +189,8 @@ pub async fn resume_download(task_id: String, state: State<'_, AppState>) -> Res
 pub async fn cancel_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     tracing::info!("[CANCEL_CMD] Cancelling download for task: {}", task_id);
 
-    // 直接调用 DownloadManager
-    let result = {
-        let mut manager = state.download_manager.write().await;
-        manager.cancel_download_impl(&task_id).await
-    };
+    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
+    let result = state.download_runtime.cancel_task(task_id.clone()).await;
 
     match result {
         Ok(_) => {
@@ -227,8 +207,7 @@ pub async fn cancel_download(task_id: String, state: State<'_, AppState>) -> Res
 #[command]
 pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
     tracing::info!("[PAUSE_ALL_CMD] Pausing all active downloads");
-    let mut manager = state.download_manager.write().await;
-    manager.pause_all_downloads_impl().await.map_err(|e| {
+    state.download_runtime.pause_all().await.map_err(|e| {
         tracing::error!("[PAUSE_ALL_CMD] ❌ Failed to pause all downloads: {}", e);
         e.to_string()
     })
@@ -237,17 +216,26 @@ pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, St
 #[command]
 pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
     tracing::info!("[RESUME_ALL_CMD] Resuming all paused downloads");
-    let mut manager = state.download_manager.write().await;
-    manager.resume_all_downloads_impl().await.map_err(|e| {
+    state.download_runtime.resume_all().await.map_err(|e| {
         tracing::error!("[RESUME_ALL_CMD] ❌ Failed to resume all downloads: {}", e);
         e.to_string()
     })
 }
 
-/// Start all pending/paused/failed downloads respecting concurrency limit
+/// Start all downloads (backend decides resume paused vs start pending)
+#[command]
+pub async fn start_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::info!("[START_ALL_CMD] Starting downloads with backend policy");
+    state.download_runtime.start_all().await.map_err(|e| {
+        tracing::error!("[START_ALL_CMD] ❌ Failed to start all downloads: {}", e);
+        e.to_string()
+    })
+}
+
+/// Start all pending/failed downloads respecting concurrency limit
 #[command]
 pub async fn start_all_pending_downloads(state: State<'_, AppState>) -> Result<usize, String> {
-    tracing::info!("[START_ALL_CMD] Starting all pending/paused/failed downloads");
+    tracing::info!("[START_ALL_CMD] Starting all pending/failed downloads");
     let mut manager = state.download_manager.write().await;
     manager.start_all_pending_impl().await.map_err(|e| {
         tracing::error!(
@@ -261,8 +249,7 @@ pub async fn start_all_pending_downloads(state: State<'_, AppState>) -> Result<u
 #[command]
 pub async fn cancel_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
     tracing::info!("[CANCEL_ALL_CMD] Cancelling all in-flight downloads");
-    let mut manager = state.download_manager.write().await;
-    manager.cancel_all_downloads_impl().await.map_err(|e| {
+    state.download_runtime.cancel_all().await.map_err(|e| {
         tracing::error!("[CANCEL_ALL_CMD] ❌ Failed to cancel all downloads: {}", e);
         e.to_string()
     })
@@ -296,27 +283,35 @@ pub async fn remove_download_tasks(
     task_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut manager = state.download_manager.write().await;
-
     let mut removed_count = 0;
 
     for task_id in task_ids {
-        // 取消正在进行的下载
-        if manager.is_task_active(&task_id).await {
-            if let Err(e) = manager.cancel_download(&task_id).await {
-                tracing::warn!("Failed to cancel active download {}: {}", task_id, e);
-            }
-        }
+        // 每个任务独立短持锁，避免批量删除时长时间阻塞其它命令。
+        let removed = {
+            let mut manager = state.download_manager.write().await;
 
-        // 从任务存储中移除
-        match manager.remove_task(&task_id).await {
-            Ok(()) => {
-                removed_count += 1;
-                tracing::info!("Successfully removed task: {}", task_id);
+            // 取消正在进行的下载
+            if manager.is_task_active(&task_id).await {
+                if let Err(e) = manager.cancel_download(&task_id).await {
+                    tracing::warn!("Failed to cancel active download {}: {}", task_id, e);
+                }
             }
-            Err(e) => {
-                tracing::warn!("Failed to remove task {}: {}", task_id, e);
+
+            // 从任务存储中移除
+            match manager.remove_task(&task_id).await {
+                Ok(()) => {
+                    tracing::info!("Successfully removed task: {}", task_id);
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to remove task {}: {}", task_id, e);
+                    false
+                }
             }
+        };
+
+        if removed {
+            removed_count += 1;
         }
     }
 
@@ -373,15 +368,16 @@ pub async fn clear_completed_tasks(state: State<'_, AppState>) -> Result<(), Str
 
 #[command]
 pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String> {
-    let mut manager = state.download_manager.write().await;
-
-    let failed_task_ids: Vec<String> = manager
-        .get_tasks()
-        .await
-        .into_iter()
-        .filter(|task| task.status == TaskStatus::Failed)
-        .map(|task| task.id.clone())
-        .collect();
+    let failed_task_ids: Vec<String> = {
+        let manager = state.download_manager.read().await;
+        manager
+            .get_tasks()
+            .await
+            .into_iter()
+            .filter(|task| task.status == TaskStatus::Failed)
+            .map(|task| task.id.clone())
+            .collect()
+    };
 
     if failed_task_ids.is_empty() {
         tracing::info!("No failed tasks to retry");
@@ -390,16 +386,19 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
 
     tracing::info!("Retrying {} failed tasks", failed_task_ids.len());
 
-    manager
-        .retry_failed()
-        .await
-        .map_err(|e| format!("Failed to reset failed tasks: {}", e))?;
+    {
+        let mut manager = state.download_manager.write().await;
+        manager
+            .retry_failed()
+            .await
+            .map_err(|e| format!("Failed to reset failed tasks: {}", e))?;
+    }
 
     let mut started = 0usize;
     let mut start_errors = Vec::new();
 
     for task_id in failed_task_ids {
-        match manager.start_download(&task_id).await {
+        match state.download_runtime.start_task(task_id.clone()).await {
             Ok(_) => {
                 started += 1;
                 tracing::info!("Restarted download for task: {}", task_id);
@@ -423,17 +422,6 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
     Ok(())
 }
 
-/// Request structure for creating new download tasks
-#[derive(Debug, Deserialize)]
-pub struct CreateTaskRequest {
-    pub url: String,
-    pub title: String,
-    pub output_path: String,
-
-    // 保存完整的视频信息供后续使用
-    pub video_info: Option<crate::core::models::VideoInfo>,
-}
-
 #[command]
 pub async fn set_rate_limit(
     bytes_per_second: Option<u64>,
@@ -443,7 +431,7 @@ pub async fn set_rate_limit(
     const MAX_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10GB/s
 
     if let Some(limit) = bytes_per_second {
-        if limit < MIN_LIMIT || limit > MAX_LIMIT {
+        if !(MIN_LIMIT..=MAX_LIMIT).contains(&limit) {
             return Err(format!(
                 "Rate limit must be between {} and {} bytes/sec",
                 MIN_LIMIT, MAX_LIMIT

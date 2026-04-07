@@ -9,7 +9,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, instrument};
 
-use crate::core::manager::DownloadManager;
+use crate::core::manager::{DownloadEvent, DownloadManager};
 use crate::core::models::{AppError, AppResult};
 
 /// Commands understood by the runtime router.
@@ -42,6 +42,10 @@ pub enum RuntimeCommand {
     },
     CancelAll {
         respond_to: oneshot::Sender<AppResult<usize>>,
+    },
+    ApplyEvent {
+        event: DownloadEvent,
+        respond_to: oneshot::Sender<AppResult<()>>,
     },
 }
 
@@ -119,6 +123,14 @@ impl DownloadRuntimeHandle {
     pub async fn cancel_all(&self) -> AppResult<usize> {
         self.send_command(|tx| RuntimeCommand::CancelAll { respond_to: tx })
             .await
+    }
+
+    pub async fn apply_event(&self, event: DownloadEvent) -> AppResult<()> {
+        self.send_command(|tx| RuntimeCommand::ApplyEvent {
+            event,
+            respond_to: tx,
+        })
+        .await
     }
 }
 
@@ -204,10 +216,7 @@ async fn handle_command(manager: &Arc<RwLock<DownloadManager>>, command: Runtime
             respond_to,
         } => {
             debug!("[RUNTIME_CMD] Processing Start for task: {}", task_id);
-            let result = {
-                let mut guard = manager.write().await;
-                guard.start_download_impl(&task_id).await
-            };
+            let result = DownloadManager::runtime_start_download(manager, &task_id).await;
             debug!(
                 "[RUNTIME_CMD] Start completed for task: {}, success: {}",
                 task_id,
@@ -220,14 +229,7 @@ async fn handle_command(manager: &Arc<RwLock<DownloadManager>>, command: Runtime
             respond_to,
         } => {
             debug!("[RUNTIME_CMD] Processing Pause for task: {}", task_id);
-            let result = {
-                debug!("[RUNTIME_CMD] Acquiring write lock for Pause...");
-                let mut guard = manager.write().await;
-                debug!(
-                    "[RUNTIME_CMD] Write lock acquired for Pause, executing pause_download_impl..."
-                );
-                guard.pause_download_impl(&task_id).await
-            };
+            let result = DownloadManager::runtime_pause_download(manager, &task_id).await;
             debug!(
                 "[RUNTIME_CMD] Pause completed for task: {}, success: {}",
                 task_id,
@@ -239,48 +241,34 @@ async fn handle_command(manager: &Arc<RwLock<DownloadManager>>, command: Runtime
             task_id,
             respond_to,
         } => {
-            let result = {
-                let mut guard = manager.write().await;
-                guard.resume_download_impl(&task_id).await
-            };
+            let result = DownloadManager::runtime_resume_download(manager, &task_id).await;
             let _ = respond_to.send(result);
         }
         RuntimeCommand::Cancel {
             task_id,
             respond_to,
         } => {
-            let result = {
-                let mut guard = manager.write().await;
-                guard.cancel_download_impl(&task_id).await
-            };
+            let result = DownloadManager::runtime_cancel_download(manager, &task_id).await;
             let _ = respond_to.send(result);
         }
         RuntimeCommand::StartAll { respond_to } => {
-            let result = {
-                let mut guard = manager.write().await;
-                guard.start_all_pending_impl().await
-            };
+            let result = DownloadManager::runtime_start_all_downloads(manager).await;
             let _ = respond_to.send(result);
         }
         RuntimeCommand::PauseAll { respond_to } => {
-            let result = {
-                let mut guard = manager.write().await;
-                guard.pause_all_downloads_impl().await
-            };
+            let result = DownloadManager::runtime_pause_all_downloads(manager).await;
             let _ = respond_to.send(result);
         }
         RuntimeCommand::ResumeAll { respond_to } => {
-            let result = {
-                let mut guard = manager.write().await;
-                guard.resume_all_downloads_impl().await
-            };
+            let result = DownloadManager::runtime_resume_all_downloads(manager).await;
             let _ = respond_to.send(result);
         }
         RuntimeCommand::CancelAll { respond_to } => {
-            let result = {
-                let mut guard = manager.write().await;
-                guard.cancel_all_downloads_impl().await
-            };
+            let result = DownloadManager::runtime_cancel_all_downloads(manager).await;
+            let _ = respond_to.send(result);
+        }
+        RuntimeCommand::ApplyEvent { event, respond_to } => {
+            let result = DownloadManager::runtime_apply_event_side_effects(manager, &event).await;
             let _ = respond_to.send(result);
         }
     }

@@ -1,15 +1,17 @@
 # GitHub Actions Workflows
 
-This directory contains comprehensive CI/CD workflows for the Video Downloader Pro project.
+This directory contains comprehensive CI/CD workflows for the Video Downloader
+Pro project.
 
 ## 🔄 Workflows Overview
 
 ### 1. CI Workflow (`ci.yml`)
 
-**Triggers**: Push to `main`/`dev`, Pull Requests
-**Purpose**: Continuous Integration and Quality Assurance
+**Triggers**: Push to `main`/`dev`, Pull Requests **Purpose**: Continuous
+Integration and Quality Assurance
 
 **Jobs**:
+
 - **Frontend CI**: TypeScript, ESLint, Prettier, Vitest tests
 - **Backend CI**: Rust formatting, Clippy, tests (cross-platform)
 - **Security Audit**: Vulnerability scanning, license checks
@@ -19,10 +21,11 @@ This directory contains comprehensive CI/CD workflows for the Video Downloader P
 
 ### 2. Release Workflow (`release.yml`)
 
-**Triggers**: Tags matching `v*`, Manual dispatch
-**Purpose**: Multi-platform builds and releases
+**Triggers**: Tags matching `v*`, Manual dispatch **Purpose**: Multi-platform
+builds and releases
 
 **Features**:
+
 - Cross-platform builds (Windows, macOS, Linux)
 - Code signing and notarization
 - Automated release notes generation
@@ -30,16 +33,18 @@ This directory contains comprehensive CI/CD workflows for the Video Downloader P
 - Post-release distribution tasks
 
 **Supported Platforms**:
+
 - Windows x64 (MSI, EXE)
-- macOS Intel/Apple Silicon (DMG) 
+- macOS Intel/Apple Silicon (DMG)
 - Linux (AppImage, DEB, RPM)
 
 ### 3. Security Workflow (`security.yml`)
 
-**Triggers**: Weekly schedule, Push to main, Manual
-**Purpose**: Comprehensive security auditing
+**Triggers**: Weekly schedule, Push to main, Manual **Purpose**: Comprehensive
+security auditing
 
 **Security Checks**:
+
 - Rust: `cargo audit`, `cargo deny`
 - Frontend: `npm audit`, outdated packages
 - CodeQL static analysis
@@ -50,7 +55,8 @@ This directory contains comprehensive CI/CD workflows for the Video Downloader P
 
 ### Required Repository Secrets
 
-For the workflows to function properly, configure these secrets in your GitHub repository:
+For the workflows to function properly, configure these secrets in your GitHub
+repository:
 
 #### Code Signing (Optional but Recommended)
 
@@ -59,7 +65,7 @@ For the workflows to function properly, configure these secrets in your GitHub r
 WINDOWS_CERTIFICATE          # Base64 encoded .p12 certificate
 WINDOWS_CERTIFICATE_PASSWORD # Certificate password
 
-# macOS Code Signing  
+# macOS Code Signing
 APPLE_CERTIFICATE            # Base64 encoded .p12 certificate
 APPLE_CERTIFICATE_PASSWORD   # Certificate password
 APPLE_SIGNING_IDENTITY       # Developer ID Application: Your Name
@@ -78,7 +84,7 @@ TAURI_KEY_PASSWORD          # Private key password
 ```bash
 # Package Distribution
 HOMEBREW_TAP_TOKEN          # For Homebrew formula updates
-CHOCOLATEY_API_KEY          # For Chocolatey package updates  
+CHOCOLATEY_API_KEY          # For Chocolatey package updates
 DOCKER_HUB_TOKEN           # For Docker image publishing
 
 # Code Coverage
@@ -88,19 +94,21 @@ CODECOV_TOKEN               # For code coverage reporting
 ### Local Development Setup
 
 1. **Install Dependencies**:
+
    ```bash
    pnpm install
    cd src-tauri && cargo check
    ```
 
 2. **Run Quality Checks Locally**:
+
    ```bash
    # Frontend
    pnpm type-check
    pnpm lint
    pnpm test
-   
-   # Backend 
+
+   # Backend
    cd src-tauri
    cargo fmt --check
    cargo clippy
@@ -108,10 +116,11 @@ CODECOV_TOKEN               # For code coverage reporting
    ```
 
 3. **Security Audits**:
+
    ```bash
    # Install tools
    cargo install cargo-audit cargo-deny
-   
+
    # Run audits
    cd src-tauri
    cargo audit
@@ -123,6 +132,7 @@ CODECOV_TOKEN               # For code coverage reporting
 ### Automated Releases
 
 1. **Create a Release Tag**:
+
    ```bash
    git tag -a v1.2.3 -m "Release v1.2.3
 
@@ -136,7 +146,7 @@ CODECOV_TOKEN               # For code coverage reporting
 
    ## Migration Guide
    - No migration required"
-   
+
    git push origin v1.2.3
    ```
 
@@ -150,6 +160,7 @@ CODECOV_TOKEN               # For code coverage reporting
 ### Manual Releases
 
 Use the GitHub Actions web interface:
+
 1. Go to Actions → Release workflow
 2. Click "Run workflow"
 3. Enter the tag to release
@@ -160,6 +171,7 @@ Use the GitHub Actions web interface:
 ### Workflow Status
 
 Monitor workflow execution:
+
 - GitHub Actions tab
 - Status badges in README
 - Email notifications (configurable)
@@ -184,6 +196,7 @@ Monitor workflow execution:
 ### Debugging
 
 Enable debug logging by setting:
+
 ```bash
 # In workflow environment
 ACTIONS_STEP_DEBUG=true
@@ -215,6 +228,7 @@ ACTIONS_RUNNER_DEBUG=true
 ### Adding New Checks
 
 1. **Create New Job in CI**:
+
    ```yaml
    new-check:
      name: New Check
@@ -234,6 +248,7 @@ ACTIONS_RUNNER_DEBUG=true
 ### Platform-Specific Builds
 
 Add new platform to release workflow:
+
 ```yaml
 matrix:
   platform:
@@ -245,6 +260,7 @@ matrix:
 ### Custom Notifications
 
 Add notification steps to workflows:
+
 ```yaml
 - name: Notify on failure
   if: failure()
@@ -276,7 +292,7 @@ When modifying workflows:
 ### Regular Tasks
 
 - Review dependency updates monthly
-- Update action versions quarterly  
+- Update action versions quarterly
 - Audit security configurations
 - Monitor workflow performance metrics
 - Update documentation as needed
@@ -284,6 +300,7 @@ When modifying workflows:
 ### Version Updates
 
 Keep these updated regularly:
+
 - `actions/checkout` (currently v4)
 - `actions/setup-node` (currently v4)
 - `dtolnay/rust-toolchain` (currently stable)
@@ -292,6 +309,7 @@ Keep these updated regularly:
 ## 🏷️ Labels and Organization
 
 Workflows automatically apply these labels:
+
 - `dependencies`: Dependency updates
 - `frontend`/`backend`: Component-specific
 - `security`: Security-related changes

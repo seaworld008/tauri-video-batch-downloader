@@ -18,7 +18,7 @@ pub fn parse_excel_file<P: AsRef<Path>>(path: P) -> Result<Vec<ExcelRecord>> {
 
     if let Some(Ok(range)) = workbook.worksheet_range_at(0) {
         for (row_idx, row) in range.rows().enumerate() {
-            let values: Vec<String> = row.iter().map(|cell| datatype_to_string(cell)).collect();
+            let values: Vec<String> = row.iter().map(datatype_to_string).collect();
 
             records.push(ExcelRecord {
                 row: row_idx,

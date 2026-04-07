@@ -1,5 +1,11 @@
 // 任务状态枚举
-export type TaskStatus = 'pending' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export type TaskStatus =
+  | 'pending'
+  | 'downloading'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 // 下载器类型
 export type DownloaderType = 'http' | 'm3u8' | 'youtube';
@@ -20,21 +26,21 @@ export interface VideoTask {
   created_at: string;
   updated_at: string;
   downloader_type?: DownloaderType;
-  
+
   // 保存完整的视频信息供后续使用
   video_info?: {
-    zl_id?: string;        // 专栏ID
-    zl_name?: string;      // 专栏名称  
-    record_url?: string;   // 视频链接
-    kc_id?: string;        // 课程ID
-    kc_name?: string;      // 课程名称
-    
+    zl_id?: string; // 专栏ID
+    zl_name?: string; // 专栏名称
+    record_url?: string; // 视频链接
+    kc_id?: string; // 课程ID
+    kc_name?: string; // 课程名称
+
     // 向后兼容的字段
-    id?: string;          
-    name?: string;        
-    url?: string;         
-    course_id?: string;   
-    course_name?: string; 
+    id?: string;
+    name?: string;
+    url?: string;
+    course_id?: string;
+    course_name?: string;
   };
 }
 
@@ -50,17 +56,17 @@ export interface ProgressUpdate {
 
 // 导入的数据接口 - 与Go版本Video结构保持一致
 export interface ImportedData {
-  zl_id?: string;        // 专栏ID (对应Rust版本的zl_id)
-  zl_name?: string;      // 专栏名称 (对应Rust版本的zl_name)
-  record_url?: string;   // 视频链接 (对应Rust版本的record_url)
-  kc_id?: string;        // 课程ID (对应Rust版本的kc_id)  
-  kc_name?: string;      // 课程名称 (对应Rust版本的kc_name)
-  
+  zl_id?: string; // 专栏ID (对应Rust版本的zl_id)
+  zl_name?: string; // 专栏名称 (对应Rust版本的zl_name)
+  record_url?: string; // 视频链接 (对应Rust版本的record_url)
+  kc_id?: string; // 课程ID (对应Rust版本的kc_id)
+  kc_name?: string; // 课程名称 (对应Rust版本的kc_name)
+
   // 向后兼容的字段
-  id?: string;          // 兼容旧版本
-  name?: string;        // 兼容旧版本
-  url?: string;         // 兼容旧版本
-  course_id?: string;   // 兼容旧版本
+  id?: string; // 兼容旧版本
+  name?: string; // 兼容旧版本
+  url?: string; // 兼容旧版本
+  course_id?: string; // 兼容旧版本
   course_name?: string; // 兼容旧版本
 }
 
@@ -161,6 +167,7 @@ export interface DownloadStats {
   total_downloaded: number;
   average_speed: number;
   active_downloads: number;
+  queue_paused: boolean;
 }
 
 // YouTube 视频信息接口

@@ -1,10 +1,10 @@
 /**
  * 🏗️ Zod Schema 定义库
  * 提供运行时类型验证和TypeScript类型推断
- * 
+ *
  * 功能特性：
  * - 完整的类型覆盖：从基础枚举到复杂嵌套对象
- * - 运行时验证：确保数据在运行时符合预期类型  
+ * - 运行时验证：确保数据在运行时符合预期类型
  * - 类型推断：使用z.infer<>自动生成TypeScript类型
  * - 错误处理：提供详细的验证错误信息
  * - 向后兼容：支持现有类型的平滑迁移
@@ -20,52 +20,32 @@ import { z } from 'zod';
  */
 export const TaskStatusSchema = z.enum([
   'pending',
-  'downloading', 
+  'downloading',
   'paused',
   'completed',
   'failed',
-  'cancelled'
+  'cancelled',
 ]);
 
 /**
  * 下载器类型枚举 - 支持多种视频源
  */
-export const DownloaderTypeSchema = z.enum([
-  'http',
-  'm3u8', 
-  'youtube'
-]);
+export const DownloaderTypeSchema = z.enum(['http', 'm3u8', 'youtube']);
 
 /**
  * UI视图类型枚举
  */
-export const ViewTypeSchema = z.enum([
-  'dashboard',
-  'import',
-  'settings',
-  'about'
-]);
+export const ViewTypeSchema = z.enum(['dashboard', 'import', 'settings', 'about']);
 
 /**
  * 通知类型枚举
  */
-export const NotificationTypeSchema = z.enum([
-  'success',
-  'error',
-  'warning', 
-  'info'
-]);
+export const NotificationTypeSchema = z.enum(['success', 'error', 'warning', 'info']);
 
 /**
  * 模态框类型枚举
  */
-export const ModalTypeSchema = z.enum([
-  'confirm',
-  'info',
-  'warning',
-  'error',
-  'custom'
-]);
+export const ModalTypeSchema = z.enum(['confirm', 'info', 'warning', 'error', 'custom']);
 
 /**
  * 表单字段类型枚举
@@ -74,29 +54,20 @@ export const FormFieldTypeSchema = z.enum([
   'text',
   'number',
   'select',
-  'checkbox', 
+  'checkbox',
   'file',
-  'textarea'
+  'textarea',
 ]);
 
 /**
  * 日志级别枚举
  */
-export const LogLevelSchema = z.enum([
-  'error',
-  'warn',
-  'info',
-  'debug'
-]);
+export const LogLevelSchema = z.enum(['error', 'warn', 'info', 'debug']);
 
 /**
  * 主题类型枚举
  */
-export const ThemeTypeSchema = z.enum([
-  'light',
-  'dark',
-  'system'
-]);
+export const ThemeTypeSchema = z.enum(['light', 'dark', 'system']);
 
 // ====================================================
 // 核心数据结构 Schemas
@@ -106,49 +77,54 @@ export const ThemeTypeSchema = z.enum([
  * 视频信息 Schema - 支持多种数据源格式
  * 包含新格式(zl_*, kc_*)和向后兼容格式
  */
-export const VideoInfoSchema = z.object({
-  // 新标准格式
-  zl_id: z.string().optional(),
-  zl_name: z.string().optional(),
-  record_url: z.string().url().optional(),
-  kc_id: z.string().optional(), 
-  kc_name: z.string().optional(),
-  
-  // 向后兼容格式
-  id: z.string().optional(),
-  name: z.string().optional(),
-  url: z.string().url().optional(),
-  course_id: z.string().optional(),
-  course_name: z.string().optional()
-}).refine(data => {
-  // 至少包含一组有效的标识符
-  const hasNewFormat = data.zl_id || data.kc_id || data.record_url;
-  const hasOldFormat = data.id || data.course_id || data.url;
-  return hasNewFormat || hasOldFormat;
-}, {
-  message: "视频信息必须包含至少一组有效的标识符"
-});
+export const VideoInfoSchema = z
+  .object({
+    // 新标准格式
+    zl_id: z.string().optional(),
+    zl_name: z.string().optional(),
+    record_url: z.string().url().optional(),
+    kc_id: z.string().optional(),
+    kc_name: z.string().optional(),
+
+    // 向后兼容格式
+    id: z.string().optional(),
+    name: z.string().optional(),
+    url: z.string().url().optional(),
+    course_id: z.string().optional(),
+    course_name: z.string().optional(),
+  })
+  .refine(
+    data => {
+      // 至少包含一组有效的标识符
+      const hasNewFormat = data.zl_id || data.kc_id || data.record_url;
+      const hasOldFormat = data.id || data.course_id || data.url;
+      return hasNewFormat || hasOldFormat;
+    },
+    {
+      message: '视频信息必须包含至少一组有效的标识符',
+    }
+  );
 
 /**
  * 主要下载任务 Schema
  * 包含完整的任务生命周期数据
  */
 const VideoTaskBaseSchema = z.object({
-  id: z.string().min(1, "任务ID不能为空"),
-  url: z.string().url("请输入有效的URL"),
-  title: z.string().min(1, "标题不能为空"),
-  output_path: z.string().min(1, "输出路径不能为空"),
+  id: z.string().min(1, '任务ID不能为空'),
+  url: z.string().url('请输入有效的URL'),
+  title: z.string().min(1, '标题不能为空'),
+  output_path: z.string().min(1, '输出路径不能为空'),
   status: TaskStatusSchema,
-  progress: z.number().min(0).max(100, "进度必须在0-100之间"),
+  progress: z.number().min(0).max(100, '进度必须在0-100之间'),
   file_size: z.number().nonnegative().optional(),
   downloaded_size: z.number().nonnegative(),
   speed: z.number().nonnegative(),
   eta: z.number().nonnegative().nullable().optional(),
   error_message: z.string().nullable().optional(),
-  created_at: z.string().datetime("创建时间必须是有效的ISO datetime"),
-  updated_at: z.string().datetime("更新时间必须是有效的ISO datetime"),
+  created_at: z.string().datetime('创建时间必须是有效的ISO datetime'),
+  updated_at: z.string().datetime('更新时间必须是有效的ISO datetime'),
   downloader_type: DownloaderTypeSchema.optional(),
-  video_info: VideoInfoSchema.optional()
+  video_info: VideoInfoSchema.optional(),
 });
 
 const applyVideoTaskValidations = <T extends z.ZodTypeAny>(schema: T) =>
@@ -156,7 +132,11 @@ const applyVideoTaskValidations = <T extends z.ZodTypeAny>(schema: T) =>
     const fileSize = (data as { file_size?: number }).file_size;
     const downloadedSize = (data as { downloaded_size?: number }).downloaded_size;
 
-    if (typeof fileSize === 'number' && typeof downloadedSize === 'number' && downloadedSize > fileSize) {
+    if (
+      typeof fileSize === 'number' &&
+      typeof downloadedSize === 'number' &&
+      downloadedSize > fileSize
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['downloaded_size'],
@@ -172,82 +152,92 @@ export const VideoTaskSchema = applyVideoTaskValidations(VideoTaskBaseSchema);
  * 放宽验证规则以提高健壮性，允许一些边缘情况
  */
 export const ProgressUpdateSchema = z.object({
-  task_id: z.string().min(1, "任务ID不能为空"),
+  task_id: z.string().min(1, '任务ID不能为空'),
   downloaded_size: z.number().nonnegative(),
   total_size: z.number().nonnegative().nullable().optional(),
   speed: z.number(), // 允许任何数值，负数会在前端被规范化为0
   eta: z.number().nullable().optional(),
-  progress: z.number().min(0).max(1.01).optional() // 允许略微超过1的值（浮点精度问题）
+  progress: z.number().min(0).max(1.01).optional(), // 允许略微超过1的值（浮点精度问题）
 });
 // 移除 refine 验证，因为在断点续传等场景下 downloaded_size 可能暂时超过 total_size
 
 /**
  * 导入数据 Schema - 支持CSV/Excel导入
  */
-export const ImportedDataSchema = z.object({
-  // 新标准格式 
-  zl_id: z.string().optional(),
-  zl_name: z.string().optional(),
-  record_url: z.string().optional(),
-  kc_id: z.string().optional(),
-  kc_name: z.string().optional(),
-  
-  // 向后兼容格式
-  id: z.string().optional(),
-  name: z.string().optional(), 
-  url: z.string().optional(),
-  course_id: z.string().optional(),
-  course_name: z.string().optional()
-}).refine(data => {
-  // 验证至少包含必需的URL信息
-  const validUrl = data.record_url || data.url;
-  if (!validUrl) {
-    return false;
-  }
-  
-  // 验证URL格式
-  try {
-    new URL(validUrl);
-    return true;
-  } catch {
-    return false;
-  }
-}, {
-  message: "导入数据必须包含有效的视频URL"
-});
+export const ImportedDataSchema = z
+  .object({
+    // 新标准格式
+    zl_id: z.string().optional(),
+    zl_name: z.string().optional(),
+    record_url: z.string().optional(),
+    kc_id: z.string().optional(),
+    kc_name: z.string().optional(),
+
+    // 向后兼容格式
+    id: z.string().optional(),
+    name: z.string().optional(),
+    url: z.string().optional(),
+    course_id: z.string().optional(),
+    course_name: z.string().optional(),
+  })
+  .refine(
+    data => {
+      // 验证至少包含必需的URL信息
+      const validUrl = data.record_url || data.url;
+      if (!validUrl) {
+        return false;
+      }
+
+      // 验证URL格式
+      try {
+        new URL(validUrl);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    {
+      message: '导入数据必须包含有效的视频URL',
+    }
+  );
 
 // ====================================================
-// 配置 Schemas  
+// 配置 Schemas
 // ====================================================
 
 /**
  * 下载配置 Schema
  */
-export const DownloadConfigSchema = z.object({
-  concurrent_downloads: z.number().int().min(1).max(10, "并发下载数应在1-10之间"),
-  retry_attempts: z.number().int().min(0).max(10, "重试次数应在0-10之间"),
-  timeout_seconds: z.number().int().min(10).max(300, "超时时间应在10-300秒之间"),
-  user_agent: z.string().min(1, "User-Agent不能为空"),
-  proxy: z.string().optional().nullable(),
-  headers: z.record(z.string(), z.string()),
-  output_directory: z.string().min(1, "输出目录不能为空"),
-  auto_verify_integrity: z.boolean(),
-  integrity_algorithm: z.string().min(1).optional().nullable(),
-  expected_hashes: z.record(z.string(), z.string()),
-}).refine(data => {
-  // 验证代理格式 (如果提供)
-  if (data.proxy) {
-    try {
-      new URL(data.proxy);
+export const DownloadConfigSchema = z
+  .object({
+    concurrent_downloads: z.number().int().min(1).max(10, '并发下载数应在1-10之间'),
+    retry_attempts: z.number().int().min(0).max(10, '重试次数应在0-10之间'),
+    timeout_seconds: z.number().int().min(10).max(300, '超时时间应在10-300秒之间'),
+    user_agent: z.string().min(1, 'User-Agent不能为空'),
+    proxy: z.string().optional().nullable(),
+    headers: z.record(z.string(), z.string()),
+    output_directory: z.string().min(1, '输出目录不能为空'),
+    auto_verify_integrity: z.boolean(),
+    integrity_algorithm: z.string().min(1).optional().nullable(),
+    expected_hashes: z.record(z.string(), z.string()),
+  })
+  .refine(
+    data => {
+      // 验证代理格式 (如果提供)
+      if (data.proxy) {
+        try {
+          new URL(data.proxy);
+          return true;
+        } catch {
+          return false;
+        }
+      }
       return true;
-    } catch {
-      return false;
+    },
+    {
+      message: '代理设置必须是有效的URL格式',
     }
-  }
-  return true;
-}, {
-  message: "代理设置必须是有效的URL格式"
-});
+  );
 
 /**
  * UI配置 Schema
@@ -317,7 +307,7 @@ export const AppConfigSchema = z.object({
   ui: UIConfigSchema.optional().nullable(),
   system: SystemConfigSchema.optional().nullable(),
   youtube: YoutubeConfigSchema.optional().nullable(),
-  advanced: AdvancedConfigSchema
+  advanced: AdvancedConfigSchema,
 });
 
 // ====================================================
@@ -329,7 +319,7 @@ export const AppConfigSchema = z.object({
  */
 export const NetworkSpeedSchema = z.object({
   download: z.number().nonnegative(),
-  upload: z.number().nonnegative()
+  upload: z.number().nonnegative(),
 });
 
 /**
@@ -340,25 +330,31 @@ export const SystemInfoSchema = z.object({
   memory_usage: z.number().min(0).max(100),
   disk_usage: z.number().min(0).max(100),
   network_speed: NetworkSpeedSchema,
-  active_downloads: z.number().nonnegative()
+  active_downloads: z.number().nonnegative(),
 });
 
 /**
  * 下载统计 Schema
  */
-export const DownloadStatsSchema = z.object({
-  total_tasks: z.number().nonnegative(),
-  completed_tasks: z.number().nonnegative(),
-  failed_tasks: z.number().nonnegative(),
-  total_downloaded: z.number().nonnegative(),
-  average_speed: z.number().nonnegative(),
-  active_downloads: z.number().nonnegative()
-}).refine(data => {
-  // 验证统计数据的一致性
-  return data.completed_tasks + data.failed_tasks <= data.total_tasks;
-}, {
-  message: "任务统计数据不一致"
-});
+export const DownloadStatsSchema = z
+  .object({
+    total_tasks: z.number().nonnegative(),
+    completed_tasks: z.number().nonnegative(),
+    failed_tasks: z.number().nonnegative(),
+    total_downloaded: z.number().nonnegative(),
+    average_speed: z.number().nonnegative(),
+    active_downloads: z.number().nonnegative(),
+    queue_paused: z.boolean().optional().default(false),
+  })
+  .refine(
+    data => {
+      // 验证统计数据的一致性
+      return data.completed_tasks + data.failed_tasks <= data.total_tasks;
+    },
+    {
+      message: '任务统计数据不一致',
+    }
+  );
 
 // ====================================================
 // YouTube 相关 Schemas
@@ -376,7 +372,7 @@ export const VideoFormatSchema = z.object({
   vbr: z.number().nonnegative().optional(),
   abr: z.number().nonnegative().optional(),
   filesize: z.number().nonnegative().optional(),
-  quality: z.string()
+  quality: z.string(),
 });
 
 /**
@@ -384,9 +380,9 @@ export const VideoFormatSchema = z.object({
  */
 export const SubtitleTrackSchema = z.object({
   language: z.string().min(1),
-  language_code: z.string().length(2, "语言代码必须是2位"),
+  language_code: z.string().length(2, '语言代码必须是2位'),
   url: z.string().url(),
-  ext: z.string().min(1)
+  ext: z.string().min(1),
 });
 
 /**
@@ -399,7 +395,7 @@ export const YoutubeVideoInfoSchema = z.object({
   duration: z.number().nonnegative(),
   thumbnail: z.string().url(),
   formats: z.array(VideoFormatSchema),
-  subtitles: z.array(SubtitleTrackSchema)
+  subtitles: z.array(SubtitleTrackSchema),
 });
 
 // ====================================================
@@ -412,7 +408,7 @@ export const YoutubeVideoInfoSchema = z.object({
 export const EncodingDetectionSchema = z.object({
   encoding: z.string().min(1),
   confidence: z.number().min(0).max(1),
-  language: z.string().optional()
+  language: z.string().optional(),
 });
 
 /**
@@ -423,7 +419,7 @@ export const ImportPreviewSchema = z.object({
   rows: z.array(z.array(z.string())),
   total_rows: z.number().nonnegative(),
   encoding: z.string().min(1),
-  field_mapping: z.record(z.string(), z.string())
+  field_mapping: z.record(z.string(), z.string()),
 });
 
 // ====================================================
@@ -436,7 +432,7 @@ export const ImportPreviewSchema = z.object({
 export const NotificationActionSchema = z.object({
   label: z.string().min(1),
   action: z.function().returns(z.void()),
-  style: z.enum(['primary', 'secondary']).optional()
+  style: z.enum(['primary', 'secondary']).optional(),
 });
 
 /**
@@ -449,7 +445,7 @@ export const NotificationSchema = z.object({
   message: z.string(),
   timestamp: z.number().nonnegative(),
   duration: z.number().positive().optional(),
-  actions: z.array(NotificationActionSchema).optional()
+  actions: z.array(NotificationActionSchema).optional(),
 });
 
 /**
@@ -461,9 +457,12 @@ export const ModalOptionsSchema = z.object({
   message: z.string().optional(),
   confirmText: z.string().optional(),
   cancelText: z.string().optional(),
-  onConfirm: z.function().returns(z.union([z.void(), z.promise(z.void())])).optional(),
+  onConfirm: z
+    .function()
+    .returns(z.union([z.void(), z.promise(z.void())]))
+    .optional(),
   onCancel: z.function().returns(z.void()).optional(),
-  customContent: z.any().optional() // React.ReactNode 类型较难直接验证
+  customContent: z.any().optional(), // React.ReactNode 类型较难直接验证
 });
 
 /**
@@ -476,11 +475,15 @@ export const FormFieldSchema = z.object({
   placeholder: z.string().optional(),
   required: z.boolean().optional(),
   validation: z.any().optional(),
-  options: z.array(z.object({
-    label: z.string(),
-    value: z.any()
-  })).optional(),
-  description: z.string().optional()
+  options: z
+    .array(
+      z.object({
+        label: z.string(),
+        value: z.any(),
+      })
+    )
+    .optional(),
+  description: z.string().optional(),
 });
 
 // ====================================================
@@ -490,12 +493,14 @@ export const FormFieldSchema = z.object({
 /**
  * 日期范围 Schema
  */
-export const DateRangeSchema = z.object({
-  start: z.date(),
-  end: z.date()
-}).refine(data => data.start <= data.end, {
-  message: "开始日期不能晚于结束日期"
-});
+export const DateRangeSchema = z
+  .object({
+    start: z.date(),
+    end: z.date(),
+  })
+  .refine(data => data.start <= data.end, {
+    message: '开始日期不能晚于结束日期',
+  });
 
 /**
  * 过滤选项 Schema
@@ -504,7 +509,7 @@ export const FilterOptionsSchema = z.object({
   status: z.array(TaskStatusSchema).optional(),
   downloader_type: z.array(DownloaderTypeSchema).optional(),
   date_range: DateRangeSchema.optional(),
-  search_query: z.string().optional()
+  search_query: z.string().optional(),
 });
 
 /**
@@ -512,23 +517,28 @@ export const FilterOptionsSchema = z.object({
  */
 export const SortOptionsSchema = z.object({
   field: z.string(), // 使用string而非keyof VideoTask，更灵活
-  direction: z.enum(['asc', 'desc'])
+  direction: z.enum(['asc', 'desc']),
 });
 
 /**
  * 分页选项 Schema
  */
-export const PaginationOptionsSchema = z.object({
-  page: z.number().int().positive(),
-  limit: z.number().int().positive().max(1000),
-  total: z.number().int().nonnegative()
-}).refine(data => {
-  // 验证页码不超出总页数
-  const totalPages = Math.ceil(data.total / data.limit);
-  return data.page <= totalPages || totalPages === 0;
-}, {
-  message: "页码超出有效范围"
-});
+export const PaginationOptionsSchema = z
+  .object({
+    page: z.number().int().positive(),
+    limit: z.number().int().positive().max(1000),
+    total: z.number().int().nonnegative(),
+  })
+  .refine(
+    data => {
+      // 验证页码不超出总页数
+      const totalPages = Math.ceil(data.total / data.limit);
+      return data.page <= totalPages || totalPages === 0;
+    },
+    {
+      message: '页码超出有效范围',
+    }
+  );
 
 // ====================================================
 // API和错误处理 Schemas
@@ -538,23 +548,28 @@ export const PaginationOptionsSchema = z.object({
  * API响应 Schema (泛型)
  */
 export const createApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
-  z.object({
-    success: z.boolean(),
-    data: dataSchema.optional(),
-    error: z.string().optional(),
-    timestamp: z.number().nonnegative()
-  }).refine(data => {
-    // 成功时应该有data，失败时应该有error
-    if (data.success && !data.data) {
-      return false;
-    }
-    if (!data.success && !data.error) {
-      return false; 
-    }
-    return true;
-  }, {
-    message: "API响应格式不正确"
-  });
+  z
+    .object({
+      success: z.boolean(),
+      data: dataSchema.optional(),
+      error: z.string().optional(),
+      timestamp: z.number().nonnegative(),
+    })
+    .refine(
+      data => {
+        // 成功时应该有data，失败时应该有error
+        if (data.success && !data.data) {
+          return false;
+        }
+        if (!data.success && !data.error) {
+          return false;
+        }
+        return true;
+      },
+      {
+        message: 'API响应格式不正确',
+      }
+    );
 
 /**
  * 通用API响应 Schema
@@ -568,7 +583,7 @@ export const AppErrorSchema = z.object({
   code: z.string().min(1),
   message: z.string().min(1),
   details: z.any().optional(),
-  timestamp: z.number().nonnegative()
+  timestamp: z.number().nonnegative(),
 });
 
 /**
@@ -581,7 +596,7 @@ export const KeyboardShortcutSchema = z.object({
   shiftKey: z.boolean().optional(),
   metaKey: z.boolean().optional(),
   action: z.function().returns(z.void()),
-  description: z.string().min(1)
+  description: z.string().min(1),
 });
 
 // ====================================================
@@ -632,7 +647,9 @@ export type FilterOptions = z.infer<typeof FilterOptionsSchema>;
 export type SortOptions = z.infer<typeof SortOptionsSchema>;
 export type PaginationOptions = z.infer<typeof PaginationOptionsSchema>;
 
-export type ApiResponse<T = any> = z.infer<ReturnType<typeof createApiResponseSchema<z.ZodType<T>>>>;
+export type ApiResponse<T = any> = z.infer<
+  ReturnType<typeof createApiResponseSchema<z.ZodType<T>>>
+>;
 export type AppError = z.infer<typeof AppErrorSchema>;
 export type KeyboardShortcut = z.infer<typeof KeyboardShortcutSchema>;
 
@@ -646,7 +663,7 @@ export type KeyboardShortcut = z.infer<typeof KeyboardShortcutSchema>;
 export const TaskListSchema = z.array(VideoTaskSchema);
 
 /**
- * 导入数据列表 Schema  
+ * 导入数据列表 Schema
  */
 export const ImportDataListSchema = z.array(ImportedDataSchema);
 
@@ -687,9 +704,9 @@ export const UpdateTaskRequestSchema = applyVideoTaskValidations(
  * 批量操作请求 Schema
  */
 export const BatchOperationRequestSchema = z.object({
-  taskIds: z.array(z.string().min(1)).min(1, "至少需要选择一个任务"),
+  taskIds: z.array(z.string().min(1)).min(1, '至少需要选择一个任务'),
   operation: z.enum(['start', 'pause', 'resume', 'cancel', 'delete']),
-  options: z.record(z.string(), z.any()).optional()
+  options: z.record(z.string(), z.any()).optional(),
 });
 
 // ====================================================
@@ -711,12 +728,12 @@ export const safeParse = <T extends z.ZodTypeAny>(
   if (result.success) {
     return {
       success: true,
-      data: result.data
+      data: result.data,
     };
   } else {
     return {
       success: false,
-      errors: result.error.errors
+      errors: result.error.errors,
     };
   }
 };
@@ -733,7 +750,7 @@ export const validateArray = <T extends z.ZodTypeAny>(
 } => {
   const validItems: z.infer<T>[] = [];
   const invalidItems: { index: number; data: unknown; errors: z.ZodError['errors'] }[] = [];
-  
+
   dataArray.forEach((item, index) => {
     const result = safeParse(schema, item);
     if (result.success && result.data) {
@@ -742,28 +759,31 @@ export const validateArray = <T extends z.ZodTypeAny>(
       invalidItems.push({
         index,
         data: item,
-        errors: result.errors || []
+        errors: result.errors || [],
       });
     }
   });
-  
+
   return { validItems, invalidItems };
 };
 
 /**
  * Schema组合验证 - 验证多个相关的数据对象
  */
-export const validateRelatedData = (validations: {
-  name: string;
-  schema: z.ZodTypeAny;
-  data: unknown;
-}[]): {
+export const validateRelatedData = (
+  validations: {
+    name: string;
+    schema: z.ZodTypeAny;
+    data: unknown;
+  }[]
+): {
   success: boolean;
   results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['errors'] }>;
 } => {
-  const results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['errors'] }> = {};
+  const results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['errors'] }> =
+    {};
   let overallSuccess = true;
-  
+
   validations.forEach(({ name, schema, data }) => {
     const result = safeParse(schema, data);
     results[name] = result;
@@ -771,10 +791,10 @@ export const validateRelatedData = (validations: {
       overallSuccess = false;
     }
   });
-  
+
   return {
     success: overallSuccess,
-    results
+    results,
   };
 };
 
@@ -787,23 +807,23 @@ export default {
   DownloaderTypeSchema,
   ViewTypeSchema,
   NotificationTypeSchema,
-  
+
   // 核心数据类型
   VideoTaskSchema,
   ImportedDataSchema,
   ProgressUpdateSchema,
-  
+
   // 配置类型
   AppConfigSchema,
   DownloadConfigSchema,
-  
+
   // API类型
   ApiResponseSchema,
   AppErrorSchema,
-  
+
   // 工具函数
   safeParse,
   validateArray,
   validateRelatedData,
-  createApiResponseSchema
+  createApiResponseSchema,
 };

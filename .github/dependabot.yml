@@ -31,7 +31,7 @@ updates:
         patterns:
           - "@headlessui/react"
           - "@heroicons/react"
-          - "@hookform/resolvers"  
+          - "@hookform/resolvers"
           - "@tanstack/react-query*"
           - "@tanstack/react-virtual"
           - "@tauri-apps/api"
@@ -44,7 +44,7 @@ updates:
           - "react-hot-toast"
           - "zod"
           - "zustand"
-      # Development dependencies  
+      # Development dependencies
       development-dependencies:
         patterns:
           - "@tauri-apps/cli"
@@ -69,7 +69,7 @@ updates:
       build-tools:
         patterns:
           - "vite*"
-          - "vitest*" 
+          - "vitest*"
           - "@vitejs/*"
           - "rollup*"
           - "esbuild*"
@@ -78,7 +78,7 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/src-tauri"
     schedule:
-      interval: "weekly" 
+      interval: "weekly"
       day: "monday"
       time: "10:00"
       timezone: "UTC"
@@ -86,7 +86,7 @@ updates:
     reviewers:
       - "video-downloader-pro-maintainers"
     assignees:
-      - "video-downloader-pro-maintainers"  
+      - "video-downloader-pro-maintainers"
     commit-message:
       prefix: "deps"
       include: "scope"
@@ -172,13 +172,13 @@ ignore:
     update-types: ["version-update:semver-major"]
   - dependency-name: "react-dom"
     update-types: ["version-update:semver-major"]
-  
+
   # Ignore beta/alpha versions
   - dependency-name: "*"
     update-types: ["version-update:semver-major"]
     versions: ["*alpha*", "*beta*", "*rc*", "*pre*"]
 
-  # Tauri major updates - handle manually  
+  # Tauri major updates - handle manually
   - dependency-name: "tauri*"
     update-types: ["version-update:semver-major"]
   - dependency-name: "@tauri-apps/*"
@@ -197,7 +197,7 @@ ignore:
     update-types: ["version-update:semver-major"]
 
   # Vite major updates - handle manually
-  - dependency-name: "vite*"  
+  - dependency-name: "vite*"
     update-types: ["version-update:semver-major"]
 
   # Testing framework major updates - handle manually

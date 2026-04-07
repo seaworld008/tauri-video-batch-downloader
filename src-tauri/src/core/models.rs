@@ -45,6 +45,10 @@ pub struct VideoTask {
 
     pub output_path: String,
 
+    /// Fully resolved file path for this task (optional, backend-derived)
+    #[serde(default)]
+    pub resolved_path: Option<String>,
+
     pub status: TaskStatus,
 
     pub progress: f64,
@@ -62,6 +66,14 @@ pub struct VideoTask {
     pub created_at: chrono::DateTime<chrono::Utc>,
 
     pub updated_at: chrono::DateTime<chrono::Utc>,
+
+    /// When the task was paused (used for resume ordering)
+    #[serde(default)]
+    pub paused_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// Whether the task was actively downloading when it was paused
+    #[serde(default)]
+    pub paused_from_active: bool,
 
     pub downloader_type: Option<DownloaderType>,
 
@@ -212,6 +224,8 @@ pub struct DownloadStats {
     pub average_speed: f64,
 
     pub active_downloads: usize,
+
+    pub queue_paused: bool,
 }
 
 impl Default for DownloadStats {
@@ -228,6 +242,8 @@ impl Default for DownloadStats {
             average_speed: 0.0,
 
             active_downloads: 0,
+
+            queue_paused: false,
         }
     }
 }
@@ -372,5 +388,4 @@ pub enum AppError {
 }
 
 /// Result type alias for application operations
-
 pub type AppResult<T> = Result<T, AppError>;

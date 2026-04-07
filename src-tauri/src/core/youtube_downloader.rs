@@ -113,6 +113,7 @@ pub enum AudioQuality {
 
 /// Audio codec preferences for YouTube downloads
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum AudioCodecPreference {
     AAC,
     MP3,
@@ -266,7 +267,7 @@ impl YoutubeDownloader {
         }
 
         // Ensure output directory exists
-        std::fs::create_dir_all(&config.output_dir).map_err(|e| AppError::Io(e))?;
+        std::fs::create_dir_all(&config.output_dir).map_err(AppError::Io)?;
 
         info!(
             "🎥 Initialized YouTube downloader with config: {:?}",
@@ -488,11 +489,8 @@ impl YoutubeDownloader {
 
         let response = reqwest::get(&thumbnail_url)
             .await
-            .map_err(|err| AppError::Network(err))?;
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|err| AppError::Network(err))?;
+            .map_err(AppError::Network)?;
+        let bytes = response.bytes().await.map_err(AppError::Network)?;
 
         let output_path = self.config.output_dir.join(output_filename);
         if let Some(parent) = output_path.parent() {
@@ -746,6 +744,7 @@ impl YoutubeDownloader {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_download_job(
         download_id: String,
         url: String,
@@ -956,10 +955,10 @@ impl YoutubeDownloader {
         }
     }
 
-    fn select_muxed_format<'a>(
-        video: &'a model::Video,
+    fn select_muxed_format(
+        video: &model::Video,
         quality: ytdl_selector::VideoQuality,
-    ) -> Option<&'a Format> {
+    ) -> Option<&Format> {
         let muxed: Vec<&Format> = video
             .formats
             .iter()
@@ -983,19 +982,13 @@ impl YoutubeDownloader {
         if let Some(height) = target_height {
             muxed
                 .into_iter()
-                .min_by(|a, b| Self::compare_height_to_target(*a, *b, height))
+                .min_by(|a, b| Self::compare_height_to_target(a, b, height))
         } else if prefer_highest {
-            muxed
-                .into_iter()
-                .max_by(|a, b| Self::compare_height(*a, *b))
+            muxed.into_iter().max_by(|a, b| Self::compare_height(a, b))
         } else if prefer_lowest {
-            muxed
-                .into_iter()
-                .min_by(|a, b| Self::compare_height(*a, *b))
+            muxed.into_iter().min_by(|a, b| Self::compare_height(a, b))
         } else {
-            muxed
-                .into_iter()
-                .max_by(|a, b| Self::compare_height(*a, *b))
+            muxed.into_iter().max_by(|a, b| Self::compare_height(a, b))
         }
     }
 
@@ -1077,7 +1070,7 @@ impl YoutubeDownloader {
         }
 
         // Ensure new output directory exists
-        std::fs::create_dir_all(&new_config.output_dir).map_err(|e| AppError::Io(e))?;
+        std::fs::create_dir_all(&new_config.output_dir).map_err(AppError::Io)?;
 
         self.config = new_config;
         info!("📝 Updated YouTube downloader configuration");
@@ -1278,6 +1271,12 @@ mod tests {
             "channel_id": "channel_123",
             "channel_url": "https://youtube.com/channel/channel_123",
             "channel_follower_count": 2048,
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Fetch-Mode": "navigate"
+            },
             "formats": formats,
             "thumbnails": [],
             "automatic_captions": {},
@@ -1333,6 +1332,12 @@ mod tests {
             "filesize": 1024,
             "filesize_approx": 1024,
             "url": format!("https://cdn.example.com/{}.mp4", format_id),
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Fetch-Mode": "navigate"
+            },
             "audio_channels": if has_audio { Value::from(2) } else { Value::Null },
             "asr": if has_audio { Value::from(48000) } else { Value::Null },
         })

@@ -30,6 +30,7 @@ mod tests {
             url: url.to_string(),
             title: title.to_string(),
             output_path: format!("/tmp/test_downloads/{}.mp4", title),
+            resolved_path: None,
             status: TaskStatus::Pending,
             progress: 0.0,
             downloaded_size: 0,
@@ -40,6 +41,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             downloader_type: Some(DownloaderType::Http),
+            video_info: None,
         }
     }
 

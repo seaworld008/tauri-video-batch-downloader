@@ -261,18 +261,18 @@ impl EncodingDetector {
     fn detect_bom(&self, data: &[u8]) -> Option<&'static Encoding> {
         if data.len() >= 3 {
             // UTF-8 BOM
-            if &data[0..3] == &[0xEF, 0xBB, 0xBF] {
+            if data[0..3] == [0xEF, 0xBB, 0xBF] {
                 return Some(UTF_8);
             }
         }
 
         if data.len() >= 2 {
             // UTF-16 LE BOM
-            if &data[0..2] == &[0xFF, 0xFE] {
+            if data[0..2] == [0xFF, 0xFE] {
                 return Some(encoding_rs::UTF_16LE);
             }
             // UTF-16 BE BOM
-            if &data[0..2] == &[0xFE, 0xFF] {
+            if data[0..2] == [0xFE, 0xFF] {
                 return Some(encoding_rs::UTF_16BE);
             }
         }
@@ -766,7 +766,7 @@ impl FileParser {
             .map(|idx| {
                 row.get(idx)
                     .map(|cell| self.datatype_to_string(cell))
-                    .unwrap_or_else(|| String::new())
+                    .unwrap_or_default()
             })
             .collect()
     }

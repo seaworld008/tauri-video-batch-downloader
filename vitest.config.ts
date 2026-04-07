@@ -1,8 +1,8 @@
 /// <reference types="vitest" />
 /// <reference types="vitest/globals" />
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
@@ -10,6 +10,8 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['src/**/*.integration.test.{ts,tsx}', 'src/**/*.e2e.test.{ts,tsx}'],
     css: true,
     typecheck: {
       tsconfig: './tsconfig.json',
@@ -25,13 +27,13 @@ export default defineConfig({
         'dist/',
         'src-tauri/',
         '**/__tests__/**',
-        '**/test/**'
-      ]
-    }
+        '**/test/**',
+      ],
+    },
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src')
-    }
-  }
-})
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+});

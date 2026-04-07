@@ -394,28 +394,25 @@ impl CircuitBreaker {
     /// Record a successful call
     async fn record_success(&self) {
         let state = self.state.read().await;
-        match *state {
-            CircuitBreakerState::HalfOpen => {
-                drop(state); // Release read lock
+        if *state == CircuitBreakerState::HalfOpen {
+            drop(state); // Release read lock
 
-                let mut success_count = self.success_count.lock().await;
-                *success_count += 1;
+            let mut success_count = self.success_count.lock().await;
+            *success_count += 1;
 
-                if *success_count >= self.config.success_threshold {
-                    // Transition to closed state
-                    drop(success_count); // Release mutex
+            if *success_count >= self.config.success_threshold {
+                // Transition to closed state
+                drop(success_count); // Release mutex
 
-                    let mut state = self.state.write().await;
-                    *state = CircuitBreakerState::Closed;
+                let mut state = self.state.write().await;
+                *state = CircuitBreakerState::Closed;
 
-                    // Reset failure count
-                    let mut failure_count = self.failure_count.lock().await;
-                    *failure_count = 0;
+                // Reset failure count
+                let mut failure_count = self.failure_count.lock().await;
+                *failure_count = 0;
 
-                    info!("Circuit breaker transitioning to closed state after recovery");
-                }
+                info!("Circuit breaker transitioning to closed state after recovery");
             }
-            _ => {} // Success in closed state doesn't require action
         }
     }
 

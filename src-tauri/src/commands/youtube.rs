@@ -156,7 +156,7 @@ async fn download_youtube_playlist_impl(
 
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
     let output = tokio::process::Command::new("yt-dlp")
-        .args(&["--dump-json", "--no-warnings", "--no-playlist", url])
+        .args(["--dump-json", "--no-warnings", "--no-playlist", url])
         .output()
         .await
         .map_err(|e| AppError::Youtube(format!("Failed to run yt-dlp: {}", e)))?;
@@ -175,7 +175,7 @@ async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
 
 async fn get_formats_with_ytdlp(url: &str) -> AppResult<Vec<VideoFormat>> {
     let output = tokio::process::Command::new("yt-dlp")
-        .args(&["--list-formats", "--no-warnings", "--no-playlist", url])
+        .args(["--list-formats", "--no-warnings", "--no-playlist", url])
         .output()
         .await
         .map_err(|e| AppError::Youtube(format!("Failed to run yt-dlp: {}", e)))?;

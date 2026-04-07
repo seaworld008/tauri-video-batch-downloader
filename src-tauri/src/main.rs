@@ -1,5 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use tauri::Emitter;
 
 use serde_json::json;
 use std::sync::Arc;
@@ -8,16 +9,23 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
 mod commands;
+// Many core features are behind optional flows and aren't wired in the fixed UI yet.
+// Silence dead_code warnings for now to keep CI signal focused on real issues.
+#[allow(dead_code)]
 mod core;
+#[allow(dead_code, unused_imports)]
 mod parsers;
+#[allow(dead_code, unused_imports)]
 mod utils;
 
 use commands::*;
 use core::{
     downloader::{DownloaderConfig, HttpDownloader},
+    models::AppError,
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
     AppConfig, DownloadManager,
 };
+use utils::logging;
 
 /// 简化的应用程序状态，防止初始化失败
 pub struct AppState {
@@ -169,6 +177,12 @@ impl AppState {
     }
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn main() {
     #[cfg(target_os = "windows")]
     {
@@ -179,12 +193,7 @@ fn main() {
     }
 
     // 初始化日志系统
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "video_downloader_pro=info,tauri=info".into()),
-        )
-        .init();
+    logging::init_tracing();
 
     info!("🚀 Starting Video Downloader Pro (Fixed Version)");
 
@@ -203,6 +212,7 @@ fn main() {
             debug_download_test,
             pause_all_downloads,
             resume_all_downloads,
+            start_all_downloads,
             cancel_all_downloads,
             start_all_pending_downloads,
             remove_download,
@@ -220,6 +230,7 @@ fn main() {
             import_excel_file,
             detect_file_encoding,
             preview_import_data,
+            get_supported_formats,
             // YouTube 相关命令
             get_youtube_info,
             get_youtube_formats,
@@ -261,34 +272,34 @@ fn main() {
                 warn!("⚠️ Router receiver already taken or not available");
             }
 
-            // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
-            let bootstrap_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = log_frontend_event(
-                    bootstrap_handle,
-                    Some("info".to_string()),
-                    "backend_setup".to_string(),
-                )
-                .await
-                {
-                    error!("Failed to write frontend bootstrap log: {}", error);
-                }
-            });
+            if logging::local_logging_enabled() {
+                // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
+                let bootstrap_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = log_frontend_event(
+                        bootstrap_handle,
+                        Some("info".to_string()),
+                        "backend_setup".to_string(),
+                    )
+                    .await
+                    {
+                        error!("Failed to write frontend bootstrap log: {}", error);
+                    }
+                });
+            }
 
             // Create event channel for DownloadManager
             let (sender, mut receiver) = mpsc::unbounded_channel::<core::manager::DownloadEvent>();
 
-            let download_manager_for_events = app_state.download_manager.clone();
+            let download_runtime_for_events = app_state.download_runtime.clone();
             // Spawn event handler to bridge DownloadManager events to Tauri events
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 info!("🔌 Event bridge started - listening for DownloadManager events");
                 let mut progress_event_count = 0u64;
                 while let Some(event) = receiver.recv().await {
-                    if let Err(sync_err) = {
-                        let mut manager = download_manager_for_events.write().await;
-                        manager.apply_event_side_effects(&event).await
-                    } {
+                    if let Err(sync_err) = download_runtime_for_events.apply_event(event.clone()).await
+                    {
                         error!("[EVENT_BRIDGE] Failed to sync manager state: {}", sync_err);
                     }
 
@@ -305,7 +316,7 @@ fn main() {
                                     progress_event_count, task_id, progress.progress * 100.0, progress.speed, progress.downloaded_size
                                 );
                             }
-                            if let Err(e) = app_handle_clone.emit_all("download_progress", &progress) {
+                            if let Err(e) = app_handle_clone.emit("download_progress", &progress) {
                                 error!("[EVENT_BRIDGE] Failed to emit download_progress: {}", e);
                             }
                         }
@@ -316,7 +327,7 @@ fn main() {
                                 "status": "Downloading",
                                 "error_message": null
                             });
-                            if let Err(e) = app_handle_clone.emit_all("task_status_changed", payload) {
+                            if let Err(e) = app_handle_clone.emit("task_status_changed", payload) {
                                 error!("[EVENT_BRIDGE] Failed to emit task_status_changed: {}", e);
                             }
                         }
@@ -329,7 +340,7 @@ fn main() {
                                 "status": "Completed",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskFailed { task_id, error } => {
                             let payload = json!({
@@ -337,7 +348,7 @@ fn main() {
                                 "status": "Failed",
                                 "error_message": error
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskPaused { task_id } => {
                             let payload = json!({
@@ -345,7 +356,7 @@ fn main() {
                                 "status": "Paused",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskResumed { task_id } => {
                             let payload = json!({
@@ -353,7 +364,7 @@ fn main() {
                                 "status": "Downloading",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::TaskCancelled { task_id } => {
                             let payload = json!({
@@ -361,10 +372,10 @@ fn main() {
                                 "status": "Cancelled",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit_all("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload);
                         }
                         core::manager::DownloadEvent::StatsUpdated { stats } => {
-                            let _ = app_handle_clone.emit_all("download_stats", stats);
+                            let _ = app_handle_clone.emit("download_stats", stats);
                         }
                         _ => {}
                     }
@@ -387,14 +398,20 @@ fn main() {
                         info!("[MANAGER_INIT] Acquiring write lock...");
                         let mut manager = download_manager.write().await;
                         info!("[MANAGER_INIT] Write lock acquired, calling start()...");
-                        manager.start_with_sender(sender).await
+                        manager.start_with_sender(sender).await?;
+                        let scheduler_handle =
+                            core::manager::DownloadManager::spawn_queue_scheduler(
+                                download_manager.clone(),
+                            );
+                        manager.set_scheduler_handle(scheduler_handle);
+                        Ok::<(), AppError>(())
                     },
                 )
                 .await
                 {
                     Ok(Ok(_)) => {
                         info!("✅ [MANAGER_INIT] Download manager started successfully");
-                        if let Err(e) = app_handle_for_manager.emit_all("download_manager_ready", true) {
+                        if let Err(e) = app_handle_for_manager.emit("download_manager_ready", true) {
                             error!("[MANAGER_INIT] Failed to emit download_manager_ready event: {}", e);
                         } else {
                             info!("[MANAGER_INIT] ✅ download_manager_ready event emitted");
@@ -402,14 +419,14 @@ fn main() {
                     }
                     Ok(Err(e)) => {
                         error!("❌ [MANAGER_INIT] Download manager failed to start: {}", e);
-                        let _ = app_handle_for_manager.emit_all(
+                        let _ = app_handle_for_manager.emit(
                             "download_manager_error",
                             format!("Download manager failed: {}", e),
                         );
                     }
                     Err(_) => {
                         error!("❌ [MANAGER_INIT] Download manager startup timed out");
-                        let _ = app_handle_for_manager.emit_all(
+                        let _ = app_handle_for_manager.emit(
                             "download_manager_error",
                             "Download manager startup timed out".to_string(),
                         );
@@ -419,7 +436,7 @@ fn main() {
 
             // 后台维持并发数：持续填充空槽位（仅后端调度）
             // 立即发送应用准备就绪信号
-            if let Err(e) = app.emit_all("app_ready", true) {
+            if let Err(e) = app.emit("app_ready", true) {
                 error!("Failed to emit app_ready event: {}", e);
             } else {
                 info!("✅ App ready event emitted");
@@ -427,8 +444,8 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::CloseRequested { api: _api, .. } => {
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event {
                 info!("📦 Application closing requested");
 
                 // 移除 prevent_close() 调用，允许直接关闭
@@ -438,7 +455,6 @@ fn main() {
                 // 可选：执行清理操作但不阻止关闭
                 // 这里可以添加异步清理逻辑
             }
-            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

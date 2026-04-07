@@ -13,7 +13,7 @@ import zh from './locales/zh.json';
 // Define supported languages
 export const SUPPORTED_LANGUAGES = {
   en: 'English',
-  zh: '中文'
+  zh: '中文',
 } as const;
 
 export type SupportedLanguage = keyof typeof SUPPORTED_LANGUAGES;
@@ -24,14 +24,8 @@ export type TranslationResources = typeof en;
 // Language detection configuration
 const detectionOptions = {
   // Order of language detection methods
-  order: [
-    'localStorage',
-    'navigator',
-    'htmlTag',
-    'path',
-    'subdomain'
-  ],
-  
+  order: ['localStorage', 'navigator', 'htmlTag', 'path', 'subdomain'],
+
   // Keys to look up language from
   lookupLocalStorage: 'video-downloader-language',
   lookupFromPathIndex: 0,
@@ -44,7 +38,7 @@ const detectionOptions = {
   excludeCacheFor: ['cimode'],
 
   // Only detect languages that we actually have translations for
-  checkWhitelist: true
+  checkWhitelist: true,
 };
 
 const initOptions: InitOptions = {
@@ -108,9 +102,6 @@ const initOptions: InitOptions = {
 };
 
 // i18n configuration
-i18n
-  .use(LanguageDetector)
-  .use(initReactI18next)
-  .init(initOptions);
+i18n.use(LanguageDetector).use(initReactI18next).init(initOptions);
 
 export default i18n;

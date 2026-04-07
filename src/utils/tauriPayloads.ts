@@ -7,4 +7,3 @@ export const buildTaskIdsPayload = (taskIds: string[]) => ({
   task_ids: taskIds,
   taskIds,
 });
-

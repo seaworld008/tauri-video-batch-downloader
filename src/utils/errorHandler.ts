@@ -11,7 +11,7 @@ export enum ErrorType {
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   PERMISSION_ERROR = 'PERMISSION_ERROR',
   TIMEOUT_ERROR = 'TIMEOUT_ERROR',
-  UNKNOWN = 'UNKNOWN'
+  UNKNOWN = 'UNKNOWN',
 }
 
 export interface AppError {
@@ -32,7 +32,7 @@ export class AppErrorHandler {
    */
   static handle(action: string, error: unknown, showToast: boolean = true): AppError {
     const appError = this.classifyError(action, error);
-    
+
     // 记录详细日志
     console.error(`❌ ${action} 失败:`, {
       type: appError.type,
@@ -40,12 +40,12 @@ export class AppErrorHandler {
       originalError: appError.originalError,
       timestamp: appError.timestamp,
     });
-    
+
     // 显示用户友好提示
     if (showToast) {
       this.showUserFriendlyMessage(appError);
     }
-    
+
     return appError;
   }
 
@@ -55,7 +55,7 @@ export class AppErrorHandler {
   private static classifyError(action: string, error: unknown): AppError {
     const timestamp = new Date();
     const message = this.extractMessage(error);
-    
+
     // 网络相关错误
     if (this.isNetworkError(error, message)) {
       return {
@@ -66,7 +66,7 @@ export class AppErrorHandler {
         timestamp,
       };
     }
-    
+
     // 文件相关错误
     if (this.isFileError(error, message)) {
       return {
@@ -77,7 +77,7 @@ export class AppErrorHandler {
         timestamp,
       };
     }
-    
+
     // 权限相关错误
     if (this.isPermissionError(error, message)) {
       return {
@@ -88,7 +88,7 @@ export class AppErrorHandler {
         timestamp,
       };
     }
-    
+
     // 超时错误
     if (this.isTimeoutError(error, message)) {
       return {
@@ -99,7 +99,7 @@ export class AppErrorHandler {
         timestamp,
       };
     }
-    
+
     // 验证错误
     if (this.isValidationError(error, message)) {
       return {
@@ -110,7 +110,7 @@ export class AppErrorHandler {
         timestamp,
       };
     }
-    
+
     // 后端错误
     if (this.isBackendError(error, message)) {
       return {
@@ -121,7 +121,7 @@ export class AppErrorHandler {
         timestamp,
       };
     }
-    
+
     // 未知错误
     return {
       type: ErrorType.UNKNOWN,
@@ -137,32 +137,32 @@ export class AppErrorHandler {
    */
   private static showUserFriendlyMessage(appError: AppError): void {
     const { type, message, action } = appError;
-    
+
     switch (type) {
       case ErrorType.NETWORK:
         toast.error('🌐 网络连接失败，请检查网络状态后重试');
         break;
-        
+
       case ErrorType.FILE_NOT_FOUND:
         toast.error('📁 文件未找到，请检查文件路径是否正确');
         break;
-        
+
       case ErrorType.PERMISSION_ERROR:
         toast.error('🔒 权限不足，请检查文件访问权限');
         break;
-        
+
       case ErrorType.TIMEOUT_ERROR:
         toast.error('⏱️ 操作超时，请稍后重试');
         break;
-        
+
       case ErrorType.VALIDATION_ERROR:
         toast.error(`📝 数据验证失败: ${message}`);
         break;
-        
+
       case ErrorType.BACKEND_ERROR:
         toast.error(`⚙️ 后端服务异常: ${message}`);
         break;
-        
+
       default:
         toast.error(`❌ ${action}失败: ${message}`);
     }
@@ -175,19 +175,19 @@ export class AppErrorHandler {
     if (typeof error === 'string') {
       return error;
     }
-    
+
     if (error instanceof Error) {
       return error.message;
     }
-    
+
     if (error && typeof error === 'object' && 'message' in error) {
       return String((error as any).message);
     }
-    
+
     if (error && typeof error === 'object' && 'error' in error) {
       return String((error as any).error);
     }
-    
+
     return JSON.stringify(error);
   }
 
@@ -195,67 +195,79 @@ export class AppErrorHandler {
    * 检查是否为网络错误
    */
   private static isNetworkError(error: unknown, message: string): boolean {
-    return message.includes('fetch') || 
-           message.includes('network') || 
-           message.includes('connection') ||
-           message.includes('NETWORK_ERROR') ||
-           message.includes('ERR_NETWORK') ||
-           (error instanceof Error && error.name === 'NetworkError');
+    return (
+      message.includes('fetch') ||
+      message.includes('network') ||
+      message.includes('connection') ||
+      message.includes('NETWORK_ERROR') ||
+      message.includes('ERR_NETWORK') ||
+      (error instanceof Error && error.name === 'NetworkError')
+    );
   }
 
   /**
    * 检查是否为文件错误
    */
   private static isFileError(error: unknown, message: string): boolean {
-    return message.includes('file not found') ||
-           message.includes('ENOENT') ||
-           message.includes('File not found') ||
-           message.includes('path does not exist') ||
-           message.includes('No such file');
+    return (
+      message.includes('file not found') ||
+      message.includes('ENOENT') ||
+      message.includes('File not found') ||
+      message.includes('path does not exist') ||
+      message.includes('No such file')
+    );
   }
 
   /**
    * 检查是否为权限错误
    */
   private static isPermissionError(error: unknown, message: string): boolean {
-    return message.includes('permission') ||
-           message.includes('EACCES') ||
-           message.includes('access denied') ||
-           message.includes('unauthorized') ||
-           message.includes('EPERM');
+    return (
+      message.includes('permission') ||
+      message.includes('EACCES') ||
+      message.includes('access denied') ||
+      message.includes('unauthorized') ||
+      message.includes('EPERM')
+    );
   }
 
   /**
    * 检查是否为超时错误
    */
   private static isTimeoutError(error: unknown, message: string): boolean {
-    return message.includes('timeout') ||
-           message.includes('TIMEOUT') ||
-           message.includes('timed out') ||
-           message.includes('ETIMEDOUT');
+    return (
+      message.includes('timeout') ||
+      message.includes('TIMEOUT') ||
+      message.includes('timed out') ||
+      message.includes('ETIMEDOUT')
+    );
   }
 
   /**
    * 检查是否为验证错误
    */
   private static isValidationError(error: unknown, message: string): boolean {
-    return message.includes('validation') ||
-           message.includes('invalid') ||
-           message.includes('required') ||
-           message.includes('format') ||
-           message.includes('schema');
+    return (
+      message.includes('validation') ||
+      message.includes('invalid') ||
+      message.includes('required') ||
+      message.includes('format') ||
+      message.includes('schema')
+    );
   }
 
   /**
    * 检查是否为后端错误
    */
   private static isBackendError(error: unknown, message: string): boolean {
-    return message.includes('tauri') ||
-           message.includes('command') ||
-           message.includes('invoke') ||
-           message.includes('backend') ||
-           message.includes('rust') ||
-           message.includes('Internal server error');
+    return (
+      message.includes('tauri') ||
+      message.includes('command') ||
+      message.includes('invoke') ||
+      message.includes('backend') ||
+      message.includes('rust') ||
+      message.includes('Internal server error')
+    );
   }
 
   /**
@@ -272,23 +284,23 @@ export class AppErrorHandler {
     retryDelay: number = 1000
   ): Promise<T> {
     let lastError: unknown;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error;
-        
+
         // 记录重试日志
         console.warn(`🔄 ${action} 重试 ${attempt}/${maxRetries}:`, error);
-        
+
         // 如果不是最后一次尝试，等待后重试
         if (attempt < maxRetries) {
           await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
       }
     }
-    
+
     // 所有重试都失败了，处理错误
     throw this.handle(`${action} (${maxRetries}次重试后)`, lastError, true);
   }

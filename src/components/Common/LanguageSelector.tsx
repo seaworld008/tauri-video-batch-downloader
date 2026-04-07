@@ -40,12 +40,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   className,
   showLoading = true,
 }) => {
-  const { 
-    currentLanguage, 
-    availableLanguages, 
-    changeLanguage, 
-    isChanging 
-  } = useLanguage();
+  const { currentLanguage, availableLanguages, changeLanguage, isChanging } = useLanguage();
 
   const sizeClasses = {
     sm: 'text-sm py-1 px-2',
@@ -65,15 +60,11 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   );
 
   const optionClasses = (active: boolean, selected: boolean) =>
-    clsx(
-      'relative cursor-pointer select-none py-2 pl-3 pr-9',
-      'transition-colors duration-150',
-      {
-        'bg-primary-50 dark:bg-primary-900/20 text-primary-900 dark:text-primary-100': active,
-        'text-gray-900 dark:text-gray-100': !active,
-        'bg-primary-100 dark:bg-primary-800/30': selected,
-      }
-    );
+    clsx('relative cursor-pointer select-none py-2 pl-3 pr-9', 'transition-colors duration-150', {
+      'bg-primary-50 dark:bg-primary-900/20 text-primary-900 dark:text-primary-100': active,
+      'text-gray-900 dark:text-gray-100': !active,
+      'bg-primary-100 dark:bg-primary-800/30': selected,
+    });
 
   const handleLanguageChange = async (language: SupportedLanguage) => {
     try {
@@ -87,54 +78,54 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   const isLoading = showLoading && isChanging;
 
   return (
-    <div className="relative">
+    <div className='relative'>
       <Listbox
         value={currentLanguage}
         onChange={handleLanguageChange}
         disabled={disabled || isLoading}
       >
-        <div className="relative">
+        <div className='relative'>
           <Listbox.Button className={buttonClasses}>
-            <div className="flex items-center space-x-2">
+            <div className='flex items-center space-x-2'>
               {/* Language flag */}
-              <span className="text-lg" role="img" aria-label="Language flag">
+              <span className='text-lg' role='img' aria-label='Language flag'>
                 {LANGUAGE_FLAGS[currentLanguage]}
               </span>
-              
+
               {/* Language name */}
               {showName && (
-                <span className="block truncate font-medium">
+                <span className='block truncate font-medium'>
                   {LANGUAGE_NATIVE_NAMES[currentLanguage]}
                 </span>
               )}
-              
+
               {/* Loading spinner */}
               {isLoading && (
-                <div className="ml-auto">
-                  <div className="w-4 h-4 border-2 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+                <div className='ml-auto'>
+                  <div className='w-4 h-4 border-2 border-primary-600 border-t-transparent rounded-full animate-spin'></div>
                 </div>
               )}
             </div>
-            
+
             {/* Dropdown arrow */}
-            <span className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+            <span className='absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none'>
               <ChevronDownIcon
                 className={clsx(
                   'h-4 w-4 text-gray-400 transition-transform duration-200',
                   { 'rotate-180': false } // Could add state for open/close
                 )}
-                aria-hidden="true"
+                aria-hidden='true'
               />
             </span>
           </Listbox.Button>
 
           <Transition
             as={React.Fragment}
-            leave="transition ease-in duration-100"
-            leaveFrom="opacity-100"
-            leaveTo="opacity-0"
+            leave='transition ease-in duration-100'
+            leaveFrom='opacity-100'
+            leaveTo='opacity-0'
           >
-            <Listbox.Options className="absolute z-50 mt-1 w-full bg-white dark:bg-gray-800 shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm">
+            <Listbox.Options className='absolute z-50 mt-1 w-full bg-white dark:bg-gray-800 shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm'>
               {Object.entries(availableLanguages).map(([code, name]) => (
                 <Listbox.Option
                   key={code}
@@ -142,12 +133,12 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                   className={({ active, selected }) => optionClasses(active, selected)}
                 >
                   {({ selected }) => (
-                    <div className="flex items-center space-x-3">
+                    <div className='flex items-center space-x-3'>
                       {/* Language flag */}
-                      <span className="text-lg" role="img" aria-label="Language flag">
+                      <span className='text-lg' role='img' aria-label='Language flag'>
                         {LANGUAGE_FLAGS[code as SupportedLanguage]}
                       </span>
-                      
+
                       {/* Language name */}
                       <span
                         className={clsx(
@@ -157,11 +148,11 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                       >
                         {LANGUAGE_NATIVE_NAMES[code as SupportedLanguage]}
                       </span>
-                      
+
                       {/* Check icon for selected language */}
                       {selected && (
-                        <span className="absolute inset-y-0 right-0 flex items-center pr-3 text-primary-600 dark:text-primary-400">
-                          <CheckIcon className="h-4 w-4" aria-hidden="true" />
+                        <span className='absolute inset-y-0 right-0 flex items-center pr-3 text-primary-600 dark:text-primary-400'>
+                          <CheckIcon className='h-4 w-4' aria-hidden='true' />
                         </span>
                       )}
                     </div>
@@ -172,10 +163,10 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           </Transition>
         </div>
       </Listbox>
-      
+
       {/* Globe icon for accessibility */}
-      <div className="sr-only">
-        <GlobeAltIcon className="h-5 w-5" aria-hidden="true" />
+      <div className='sr-only'>
+        <GlobeAltIcon className='h-5 w-5' aria-hidden='true' />
         <span>Language selector</span>
       </div>
     </div>
