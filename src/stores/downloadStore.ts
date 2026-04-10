@@ -43,6 +43,7 @@ import {
 import {
   parseDownloadEventEnvelopeV1,
   parseTaskProgressedPayload,
+  parseTaskStatsUpdatedPayload,
   parseTaskStatusChangedPayload,
 } from '../features/downloads/model/contracts';
 import {
@@ -1812,12 +1813,13 @@ export const initializeProgressListener = async () => {
             break;
           }
           case 'task.stats_updated': {
-            const payload = envelope.payload as any;
-            if (payload && typeof payload === 'object') {
-              useDownloadStore.setState(state => ({
-                stats: ensureDownloadStats(payload, state.tasks),
-              }));
+            const parsedPayload = parseTaskStatsUpdatedPayload(envelope.payload);
+            if (!parsedPayload.success) {
+              return;
             }
+            useDownloadStore.setState(state => ({
+              stats: ensureDownloadStats(parsedPayload.data, state.tasks),
+            }));
             break;
           }
           default:

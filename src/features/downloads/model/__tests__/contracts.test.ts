@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseDownloadEventEnvelopeV1,
   parseTaskProgressedPayload,
+  parseTaskStatsUpdatedPayload,
   parseTaskStatusChangedPayload,
   SUPPORTED_DOWNLOAD_EVENT_SCHEMA,
 } from '../contracts';
@@ -65,5 +66,25 @@ describe('download_event_v1 contracts', () => {
     if (result.success) {
       expect(result.data.status).toBe('Downloading');
     }
+  });
+
+  it('parses task.stats_updated payload', () => {
+    const result = parseTaskStatsUpdatedPayload({
+      total_tasks: 12,
+      completed_tasks: 8,
+      average_speed: 300,
+      queue_paused: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.total_tasks).toBe(12);
+      expect(result.data.queue_paused).toBe(true);
+    }
+  });
+
+  it('rejects invalid task.stats_updated payload', () => {
+    const result = parseTaskStatsUpdatedPayload('not-object');
+    expect(result.success).toBe(false);
   });
 });

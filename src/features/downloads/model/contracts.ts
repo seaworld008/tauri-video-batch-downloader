@@ -23,6 +23,16 @@ export interface TaskStatusChangedPayload {
   error_message?: string | null;
 }
 
+export interface TaskStatsUpdatedPayload {
+  total_tasks?: number;
+  completed_tasks?: number;
+  failed_tasks?: number;
+  total_downloaded?: number;
+  average_speed?: number;
+  active_downloads?: number;
+  queue_paused?: boolean;
+}
+
 export const SUPPORTED_DOWNLOAD_EVENT_SCHEMA = 1;
 
 export const isSupportedDownloadEventType = (value: unknown): value is DownloadEventTypeV1 =>
@@ -133,6 +143,31 @@ export const parseTaskStatusChangedPayload = (
         candidate.error_message === null || typeof candidate.error_message === 'string'
           ? candidate.error_message
           : undefined,
+    },
+  };
+};
+
+export const parseTaskStatsUpdatedPayload = (
+  payload: unknown
+): { success: true; data: TaskStatsUpdatedPayload } | { success: false; error: string } => {
+  if (!payload || typeof payload !== 'object') {
+    return { success: false, error: 'task.stats_updated payload must be an object' };
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  const queuePaused =
+    typeof candidate.queue_paused === 'boolean' ? candidate.queue_paused : undefined;
+
+  return {
+    success: true,
+    data: {
+      total_tasks: asFiniteNumber(candidate.total_tasks),
+      completed_tasks: asFiniteNumber(candidate.completed_tasks),
+      failed_tasks: asFiniteNumber(candidate.failed_tasks),
+      total_downloaded: asFiniteNumber(candidate.total_downloaded),
+      average_speed: asFiniteNumber(candidate.average_speed),
+      active_downloads: asFiniteNumber(candidate.active_downloads),
+      queue_paused: queuePaused,
     },
   };
 };
