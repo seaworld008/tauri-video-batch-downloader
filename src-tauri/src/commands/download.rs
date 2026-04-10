@@ -2,8 +2,21 @@
 use tauri::Emitter;
 
 use tauri::{command, State};
+use uuid::Uuid;
 
+use crate::infra::command_error::CommandError;
 use crate::{core::models::*, AppState};
+
+fn map_runtime_error(prefix: &str, error: impl std::fmt::Display) -> CommandError {
+    let message = format!("{}: {}", prefix, error);
+    if message
+        .to_lowercase()
+        .contains("maximum concurrent downloads")
+    {
+        return CommandError::concurrency_limit(message);
+    }
+    CommandError::internal(message)
+}
 
 /// 调试命令：测试下载系统是否工作
 #[command]
@@ -119,22 +132,34 @@ pub async fn add_download_tasks(
 }
 
 #[command]
-pub async fn start_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn start_download(
+    task_id: String,
+    request_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
     tracing::info!(
         "[START_DOWNLOAD_CMD] Starting download for task: {}",
         task_id
     );
 
-    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
-    let result = state.download_runtime.start_task(task_id.clone()).await;
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let result = state
+        .task_engine
+        .start_task(task_id.clone(), request_id)
+        .await;
 
     match result {
-        Ok(_) => {
+        Ok(ack) if ack.accepted => {
             tracing::info!(
                 "[START_DOWNLOAD_CMD] ✅ Download started successfully for task: {}",
                 task_id
             );
             Ok(())
+        }
+        Ok(ack) => {
+            Err(CommandError::internal(ack.reason.unwrap_or_else(|| {
+                "TaskEngine rejected start request".to_string()
+            })))
         }
         Err(e) => {
             tracing::error!(
@@ -142,117 +167,230 @@ pub async fn start_download(task_id: String, state: State<'_, AppState>) -> Resu
                 task_id,
                 e
             );
-            Err(format!("Failed to start download: {}", e))
+            Err(map_runtime_error("Failed to start download", e))
         }
     }
 }
 
 #[command]
-pub async fn pause_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn pause_download(
+    task_id: String,
+    request_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
     tracing::info!("[PAUSE_CMD] Received pause request for task: {}", task_id);
 
-    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
-    let result = state.download_runtime.pause_task(task_id.clone()).await;
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let result = state
+        .task_engine
+        .pause_task(task_id.clone(), request_id)
+        .await;
 
     match result {
-        Ok(_) => {
+        Ok(ack) if ack.accepted => {
             tracing::info!("[PAUSE_CMD] ✅ Successfully paused task: {}", task_id);
             Ok(())
         }
+        Ok(ack) => {
+            Err(CommandError::internal(ack.reason.unwrap_or_else(|| {
+                "TaskEngine rejected pause request".to_string()
+            })))
+        }
         Err(e) => {
             tracing::error!("[PAUSE_CMD] ❌ Failed to pause task {}: {}", task_id, e);
-            Err(format!("Failed to pause download: {}", e))
+            Err(map_runtime_error("Failed to pause download", e))
         }
     }
 }
 
 #[command]
-pub async fn resume_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn resume_download(
+    task_id: String,
+    request_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
     tracing::info!("[RESUME_CMD] Resuming download for task: {}", task_id);
 
-    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
-    let result = state.download_runtime.resume_task(task_id.clone()).await;
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let result = state
+        .task_engine
+        .resume_task(task_id.clone(), request_id)
+        .await;
 
     match result {
-        Ok(_) => {
+        Ok(ack) if ack.accepted => {
             tracing::info!("[RESUME_CMD] ✅ Download resumed for task: {}", task_id);
             Ok(())
         }
+        Ok(ack) => {
+            Err(CommandError::internal(ack.reason.unwrap_or_else(|| {
+                "TaskEngine rejected resume request".to_string()
+            })))
+        }
         Err(e) => {
             tracing::error!("[RESUME_CMD] ❌ Failed to resume download: {}", e);
-            Err(format!("Failed to resume download: {}", e))
+            Err(map_runtime_error("Failed to resume download", e))
         }
     }
 }
 
 #[command]
-pub async fn cancel_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn cancel_download(
+    task_id: String,
+    request_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
     tracing::info!("[CANCEL_CMD] Cancelling download for task: {}", task_id);
 
-    // 统一走 runtime 命令队列，避免在 Tauri 命令线程中持有写锁跨 await。
-    let result = state.download_runtime.cancel_task(task_id.clone()).await;
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let result = state
+        .task_engine
+        .cancel_task(task_id.clone(), request_id)
+        .await;
 
     match result {
-        Ok(_) => {
+        Ok(ack) if ack.accepted => {
             tracing::info!("[CANCEL_CMD] ✅ Download cancelled for task: {}", task_id);
             Ok(())
         }
+        Ok(ack) => {
+            Err(CommandError::internal(ack.reason.unwrap_or_else(|| {
+                "TaskEngine rejected cancel request".to_string()
+            })))
+        }
         Err(e) => {
             tracing::error!("Failed to cancel download: {}", e);
-            Err(format!("Failed to cancel download: {}", e))
+            Err(map_runtime_error("Failed to cancel download", e))
         }
     }
 }
 
 #[command]
-pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
     tracing::info!("[PAUSE_ALL_CMD] Pausing all active downloads");
-    state.download_runtime.pause_all().await.map_err(|e| {
-        tracing::error!("[PAUSE_ALL_CMD] ❌ Failed to pause all downloads: {}", e);
-        e.to_string()
-    })
+    state
+        .download_runtime
+        .pause_all()
+        .await
+        .map_err(|e| map_runtime_error("Failed to pause all downloads", e))
 }
 
 #[command]
-pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
     tracing::info!("[RESUME_ALL_CMD] Resuming all paused downloads");
-    state.download_runtime.resume_all().await.map_err(|e| {
-        tracing::error!("[RESUME_ALL_CMD] ❌ Failed to resume all downloads: {}", e);
-        e.to_string()
-    })
+    state
+        .download_runtime
+        .resume_all()
+        .await
+        .map_err(|e| map_runtime_error("Failed to resume all downloads", e))
 }
 
 /// Start all downloads (backend decides resume paused vs start pending)
 #[command]
-pub async fn start_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+pub async fn start_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
     tracing::info!("[START_ALL_CMD] Starting downloads with backend policy");
-    state.download_runtime.start_all().await.map_err(|e| {
-        tracing::error!("[START_ALL_CMD] ❌ Failed to start all downloads: {}", e);
-        e.to_string()
-    })
+    state
+        .download_runtime
+        .start_all()
+        .await
+        .map_err(|e| map_runtime_error("Failed to start all downloads", e))
 }
 
 /// Start all pending/failed downloads respecting concurrency limit
 #[command]
-pub async fn start_all_pending_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+pub async fn start_all_pending_downloads(
+    state: State<'_, AppState>,
+) -> Result<usize, CommandError> {
     tracing::info!("[START_ALL_CMD] Starting all pending/failed downloads");
-    let mut manager = state.download_manager.write().await;
-    manager.start_all_pending_impl().await.map_err(|e| {
-        tracing::error!(
-            "[START_ALL_CMD] ❌ Failed to start all pending downloads: {}",
-            e
-        );
-        e.to_string()
-    })
+    let task_ids: Vec<String> = {
+        let manager = state.download_manager.read().await;
+        manager
+            .get_tasks()
+            .await
+            .into_iter()
+            .filter(|task| matches!(task.status, TaskStatus::Pending | TaskStatus::Failed))
+            .map(|task| task.id)
+            .collect()
+    };
+
+    let mut started = 0usize;
+    for task_id in task_ids {
+        let request_id = Uuid::new_v4().to_string();
+        match state
+            .task_engine
+            .start_task(task_id.clone(), request_id)
+            .await
+        {
+            Ok(ack) if ack.accepted => started += 1,
+            Ok(ack) => {
+                tracing::warn!(
+                    "[START_ALL_CMD] TaskEngine rejected start for task {}: {:?}",
+                    task_id,
+                    ack.reason
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "[START_ALL_CMD] Failed to enqueue start for task {}: {}",
+                    task_id,
+                    err
+                );
+            }
+        }
+    }
+
+    Ok(started)
 }
 
 #[command]
-pub async fn cancel_all_downloads(state: State<'_, AppState>) -> Result<usize, String> {
+pub async fn cancel_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
     tracing::info!("[CANCEL_ALL_CMD] Cancelling all in-flight downloads");
-    state.download_runtime.cancel_all().await.map_err(|e| {
-        tracing::error!("[CANCEL_ALL_CMD] ❌ Failed to cancel all downloads: {}", e);
-        e.to_string()
-    })
+    let task_ids: Vec<String> = {
+        let manager = state.download_manager.read().await;
+        manager
+            .get_tasks()
+            .await
+            .into_iter()
+            .filter(|task| {
+                matches!(
+                    task.status,
+                    TaskStatus::Pending
+                        | TaskStatus::Downloading
+                        | TaskStatus::Paused
+                        | TaskStatus::Failed
+                )
+            })
+            .map(|task| task.id)
+            .collect()
+    };
+
+    let mut cancelled = 0usize;
+    for task_id in task_ids {
+        let request_id = Uuid::new_v4().to_string();
+        match state
+            .task_engine
+            .cancel_task(task_id.clone(), request_id)
+            .await
+        {
+            Ok(ack) if ack.accepted => cancelled += 1,
+            Ok(ack) => {
+                tracing::warn!(
+                    "[CANCEL_ALL_CMD] TaskEngine rejected cancel for task {}: {:?}",
+                    task_id,
+                    ack.reason
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "[CANCEL_ALL_CMD] Failed to enqueue cancel for task {}: {}",
+                    task_id,
+                    err
+                );
+            }
+        }
+    }
+
+    Ok(cancelled)
 }
 
 #[command]
@@ -367,7 +505,7 @@ pub async fn clear_completed_tasks(state: State<'_, AppState>) -> Result<(), Str
 }
 
 #[command]
-pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), CommandError> {
     let failed_task_ids: Vec<String> = {
         let manager = state.download_manager.read().await;
         manager
@@ -391,17 +529,29 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
         manager
             .retry_failed()
             .await
-            .map_err(|e| format!("Failed to reset failed tasks: {}", e))?;
+            .map_err(|e| map_runtime_error("Failed to reset failed tasks", e))?;
     }
 
     let mut started = 0usize;
     let mut start_errors = Vec::new();
 
     for task_id in failed_task_ids {
-        match state.download_runtime.start_task(task_id.clone()).await {
-            Ok(_) => {
+        let request_id = Uuid::new_v4().to_string();
+        match state
+            .task_engine
+            .start_task(task_id.clone(), request_id)
+            .await
+        {
+            Ok(ack) if ack.accepted => {
                 started += 1;
                 tracing::info!("Restarted download for task: {}", task_id);
+            }
+            Ok(ack) => {
+                let reason = ack
+                    .reason
+                    .unwrap_or_else(|| "TaskEngine rejected retry request".to_string());
+                tracing::warn!("Failed to restart task {}: {}", task_id, reason);
+                start_errors.push(format!("{}: {}", task_id, reason));
             }
             Err(err) => {
                 tracing::warn!("Failed to restart task {}: {}", task_id, err);
@@ -411,12 +561,12 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
     }
 
     if !start_errors.is_empty() {
-        return Err(format!(
+        return Err(CommandError::internal(format!(
             "Restarted {} tasks, but {} failed to start: {}",
             started,
             start_errors.len(),
             start_errors.join(", ")
-        ));
+        )));
     }
 
     Ok(())
@@ -426,16 +576,16 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), String
 pub async fn set_rate_limit(
     bytes_per_second: Option<u64>,
     state: State<'_, AppState>,
-) -> Result<Option<u64>, String> {
+) -> Result<Option<u64>, CommandError> {
     const MIN_LIMIT: u64 = 64 * 1024; // 64KB/s
     const MAX_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10GB/s
 
     if let Some(limit) = bytes_per_second {
         if !(MIN_LIMIT..=MAX_LIMIT).contains(&limit) {
-            return Err(format!(
+            return Err(CommandError::validation(format!(
                 "Rate limit must be between {} and {} bytes/sec",
                 MIN_LIMIT, MAX_LIMIT
-            ));
+            )));
         }
     }
 

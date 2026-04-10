@@ -5,6 +5,8 @@
 
 pub mod commands;
 pub mod core;
+pub mod engine;
+pub mod infra;
 pub mod parsers;
 pub mod utils;
 

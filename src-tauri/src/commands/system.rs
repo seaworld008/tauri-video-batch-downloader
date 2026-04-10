@@ -7,10 +7,13 @@ use chrono::Local;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, State};
 use tracing::{error, info, warn};
 
 use crate::core::models::{AppError, AppResult, SystemInfo};
+use crate::infra::event_bus::emit_system_event;
+use crate::infra::providers::capability_service::ToolCapabilityService;
 use crate::utils::logging;
 use crate::AppState;
 
@@ -34,13 +37,38 @@ pub async fn get_system_info(
 /// Start system monitoring
 #[tauri::command]
 pub async fn start_system_monitor(
-    _app: AppHandle,
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!("🔍 Starting system monitor");
 
-    // System monitoring is handled in the main setup function
-    // This command is for UI to request monitoring start
+    if state.system_monitor.running.swap(true, Ordering::SeqCst) {
+        info!("System monitor already running");
+        return Ok(());
+    }
+
+    let controller = state.system_monitor.clone();
+    let app_handle = app.clone();
+    let task = tauri::async_runtime::spawn(async move {
+        while controller.running.load(Ordering::SeqCst) {
+            match get_system_info_impl().await {
+                Ok(system_info) => {
+                    let _ = app_handle.emit("system_info_updated", system_info.clone());
+                    let _ = emit_system_event(&app_handle, "system.metrics.updated", &system_info);
+                }
+                Err(err) => {
+                    warn!("System monitor tick failed: {}", err);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
+
+    {
+        let mut guard = state.system_monitor.handle.lock().await;
+        *guard = Some(task);
+    }
+
     Ok(())
 }
 
@@ -48,12 +76,28 @@ pub async fn start_system_monitor(
 #[tauri::command]
 pub async fn stop_system_monitor(
     _app: AppHandle,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!("⏹️ Stopping system monitor");
 
-    // This is a placeholder - real implementation would stop the monitoring task
+    state.system_monitor.running.store(false, Ordering::SeqCst);
+
+    let handle = {
+        let mut guard = state.system_monitor.handle.lock().await;
+        guard.take()
+    };
+
+    if let Some(task) = handle {
+        task.abort();
+    }
+
     Ok(())
+}
+
+/// Get system monitor status
+#[tauri::command]
+pub async fn get_system_monitor_status(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.system_monitor.running.load(Ordering::SeqCst))
 }
 
 /// Open the downloads folder
@@ -350,21 +394,9 @@ async fn show_in_folder_impl(file_path: &str) -> AppResult<()> {
 }
 
 async fn check_tool_availability(tool_name: &str, args: &[&str]) -> AppResult<bool> {
-    let output = tokio::process::Command::new(tool_name)
-        .args(args)
-        .output()
-        .await;
-
-    match output {
-        Ok(output) => Ok(output.status.success()),
-        Err(e) => match e.kind() {
-            std::io::ErrorKind::NotFound => Ok(false),
-            _ => Err(AppError::System(format!(
-                "Failed to check {}: {}",
-                tool_name, e
-            ))),
-        },
-    }
+    ToolCapabilityService::is_available(tool_name, args)
+        .await
+        .map_err(AppError::System)
 }
 
 async fn validate_url_impl(url: &str) -> AppResult<bool> {
@@ -426,6 +458,12 @@ async fn get_video_info_impl(url: &str) -> AppResult<serde_json::Value> {
         ));
     }
 
+    if is_youtube_url(url) {
+        let youtube_info = crate::commands::youtube::get_youtube_info_internal(url).await?;
+        return serde_json::to_value(youtube_info)
+            .map_err(|e| AppError::System(format!("Failed to serialize YouTube info: {}", e)));
+    }
+
     // Try using yt-dlp if available
     if check_tool_availability("yt-dlp", &["--version"])
         .await
@@ -456,6 +494,11 @@ async fn get_video_info_impl(url: &str) -> AppResult<serde_json::Value> {
         "extractor": "basic",
         "available": true
     }))
+}
+
+fn is_youtube_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("youtube.com/") || lower.contains("youtu.be/")
 }
 
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<serde_json::Value> {
