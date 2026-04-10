@@ -26,6 +26,8 @@ pub use utils::encoding::detect_encoding;
 
 use std::sync::Arc;
 
+use engine::task_engine::{spawn_task_engine, TaskEngineHandle};
+
 /// Application state shared between Tauri commands
 #[derive(Clone)]
 pub struct AppState {
@@ -33,6 +35,14 @@ pub struct AppState {
     pub http_downloader: Arc<tokio::sync::RwLock<HttpDownloader>>,
     pub config: Arc<tokio::sync::RwLock<AppConfig>>,
     pub download_runtime: DownloadRuntimeHandle,
+    pub task_engine: TaskEngineHandle,
+    pub system_monitor: Arc<SystemMonitorController>,
+}
+
+#[derive(Default)]
+pub struct SystemMonitorController {
+    pub running: std::sync::atomic::AtomicBool,
+    pub handle: tokio::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -65,12 +75,15 @@ impl AppState {
             download_config,
         )?));
         let download_runtime = spawn_download_runtime(download_manager.clone());
+        let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
 
         Ok(Self {
             download_manager,
             http_downloader: Arc::new(tokio::sync::RwLock::new(http_downloader)),
             config: Arc::new(tokio::sync::RwLock::new(config)),
             download_runtime,
+            task_engine,
+            system_monitor: Arc::new(SystemMonitorController::default()),
         })
     }
 

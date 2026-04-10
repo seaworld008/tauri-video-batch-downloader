@@ -45,7 +45,6 @@ pub fn emit_system_event<T: Serialize + Clone>(
     let envelope = EventEnvelope::new(event_type, payload.clone());
     app_handle.emit(SYSTEM_EVENT_V1, envelope)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

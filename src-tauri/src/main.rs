@@ -6,7 +6,6 @@ use serde_json::json;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tokio::sync::{mpsc, RwLock};
-use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 mod commands;
@@ -48,7 +47,7 @@ pub struct AppState {
 #[derive(Default)]
 pub struct SystemMonitorController {
     pub running: std::sync::atomic::AtomicBool,
-    pub handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    pub handle: tokio::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -428,7 +427,7 @@ fn main() {
                                 emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::StatsUpdated { stats } => {
-                            let _ = app_handle_clone.emit("download_stats", stats);
+                            let _ = app_handle_clone.emit("download_stats", &stats);
                             let _ =
                                 emit_download_event(&app_handle_clone, "task.stats_updated", &stats);
                         }
