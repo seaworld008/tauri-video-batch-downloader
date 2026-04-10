@@ -13,6 +13,7 @@ mod commands;
 // Silence dead_code warnings for now to keep CI signal focused on real issues.
 #[allow(dead_code)]
 mod core;
+mod infra;
 #[allow(dead_code, unused_imports)]
 mod parsers;
 #[allow(dead_code, unused_imports)]
@@ -25,6 +26,7 @@ use core::{
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
     AppConfig, DownloadManager,
 };
+use infra::event_bus::emit_download_event;
 use utils::logging;
 
 /// 简化的应用程序状态，防止初始化失败
@@ -319,6 +321,16 @@ fn main() {
                             if let Err(e) = app_handle_clone.emit("download_progress", &progress) {
                                 error!("[EVENT_BRIDGE] Failed to emit download_progress: {}", e);
                             }
+                            if let Err(e) = emit_download_event(
+                                &app_handle_clone,
+                                "task.progressed",
+                                &progress,
+                            ) {
+                                error!(
+                                    "[EVENT_BRIDGE] Failed to emit download_event_v1(task.progressed): {}",
+                                    e
+                                );
+                            }
                         }
                         core::manager::DownloadEvent::TaskStarted { task_id } => {
                             info!("[EVENT_BRIDGE] TaskStarted for task {}", task_id);
@@ -327,8 +339,20 @@ fn main() {
                                 "status": "Downloading",
                                 "error_message": null
                             });
-                            if let Err(e) = app_handle_clone.emit("task_status_changed", payload) {
+                            if let Err(e) =
+                                app_handle_clone.emit("task_status_changed", payload.clone())
+                            {
                                 error!("[EVENT_BRIDGE] Failed to emit task_status_changed: {}", e);
+                            }
+                            if let Err(e) = emit_download_event(
+                                &app_handle_clone,
+                                "task.status_changed",
+                                &payload,
+                            ) {
+                                error!(
+                                    "[EVENT_BRIDGE] Failed to emit download_event_v1(task.status_changed): {}",
+                                    e
+                                );
                             }
                         }
                         core::manager::DownloadEvent::TaskCompleted {
@@ -340,7 +364,9 @@ fn main() {
                                 "status": "Completed",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::TaskFailed { task_id, error } => {
                             let payload = json!({
@@ -348,7 +374,9 @@ fn main() {
                                 "status": "Failed",
                                 "error_message": error
                             });
-                            let _ = app_handle_clone.emit("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::TaskPaused { task_id } => {
                             let payload = json!({
@@ -356,7 +384,9 @@ fn main() {
                                 "status": "Paused",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::TaskResumed { task_id } => {
                             let payload = json!({
@@ -364,7 +394,9 @@ fn main() {
                                 "status": "Downloading",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::TaskCancelled { task_id } => {
                             let payload = json!({
@@ -372,10 +404,14 @@ fn main() {
                                 "status": "Cancelled",
                                 "error_message": null
                             });
-                            let _ = app_handle_clone.emit("task_status_changed", payload);
+                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::StatsUpdated { stats } => {
                             let _ = app_handle_clone.emit("download_stats", stats);
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.stats_updated", &stats);
                         }
                         _ => {}
                     }
