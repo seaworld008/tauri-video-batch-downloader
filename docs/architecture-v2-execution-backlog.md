@@ -251,7 +251,7 @@
 
 | 任务 | 状态 | 负责人 | PR | 计划完成 |
 |---|---|---|---|---|
-| A1 事件 envelope v1 | DONE | Codex | 当前 PR | Week 1 |
+| A1 事件 envelope v1 | TODO | 待分配 | - | Week 1 |
 | A2 错误码统一 | TODO | 待分配 | - | Week 1 |
 | A3 前端契约解析器 | TODO | 待分配 | - | Week 1 |
 | B1 Engine 骨架 | TODO | 待分配 | - | Week 2 |
