@@ -1776,7 +1776,7 @@ export const initializeProgressListener = async () => {
 
       const unlistenV1 = await listen<any>('download_event_v1', event => {
         const parsed = parseDownloadEventEnvelopeV1(event.payload);
-        if (!parsed.success) {
+        if (parsed.success === false) {
           console.warn('[download_event_v1] 忽略无效事件:', parsed.error, event.payload);
           return;
         }
@@ -1787,7 +1787,7 @@ export const initializeProgressListener = async () => {
         switch (envelope.event_type) {
           case 'task.progressed': {
             const parsedPayload = parseTaskProgressedPayload(envelope.payload);
-            if (!parsedPayload.success) {
+            if (parsedPayload.success === false) {
               return;
             }
             updateTaskProgress({
@@ -1802,7 +1802,7 @@ export const initializeProgressListener = async () => {
           }
           case 'task.status_changed': {
             const parsedPayload = parseTaskStatusChangedPayload(envelope.payload);
-            if (!parsedPayload.success) {
+            if (parsedPayload.success === false) {
               return;
             }
             updateTaskStatus({
@@ -1814,11 +1814,14 @@ export const initializeProgressListener = async () => {
           }
           case 'task.stats_updated': {
             const parsedPayload = parseTaskStatsUpdatedPayload(envelope.payload);
-            if (!parsedPayload.success) {
+            if (parsedPayload.success === false) {
               return;
             }
             useDownloadStore.setState(state => ({
-              stats: ensureDownloadStats(parsedPayload.data, state.tasks),
+              stats: ensureDownloadStats({
+                ...calculateStatsFromTasks(state.tasks),
+                ...parsedPayload.data,
+              }),
             }));
             break;
           }

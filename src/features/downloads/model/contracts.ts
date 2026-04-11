@@ -77,13 +77,17 @@ export const parseDownloadEventEnvelopeV1 = (
     return { success: false, error: 'Missing payload' };
   }
 
+  const eventId = candidate.event_id as string;
+  const eventType = candidate.event_type as DownloadEventTypeV1;
+  const timestamp = candidate.ts as string;
+
   return {
     success: true,
     data: {
       schema_version: schemaVersion,
-      event_id: candidate.event_id,
-      event_type: candidate.event_type,
-      ts: candidate.ts,
+      event_id: eventId,
+      event_type: eventType,
+      ts: timestamp,
       payload: candidate.payload,
     },
   };
@@ -134,15 +138,25 @@ export const parseTaskStatusChangedPayload = (
     return { success: false, error: 'task.status_changed missing status' };
   }
 
+  const taskId = candidate.task_id as string;
+  const status = candidate.status as string;
+  const errorMessage = candidate.error_message;
+  let normalizedErrorMessage: string | null | undefined;
+
+  if (errorMessage === null) {
+    normalizedErrorMessage = null;
+  } else if (typeof errorMessage === 'string') {
+    normalizedErrorMessage = errorMessage;
+  } else {
+    normalizedErrorMessage = undefined;
+  }
+
   return {
     success: true,
     data: {
-      task_id: candidate.task_id,
-      status: candidate.status,
-      error_message:
-        candidate.error_message === null || typeof candidate.error_message === 'string'
-          ? candidate.error_message
-          : undefined,
+      task_id: taskId,
+      status,
+      error_message: normalizedErrorMessage,
     },
   };
 };

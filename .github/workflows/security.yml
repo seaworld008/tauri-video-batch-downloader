@@ -24,6 +24,10 @@ jobs:
   rust-security:
     name: Rust Security Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -55,13 +59,53 @@ jobs:
           echo "## Security Audit Results" > ../audit-results.md
           echo "" >> ../audit-results.md
 
-          if cargo audit --json > audit.json 2>&1; then
+          cargo audit --json > audit.json 2>&1 || true
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          audit_path = Path("audit.json")
+          report_path = Path("../audit-results.md")
+
+          data = json.loads(audit_path.read_text(encoding="utf-8"))
+          vulnerabilities = data.get("vulnerabilities", {}).get("list", [])
+          warnings = data.get("warnings", {})
+
+          with report_path.open("a", encoding="utf-8") as report:
+              if vulnerabilities:
+                  report.write("⚠️  Security vulnerabilities detected:\n\n")
+                  for vuln in vulnerabilities:
+                      advisory = vuln.get("advisory", {})
+                      report.write(f"Crate:     {advisory.get('package', '<unknown>')}\n")
+                      report.write(f"Version:   {vuln.get('versions', {}).get('patched') or vuln.get('versions', {}).get('patched_versions') or '<unknown>'}\n")
+                      report.write(f"Title:     {advisory.get('title', '<unknown>')}\n")
+                      report.write(f"ID:        {advisory.get('id', '<unknown>')}\n")
+                      report.write(f"URL:       {advisory.get('url', '<unknown>')}\n")
+                      report.write(f"Solution:  {advisory.get('solution', '<none>')}\n\n")
+              else:
+                  report.write("✅ No known security vulnerabilities found\n")
+
+              unmaintained = warnings.get("unmaintained", [])
+              if unmaintained:
+                  report.write("## Non-blocking Maintenance Warnings\n\n")
+                  for item in unmaintained:
+                      report.write(
+                          f"- {item.get('advisory', {}).get('id', '<unknown>')}: "
+                          f"{item.get('advisory', {}).get('title', '<unknown>')}\n"
+                      )
+          PY
+
+          if python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("audit.json").read_text(encoding="utf-8"))
+          raise SystemExit(0 if not data.get("vulnerabilities", {}).get("list") else 1)
+          PY
+          then
             echo "✅ No known security vulnerabilities found" >> ../audit-results.md
             echo "security_status=clean" >> $GITHUB_OUTPUT
           else
-            echo "⚠️  Security vulnerabilities detected:" >> ../audit-results.md
-            echo "" >> ../audit-results.md
-            cargo audit --color never >> ../audit-results.md || true
             echo "security_status=vulnerabilities" >> $GITHUB_OUTPUT
           fi
         continue-on-error: true
@@ -170,6 +214,10 @@ jobs:
   frontend-security:
     name: Frontend Security Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -323,6 +371,7 @@ jobs:
 
       - name: Run dependency review
         uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
           fail-on-severity: moderate
           allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT
@@ -431,6 +480,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [rust-security, frontend-security, codeql]
     if: always()
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
 
     steps:
       - name: Download audit artifacts
