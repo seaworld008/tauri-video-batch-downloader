@@ -520,4 +520,3 @@ jobs:
           name: security-summary
           path: security-summary.md
           retention-days: 90
-
