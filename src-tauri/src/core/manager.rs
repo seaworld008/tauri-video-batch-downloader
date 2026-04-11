@@ -3995,6 +3995,8 @@ mod tests {
         let mut config = DownloadConfig::default();
         config.concurrent_downloads = 1;
         let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        manager.event_sender = Some(sender);
 
         let paused_task_id = manager
             .add_task(
@@ -4025,9 +4027,10 @@ mod tests {
             task.error_message = Some("boom".to_string());
         }
 
-        manager
-            .active_downloads
-            .insert("occupy".to_string(), tokio::spawn(async {}));
+        manager.active_downloads.insert(
+            "occupy".to_string(),
+            tokio::spawn(std::future::pending::<()>()),
+        );
 
         let manager = Arc::new(RwLock::new(manager));
         let started = DownloadManager::runtime_start_all_downloads(&manager).await?;
@@ -4043,6 +4046,12 @@ mod tests {
             guard.tasks.get(&failed_task_id).map(|task| &task.status),
             Some(&TaskStatus::Failed)
         );
+        drop(queue);
+        drop(guard);
+
+        if let Some(handle) = manager.write().await.active_downloads.remove("occupy") {
+            handle.abort();
+        }
 
         Ok(())
     }

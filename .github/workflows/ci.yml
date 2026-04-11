@@ -107,6 +107,13 @@ jobs:
         run: cargo fmt --all -- --check
         working-directory: ./src-tauri
 
+      - name: Prepare frontendDist placeholder
+        run: |
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            printf '<!doctype html><html><body></body></html>\n' > dist/index.html
+          fi
+
       - name: Run Rust tests
         run: cargo test --verbose
         working-directory: ./src-tauri
