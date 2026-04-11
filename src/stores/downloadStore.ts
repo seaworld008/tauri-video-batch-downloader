@@ -40,6 +40,18 @@ import {
   ensureDownloadStats,
   calculateStatsFromTasks,
 } from '../utils/downloadStats';
+import {
+  parseDownloadEventEnvelopeV1,
+  parseTaskProgressedPayload,
+  parseTaskStatsUpdatedPayload,
+  parseTaskStatusChangedPayload,
+} from '../features/downloads/model/contracts';
+import {
+  reduceTasksWithProgressUpdate,
+  reduceTasksWithStatusUpdate,
+  type ProgressEventPayload,
+  type StatusEventPayload,
+} from '../features/downloads/state/eventReducers';
 
 let listenersInitialized = false;
 let listenerSetupPromise: Promise<void> | null = null;
@@ -141,8 +153,22 @@ const getErrorMessage = (error: unknown) => {
   return String(error ?? '');
 };
 
-const isConcurrencyError = (error: unknown) =>
-  getErrorMessage(error).toLowerCase().includes('maximum concurrent downloads');
+const getErrorCode = (error: unknown): string | undefined => {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as any).code);
+  }
+
+  return undefined;
+};
+
+const isConcurrencyError = (error: unknown) => {
+  const code = getErrorCode(error);
+  if (code === 'MAX_CONCURRENCY_REACHED') {
+    return true;
+  }
+
+  return getErrorMessage(error).toLowerCase().includes('maximum concurrent downloads');
+};
 
 const CONCURRENCY_NOTICE_INTERVAL = 4000;
 let lastConcurrencyNotice = 0;
@@ -1730,8 +1756,84 @@ export const initializeProgressListener = async () => {
   const setupListeners = async () => {
     try {
       let progressEventCount = 0;
+      let hasVersionedEvents = false;
       const lastProgressUpdate = new Map<string, number>();
+      const updateTaskStatus = (payload: StatusEventPayload) => {
+        useDownloadStore.setState(state => {
+          return {
+            tasks: reduceTasksWithStatusUpdate(state.tasks, payload),
+          };
+        });
+
+        useDownloadStore.getState().refreshStats();
+      };
+
+      const updateTaskProgress = (update: ProgressEventPayload) => {
+        useDownloadStore.setState(state => ({
+          tasks: reduceTasksWithProgressUpdate(state.tasks, update),
+        }));
+      };
+
+      const unlistenV1 = await listen<any>('download_event_v1', event => {
+        const parsed = parseDownloadEventEnvelopeV1(event.payload);
+        if (parsed.success === false) {
+          console.warn('[download_event_v1] 忽略无效事件:', parsed.error, event.payload);
+          return;
+        }
+
+        hasVersionedEvents = true;
+        const envelope = parsed.data;
+
+        switch (envelope.event_type) {
+          case 'task.progressed': {
+            const parsedPayload = parseTaskProgressedPayload(envelope.payload);
+            if (parsedPayload.success === false) {
+              return;
+            }
+            updateTaskProgress({
+              task_id: parsedPayload.data.task_id,
+              downloaded_size: parsedPayload.data.downloaded_size,
+              total_size: parsedPayload.data.total_size,
+              speed: parsedPayload.data.speed,
+              eta: parsedPayload.data.eta,
+              progress: parsedPayload.data.progress,
+            });
+            break;
+          }
+          case 'task.status_changed': {
+            const parsedPayload = parseTaskStatusChangedPayload(envelope.payload);
+            if (parsedPayload.success === false) {
+              return;
+            }
+            updateTaskStatus({
+              task_id: parsedPayload.data.task_id,
+              status: fromBackendStatus(parsedPayload.data.status),
+              error_message: parsedPayload.data.error_message ?? null,
+            });
+            break;
+          }
+          case 'task.stats_updated': {
+            const parsedPayload = parseTaskStatsUpdatedPayload(envelope.payload);
+            if (parsedPayload.success === false) {
+              return;
+            }
+            useDownloadStore.setState(state => ({
+              stats: ensureDownloadStats({
+                ...calculateStatsFromTasks(state.tasks),
+                ...parsedPayload.data,
+              }),
+            }));
+            break;
+          }
+          default:
+            break;
+        }
+      });
+
       const unlistenProgress = await listen<any>('download_progress', event => {
+        if (hasVersionedEvents) {
+          return;
+        }
         progressEventCount++;
 
         // 只在首次和每10次记录详细日志，避免刷屏
@@ -1793,86 +1895,10 @@ export const initializeProgressListener = async () => {
         }
       });
 
-      // 抽取进度更新逻辑为独立函数
-      const updateTaskProgress = (update: {
-        task_id: string;
-        downloaded_size: number;
-        total_size?: number | null;
-        speed?: number;
-        eta?: number | null;
-        progress?: number;
-      }) => {
-        const totalSize =
-          typeof update.total_size === 'number' && Number.isFinite(update.total_size)
-            ? update.total_size
-            : undefined;
-        const etaValue =
-          typeof update.eta === 'number' && Number.isFinite(update.eta) ? update.eta : undefined;
-        const normalizedSpeed = Math.max(
-          0,
-          typeof update.speed === 'number' && Number.isFinite(update.speed) ? update.speed : 0
-        );
-        const normalizedProgress =
-          typeof update.progress === 'number' && Number.isFinite(update.progress)
-            ? Math.min(Math.max(update.progress * 100, 0), 100)
-            : undefined;
-
-        useDownloadStore.setState(state => ({
-          tasks: state.tasks.map(task => {
-            if (task.id === update.task_id) {
-              let progress = normalizedProgress ?? task.progress;
-              const fallbackTotal = totalSize ?? task.file_size;
-              const hasDownloaded = update.downloaded_size > 0;
-
-              // 如果进度为0但有下载数据，从下载量计算进度
-              if (
-                progress === 0 &&
-                fallbackTotal &&
-                fallbackTotal > 0 &&
-                update.downloaded_size > 0
-              ) {
-                progress = Math.min((update.downloaded_size / fallbackTotal) * 100, 100);
-              }
-              // 续传时 total 未知，避免进度被重置为 0
-              if (progress === 0 && hasDownloaded && !fallbackTotal) {
-                progress = task.progress < 100 ? task.progress : 0;
-              }
-              // 仅在下载量不回退时，防止进度倒退
-              if (
-                update.downloaded_size >= task.downloaded_size &&
-                progress > 0 &&
-                progress < task.progress &&
-                task.progress < 100
-              ) {
-                progress = task.progress;
-              }
-
-              // 下载中不显示“假 100%”：总大小未知时最多显示 99% 直到收到完成事件
-              if (task.status === 'downloading' && progress >= 100) {
-                if (fallbackTotal && fallbackTotal > 0 && update.downloaded_size < fallbackTotal) {
-                  progress = Math.min((update.downloaded_size / fallbackTotal) * 100, 99);
-                } else if (!fallbackTotal && hasDownloaded) {
-                  progress = 99;
-                }
-              }
-
-              return {
-                ...task,
-                downloaded_size: update.downloaded_size,
-                file_size: totalSize ?? task.file_size,
-                speed: normalizedSpeed,
-                eta: etaValue,
-                progress,
-                updated_at: new Date().toISOString(),
-              };
-            }
-
-            return task;
-          }),
-        }));
-      };
-
       const unlistenStatus = await listen<any>('task_status_changed', event => {
+        if (hasVersionedEvents) {
+          return;
+        }
         const payload = event.payload;
 
         if (!payload || typeof payload.task_id !== 'string' || !payload.status) {
@@ -1885,31 +1911,21 @@ export const initializeProgressListener = async () => {
 
         console.log(`🔄 任务 ${task_id} 状态变化: ${rawStatus} → ${status}`);
 
-        useDownloadStore.setState(state => {
-          const updatedTasks = state.tasks.map(task => {
-            if (task.id === task_id) {
-              return {
-                ...task,
-                status,
-                error_message,
-                updated_at: new Date().toISOString(),
-              };
-            }
-
-            return task;
-          });
-
-          return {
-            tasks: updatedTasks,
-          };
+        updateTaskStatus({
+          task_id,
+          status,
+          error_message,
         });
-
-        useDownloadStore.getState().refreshStats();
       });
 
       const cleanup = () => {
         if (!listenersInitialized) {
           return;
+        }
+        try {
+          unlistenV1();
+        } catch (error) {
+          console.warn('Failed to remove v1 event listener', error);
         }
         try {
           unlistenProgress();

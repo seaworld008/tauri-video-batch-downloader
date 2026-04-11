@@ -20,7 +20,7 @@ pub async fn get_youtube_info(
 ) -> Result<YoutubeVideoInfo, String> {
     info!("📺 Getting YouTube video info for: {}", url);
 
-    match get_youtube_info_impl(&url).await {
+    match get_youtube_info_internal(&url).await {
         Ok(info) => {
             info!(
                 "✅ Successfully retrieved YouTube info for video: {}",
@@ -86,7 +86,7 @@ pub async fn download_youtube_playlist(
 
 // Implementation functions
 
-async fn get_youtube_info_impl(url: &str) -> AppResult<YoutubeVideoInfo> {
+pub(crate) async fn get_youtube_info_internal(url: &str) -> AppResult<YoutubeVideoInfo> {
     // Validate YouTube URL
     if !is_valid_youtube_url(url) {
         return Err(AppError::Youtube(format!("Invalid YouTube URL: {}", url)));

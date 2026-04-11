@@ -7,7 +7,9 @@ mod tests {
     use super::super::manager::DownloadManager;
     use crate::core::models::{AppResult, DownloadConfig, TaskStatus};
     use std::fs;
+    use std::sync::Arc;
     use tempfile::tempdir;
+    use tokio::sync::RwLock;
 
     /// 创建测试用的下载配置
     fn create_test_config() -> DownloadConfig {
@@ -549,6 +551,56 @@ mod tests {
         }
 
         // 如果到这里没有崩溃，说明drop处理是安全的
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_runtime_resume_rejects_completed_task() -> AppResult<()> {
+        let config = create_test_config();
+        let mut manager = DownloadManager::new(config).unwrap();
+        manager.start().await?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/completed.mp4".to_string(),
+                "./downloads/completed.mp4".to_string(),
+            )
+            .await?;
+        manager
+            .update_task_status(&task_id, TaskStatus::Completed)
+            .await?;
+
+        let manager = Arc::new(RwLock::new(manager));
+        let result = DownloadManager::runtime_resume_download(&manager, &task_id).await;
+
+        assert!(result.is_err());
+        assert!(format!("{}", result.err().unwrap()).contains("Cannot resume task"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_runtime_pause_rejects_cancelled_task() -> AppResult<()> {
+        let config = create_test_config();
+        let mut manager = DownloadManager::new(config).unwrap();
+        manager.start().await?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/cancelled.mp4".to_string(),
+                "./downloads/cancelled.mp4".to_string(),
+            )
+            .await?;
+        manager
+            .update_task_status(&task_id, TaskStatus::Cancelled)
+            .await?;
+
+        let manager = Arc::new(RwLock::new(manager));
+        let result = DownloadManager::runtime_pause_download(&manager, &task_id).await;
+
+        assert!(result.is_err());
+        assert!(format!("{}", result.err().unwrap()).contains("Cannot pause task"));
+
         Ok(())
     }
 }

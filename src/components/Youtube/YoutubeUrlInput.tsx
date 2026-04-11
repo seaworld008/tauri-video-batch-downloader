@@ -31,7 +31,7 @@ export const YoutubeUrlInput: React.FC<YoutubeUrlInputProps> = () => {
     setIsLoading(true);
     try {
       console.log('🔍 Getting video info for:', url);
-      const info = await invoke<YoutubeVideoInfo>('get_video_info', { url: url.trim() });
+      const info = await invoke<YoutubeVideoInfo>('get_youtube_info', { url: url.trim() });
       console.log('✅ Video info retrieved:', info);
       setVideoInfo(info);
       notify.success('视频信息获取成功', `标题: ${info.title}`);

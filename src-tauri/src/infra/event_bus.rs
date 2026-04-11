@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 pub const DOWNLOAD_EVENT_V1: &str = "download_event_v1";
+pub const SYSTEM_EVENT_V1: &str = "system_event_v1";
 pub const EVENT_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,6 +37,14 @@ pub fn emit_download_event<T: Serialize + Clone>(
     app_handle.emit(DOWNLOAD_EVENT_V1, envelope)
 }
 
+pub fn emit_system_event<T: Serialize + Clone>(
+    app_handle: &AppHandle,
+    event_type: &str,
+    payload: &T,
+) -> Result<(), tauri::Error> {
+    let envelope = EventEnvelope::new(event_type, payload.clone());
+    app_handle.emit(SYSTEM_EVENT_V1, envelope)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +64,11 @@ mod tests {
         assert_eq!(envelope.payload, payload);
         assert!(!envelope.event_id.is_empty());
         assert!(!envelope.ts.is_empty());
+    }
+
+    #[test]
+    fn event_channels_are_stable() {
+        assert_eq!(DOWNLOAD_EVENT_V1, "download_event_v1");
+        assert_eq!(SYSTEM_EVENT_V1, "system_event_v1");
     }
 }

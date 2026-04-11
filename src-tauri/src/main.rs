@@ -13,6 +13,8 @@ mod commands;
 // Silence dead_code warnings for now to keep CI signal focused on real issues.
 #[allow(dead_code)]
 mod core;
+#[allow(dead_code)]
+mod engine;
 mod infra;
 #[allow(dead_code, unused_imports)]
 mod parsers;
@@ -26,6 +28,7 @@ use core::{
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
     AppConfig, DownloadManager,
 };
+use engine::task_engine::{spawn_task_engine, TaskEngineHandle};
 use infra::event_bus::emit_download_event;
 use utils::logging;
 
@@ -35,8 +38,16 @@ pub struct AppState {
     pub http_downloader: Arc<RwLock<HttpDownloader>>,
     pub config: Arc<RwLock<AppConfig>>,
     pub download_runtime: DownloadRuntimeHandle,
+    pub task_engine: TaskEngineHandle,
+    pub system_monitor: Arc<SystemMonitorController>,
     /// Router receiver - needs to be spawned in Tauri runtime during setup
     router_rx: std::sync::Mutex<Option<mpsc::Receiver<core::runtime::RuntimeCommand>>>,
+}
+
+#[derive(Default)]
+pub struct SystemMonitorController {
+    pub running: std::sync::atomic::AtomicBool,
+    pub handle: tokio::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -71,6 +82,7 @@ impl AppState {
         let (download_runtime, router_rx) =
             create_download_runtime_handle(download_manager.clone());
         info!("📡 Download runtime handle created (router will be spawned in Tauri setup)");
+        let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
 
         // 根据实际配置生成HTTP下载器参数
         let downloader_config = DownloaderConfig {
@@ -98,6 +110,8 @@ impl AppState {
             http_downloader: Arc::new(RwLock::new(http_downloader)),
             config: Arc::new(RwLock::new(config)),
             download_runtime,
+            task_engine,
+            system_monitor: Arc::new(SystemMonitorController::default()),
             router_rx: std::sync::Mutex::new(Some(router_rx)),
         })
     }
@@ -146,6 +160,7 @@ impl AppState {
         let download_manager = Arc::new(RwLock::new(download_manager));
         let (download_runtime, router_rx) =
             create_download_runtime_handle(download_manager.clone());
+        let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
 
         let downloader_config = DownloaderConfig {
             max_concurrent: 1,
@@ -166,6 +181,8 @@ impl AppState {
             http_downloader: Arc::new(RwLock::new(http_downloader)),
             config: Arc::new(RwLock::new(config)),
             download_runtime,
+            task_engine,
+            system_monitor: Arc::new(SystemMonitorController::default()),
             router_rx: std::sync::Mutex::new(Some(router_rx)),
         }
     }
@@ -247,6 +264,7 @@ fn main() {
             get_system_info,
             start_system_monitor,
             stop_system_monitor,
+            get_system_monitor_status,
             open_download_folder,
             show_in_folder,
             // 工具命令
@@ -409,7 +427,7 @@ fn main() {
                                 emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::StatsUpdated { stats } => {
-                            let _ = app_handle_clone.emit("download_stats", stats);
+                            let _ = app_handle_clone.emit("download_stats", &stats);
                             let _ =
                                 emit_download_event(&app_handle_clone, "task.stats_updated", &stats);
                         }

@@ -251,20 +251,20 @@
 
 | 任务 | 状态 | 负责人 | PR | 计划完成 |
 |---|---|---|---|---|
-| A1 事件 envelope v1 | TODO | 待分配 | - | Week 1 |
-| A2 错误码统一 | TODO | 待分配 | - | Week 1 |
-| A3 前端契约解析器 | TODO | 待分配 | - | Week 1 |
-| B1 Engine 骨架 | TODO | 待分配 | - | Week 2 |
-| B2 单任务命令迁移 | TODO | 待分配 | - | Week 3 |
-| B3 request_id 幂等 | TODO | 待分配 | - | Week 3 |
-| C1 批量命令迁移 | TODO | 待分配 | - | Week 4 |
-| C2 状态机覆盖补齐 | TODO | 待分配 | - | Week 4 |
-| C3 重启恢复一致性 | TODO | 待分配 | - | Week 5 |
-| D1 Provider 抽象 | TODO | 待分配 | - | Week 5 |
-| D2 YouTube 路径收敛 | TODO | 待分配 | - | Week 6 |
-| D3 能力探测收敛 | TODO | 待分配 | - | Week 6 |
-| E1 Monitor 生命周期 | TODO | 待分配 | - | Week 7 |
-| E2 监控事件协议化 | TODO | 待分配 | - | Week 7 |
+| A1 事件 envelope v1 | DONE | Codex | 当前 PR | Week 1 |
+| A2 错误码统一 | DONE | Codex | 当前 PR | Week 1 |
+| A3 前端契约解析器 | DONE | Codex | 当前 PR | Week 1 |
+| B1 Engine 骨架 | DONE | Codex | 当前 PR | Week 2 |
+| B2 单任务命令迁移 | DONE | Codex | 当前 PR | Week 3 |
+| B3 request_id 幂等 | DONE | Codex | 当前 PR | Week 3 |
+| C1 批量命令迁移 | DONE | Codex | 当前 PR | Week 4 |
+| C2 状态机覆盖补齐 | DONE | Codex | 当前 PR | Week 4 |
+| C3 重启恢复一致性 | DONE | Codex | 当前 PR | Week 5 |
+| D1 Provider 抽象 | DONE | Codex | 当前 PR | Week 5 |
+| D2 YouTube 路径收敛 | DONE | Codex | 当前 PR | Week 6 |
+| D3 能力探测收敛 | DONE | Codex | 当前 PR | Week 6 |
+| E1 Monitor 生命周期 | DONE | Codex | 当前 PR | Week 7 |
+| E2 监控事件协议化 | DONE | Codex | 当前 PR | Week 7 |
 | F1 Store 解耦 | TODO | 待分配 | - | Week 8 |
 | F2 事件 reducer 化 | TODO | 待分配 | - | Week 8 |
 
