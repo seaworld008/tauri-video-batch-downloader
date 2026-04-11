@@ -63,7 +63,7 @@ describe('useSystemInfo', () => {
 
   it('handles errors and allows manual refresh', async () => {
     const failure = new Error('boom');
-    vi.mocked(invokeTauri).mockRejectedValueOnce(failure);
+    vi.mocked(invokeTauri).mockRejectedValue(failure);
 
     const { result } = renderHook(() => useSystemInfo({ intervalMs: 50 }));
 
@@ -82,6 +82,7 @@ describe('useSystemInfo', () => {
       active_downloads: 0,
     };
 
+    vi.mocked(invokeTauri).mockReset();
     vi.mocked(invokeTauri).mockResolvedValueOnce(recoveryInfo);
 
     await act(async () => {
