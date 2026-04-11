@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VideoTask } from '../../../../schemas';
-import {
-  reduceTasksWithProgressUpdate,
-  reduceTasksWithStatusUpdate,
-} from '../eventReducers';
+import { reduceTasksWithProgressUpdate, reduceTasksWithStatusUpdate } from '../eventReducers';
 
 const buildTask = (overrides: Partial<VideoTask> = {}): VideoTask => ({
   id: 'task-1',

@@ -11,4 +11,3 @@ describe('buildTaskIdPayload', () => {
     expect(payload.requestId).toBe('req-1');
   });
 });
-
