@@ -1,6 +1,7 @@
 import React from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { useSystemInfo } from '../../hooks/useSystemInfo';
+import { formatSpeed } from '../../utils/format';
 
 export const StatusBar: React.FC = () => {
   const stats = useDownloadStore(state => state.stats);
@@ -8,6 +9,8 @@ export const StatusBar: React.FC = () => {
   const { systemInfo, isLoading } = useSystemInfo();
 
   const pausedCount = tasks.filter(t => t.status === 'paused').length;
+  const downloadingCount = tasks.filter(t => t.status === 'downloading').length;
+  const committingCount = tasks.filter(t => t.status === 'committing').length;
 
   return (
     <div className='h-8 bg-gray-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-4 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400'>
@@ -21,9 +24,13 @@ export const StatusBar: React.FC = () => {
         {stats.active_downloads > 0 && (
           <div className='flex items-center space-x-2'>
             <div className='w-2 h-2 rounded-full bg-blue-500 animate-pulse'></div>
-            <span>{stats.active_downloads} 个任务正在下载</span>
+            <span>{stats.active_downloads} 个任务活跃中</span>
           </div>
         )}
+
+        {downloadingCount > 0 && <div>传输中: {downloadingCount}</div>}
+
+        {committingCount > 0 && <div>提交中: {committingCount}</div>}
 
         {pausedCount > 0 && (
           <div className='flex items-center space-x-2'>
@@ -32,7 +39,17 @@ export const StatusBar: React.FC = () => {
           </div>
         )}
 
-        {stats.average_speed > 0 && <div>平均速度: {formatSpeed(stats.average_speed)}</div>}
+        {stats.display_total_speed_bps && stats.display_total_speed_bps > 0 && (
+          <div>总速度: {formatSpeed(stats.display_total_speed_bps)}</div>
+        )}
+
+        {(stats.average_commit_duration ?? 0) > 0 && (
+          <div>提交均值: {stats.average_commit_duration?.toFixed(1)}s</div>
+        )}
+
+        {(stats.p95_commit_duration ?? 0) > 0 && (
+          <div>提交 P95: {stats.p95_commit_duration?.toFixed(1)}s</div>
+        )}
       </div>
 
       {/* 右侧：系统信息 */}
@@ -59,13 +76,3 @@ export const StatusBar: React.FC = () => {
     </div>
   );
 };
-
-function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond === 0) return '0 B/s';
-
-  const k = 1024;
-  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k));
-
-  return `${parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}

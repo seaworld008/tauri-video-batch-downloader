@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
-import { formatBytes, formatDuration, formatDate } from '../../utils/format';
+import { formatBytes, formatDuration, formatDate, formatSpeed } from '../../utils/format';
 import type { VideoTask, TaskStatus } from '../../types';
 
 interface TaskItemProps {
@@ -20,6 +20,7 @@ export const TaskItem = React.memo(
     const removeTasks = useDownloadStore(state => state.removeTasks);
 
     const isSelected = selectedTasks.includes(task.id);
+    const displaySpeed = task.display_speed_bps ?? 0;
 
     const getStatusColor = (status: TaskStatus) => {
       switch (status) {
@@ -27,6 +28,8 @@ export const TaskItem = React.memo(
           return 'text-yellow-600 bg-yellow-100 dark:bg-yellow-900/20 dark:text-yellow-400';
         case 'downloading':
           return 'text-blue-600 bg-blue-100 dark:bg-blue-900/20 dark:text-blue-400';
+        case 'committing':
+          return 'text-indigo-600 bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300';
         case 'paused':
           return 'text-orange-600 bg-orange-100 dark:bg-orange-900/20 dark:text-orange-400';
         case 'completed':
@@ -44,6 +47,7 @@ export const TaskItem = React.memo(
       const statusMap: Record<TaskStatus, string> = {
         pending: '等待中',
         downloading: '下载中',
+        committing: '提交中',
         paused: '已暂停',
         completed: '已完成',
         failed: '失败',
@@ -114,6 +118,8 @@ export const TaskItem = React.memo(
               />
             </div>
           );
+        case 'committing':
+          return null;
         case 'paused':
           return (
             <div className='flex items-center space-x-1'>
@@ -227,8 +233,11 @@ export const TaskItem = React.memo(
                 </div>
                 <div className='text-xs text-gray-500 dark:text-gray-400 flex justify-between'>
                   <span>{task.progress.toFixed(1)}%</span>
-                  {task.status === 'downloading' && task.speed > 0 && (
-                    <span>{formatBytes(task.speed)}/s</span>
+                  {task.status === 'downloading' && displaySpeed > 0 && (
+                    <span className='font-mono tabular-nums'>{formatSpeed(displaySpeed)}</span>
+                  )}
+                  {task.status === 'committing' && (
+                    <span className='text-indigo-600 dark:text-indigo-300'>提交中</span>
                   )}
                 </div>
               </div>
@@ -304,7 +313,7 @@ export const TaskItem = React.memo(
       prevProps.task.status === nextProps.task.status &&
       prevProps.task.progress === nextProps.task.progress &&
       prevProps.task.downloaded_size === nextProps.task.downloaded_size &&
-      prevProps.task.speed === nextProps.task.speed &&
+      prevProps.task.display_speed_bps === nextProps.task.display_speed_bps &&
       prevProps.task.eta === nextProps.task.eta &&
       prevProps.task.updated_at === nextProps.task.updated_at &&
       // 注意：这里我们假设 useDownloadStore 中的函数引用是不变的，或者不需要触发重渲染

@@ -2,6 +2,7 @@
 export type TaskStatus =
   | 'pending'
   | 'downloading'
+  | 'committing'
   | 'paused'
   | 'completed'
   | 'failed'
@@ -16,11 +17,13 @@ export interface VideoTask {
   url: string;
   title: string;
   output_path: string;
+  resolved_path?: string;
   status: TaskStatus;
   progress: number;
   file_size?: number;
   downloaded_size: number;
   speed: number;
+  display_speed_bps?: number;
   eta?: number;
   error_message?: string;
   created_at: string;
@@ -50,6 +53,7 @@ export interface ProgressUpdate {
   downloaded_size: number;
   total_size?: number;
   speed: number;
+  display_speed_bps?: number;
   eta?: number;
   progress?: number;
 }
@@ -166,8 +170,15 @@ export interface DownloadStats {
   failed_tasks: number;
   total_downloaded: number;
   average_speed: number;
+  display_total_speed_bps?: number;
   active_downloads: number;
   queue_paused: boolean;
+  average_transfer_duration?: number;
+  average_commit_duration?: number;
+  p95_commit_duration?: number;
+  failed_commit_count?: number;
+  commit_warning_count?: number;
+  commit_elevated_warning_count?: number;
 }
 
 // YouTube 视频信息接口

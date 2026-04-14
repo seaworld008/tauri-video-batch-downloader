@@ -71,7 +71,13 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
 
   // 多条件过滤
   const filteredTasks = useMultiFilter(searchResults, {
-    status: filterStatus === 'all' ? null : (task: VideoTask) => task.status === filterStatus,
+    status:
+      filterStatus === 'all'
+        ? null
+        : (task: VideoTask) =>
+            filterStatus === 'downloading'
+              ? task.status === 'downloading' || task.status === 'committing'
+              : task.status === filterStatus,
   });
 
   // 分页（当不使用虚拟化时）
@@ -98,7 +104,7 @@ export const OptimizedDownloadsView: React.FC = React.memo(() => {
   const isFilteredEmpty = !isEmpty && filteredTasks.length === 0;
 
   const downloadingTaskCount = useMemo(
-    () => tasks.filter(t => t.status === 'downloading').length,
+    () => tasks.filter(t => t.status === 'downloading' || t.status === 'committing').length,
     [tasks]
   );
 

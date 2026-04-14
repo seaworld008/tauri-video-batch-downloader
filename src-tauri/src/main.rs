@@ -220,10 +220,17 @@ fn main() {
     let app_state = AppState::new();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_mcp_bridge::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // 下载相关命令
             add_download_tasks,
+            update_task_output_paths,
             start_download,
             pause_download,
             resume_download,
@@ -372,6 +379,16 @@ fn main() {
                                     e
                                 );
                             }
+                        }
+                        core::manager::DownloadEvent::TaskCommitting { task_id } => {
+                            let payload = json!({
+                                "task_id": task_id,
+                                "status": "Committing",
+                                "error_message": null
+                            });
+                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
+                            let _ =
+                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
                         }
                         core::manager::DownloadEvent::TaskCompleted {
                             task_id,

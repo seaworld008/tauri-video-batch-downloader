@@ -231,6 +231,7 @@ fn build_task_from_import(
         file_size: None,
         downloaded_size: 0,
         speed: 0.0,
+        display_speed_bps: 0,
         eta: None,
         error_message: None,
         created_at: now,

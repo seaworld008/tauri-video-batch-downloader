@@ -36,6 +36,8 @@ export const ManualInputPanel: React.FC = () => {
   const addTasks = useDownloadStore(state => state.addTasks);
   const enqueueDownloads = useDownloadStore(state => state.enqueueDownloads);
   const recordRecentImport = useDownloadStore(state => state.recordRecentImport);
+  const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
+  const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
   );
@@ -150,6 +152,17 @@ export const ManualInputPanel: React.FC = () => {
       return;
     }
 
+    const youtubeUrls = validUrls.filter(
+      entry => entry.url.includes('youtube.com') || entry.url.includes('youtu.be')
+    );
+    if (youtubeUrls.length > 0) {
+      notify.error(
+        'YouTube 链接暂不建议从这里直接下载',
+        '当前版本的“添加链接”入口还没有完全接通 YouTube 专用下载链路，先继续使用会出现小文件假完成或状态异常。请先用 HTTP/HTTPS 直链，YouTube 我会继续修。'
+      );
+      return;
+    }
+
     const targetDir = outputDir || defaultOutputDirFromConfig || './downloads';
 
     try {
@@ -183,6 +196,9 @@ export const ManualInputPanel: React.FC = () => {
         resolvedTasks
       );
 
+      setFilterStatus('all');
+      setSearchQuery('');
+
       // Enqueue
       enqueueDownloads(resolvedTasks.map(task => task.id));
 
@@ -205,7 +221,7 @@ export const ManualInputPanel: React.FC = () => {
             value={newUrlInput}
             onChange={e => setNewUrlInput(e.target.value)}
             onKeyPress={e => e.key === 'Enter' && addNewUrlEntry()}
-            placeholder='输入视频链接 (HTTP/HTTPS/YouTube/Bilibili...)'
+            placeholder='输入视频链接 (HTTP/HTTPS/Bilibili...)'
             data-testid='url-input'
             className='block w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg leading-5 bg-white dark:bg-gray-700 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-all shadow-sm'
           />

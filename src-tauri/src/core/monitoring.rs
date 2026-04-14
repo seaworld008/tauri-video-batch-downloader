@@ -137,6 +137,24 @@ pub struct DownloadStatistics {
     pub success_rate: f32,
     /// Average download duration in seconds
     pub average_duration: f64,
+    /// Average transfer duration in seconds for completed downloads
+    #[serde(default)]
+    pub average_transfer_duration: f64,
+    /// Average commit duration in seconds for completed downloads
+    #[serde(default)]
+    pub average_commit_duration: f64,
+    /// 95th percentile commit duration in seconds
+    #[serde(default)]
+    pub p95_commit_duration: f64,
+    /// Number of failures that happened after entering commit stage
+    #[serde(default)]
+    pub failed_commit_count: u64,
+    /// Number of completed commits slower than warning threshold
+    #[serde(default)]
+    pub commit_warning_count: u64,
+    /// Number of completed commits slower than elevated threshold
+    #[serde(default)]
+    pub commit_elevated_warning_count: u64,
     /// Download statistics by file size ranges
     pub size_distribution: FileSizeDistribution,
     /// Download statistics by error category
@@ -788,6 +806,12 @@ impl MonitoringSystem {
             peak_speed: 0.0,
             success_rate: 100.0,
             average_duration: 0.0,
+            average_transfer_duration: 0.0,
+            average_commit_duration: 0.0,
+            p95_commit_duration: 0.0,
+            failed_commit_count: 0,
+            commit_warning_count: 0,
+            commit_elevated_warning_count: 0,
             size_distribution: FileSizeDistribution {
                 small_files: 0,
                 medium_files: 0,
@@ -886,6 +910,12 @@ impl MonitoringSystem {
                     peak_speed: 0.0,
                     success_rate: 100.0,
                     average_duration: 0.0,
+                    average_transfer_duration: 0.0,
+                    average_commit_duration: 0.0,
+                    p95_commit_duration: 0.0,
+                    failed_commit_count: 0,
+                    commit_warning_count: 0,
+                    commit_elevated_warning_count: 0,
                     size_distribution: FileSizeDistribution {
                         small_files: 0,
                         medium_files: 0,
@@ -1281,6 +1311,12 @@ mod tests {
             peak_speed: 0.0,
             success_rate: 95.0,
             average_duration: 0.0,
+            average_transfer_duration: 0.0,
+            average_commit_duration: 0.0,
+            p95_commit_duration: 0.0,
+            failed_commit_count: 0,
+            commit_warning_count: 0,
+            commit_elevated_warning_count: 0,
             size_distribution: FileSizeDistribution {
                 small_files: 0,
                 medium_files: 0,

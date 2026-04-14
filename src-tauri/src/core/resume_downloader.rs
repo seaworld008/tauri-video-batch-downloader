@@ -18,11 +18,12 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, SystemTime};
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::RwLock;
 
 use crate::core::downloader::BandwidthController;
+use crate::core::part_file::{derive_part_path, PartFileWriter};
+
+const CURRENT_RESUME_SCHEMA_VERSION: u32 = 2;
 
 /// 下载进度回调：参数为 (task_id, delta_bytes, total_size)
 pub type ResumeProgressCallback = Arc<dyn Fn(&str, u64, u64) + Send + Sync>;
@@ -103,10 +104,16 @@ pub struct ServerCapabilities {
 /// 断点续传信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResumeInfo {
+    /// 元数据 schema 版本
+    #[serde(default = "default_resume_schema_version")]
+    pub schema_version: u32,
     /// 任务ID
     pub task_id: String,
     /// 文件路径
     pub file_path: String,
+    /// 单一 .part 文件路径
+    #[serde(default)]
+    pub part_file_path: Option<String>,
     /// 文件总大小
     pub total_size: u64,
     /// 已下载总字节数
@@ -126,7 +133,9 @@ pub struct ResumeInfo {
 impl ResumeInfo {
     pub fn new(task_id: String, file_path: String, url: String, total_size: u64) -> Self {
         Self {
+            schema_version: CURRENT_RESUME_SCHEMA_VERSION,
             task_id,
+            part_file_path: Some(derive_part_file_path(&file_path)),
             file_path,
             total_size,
             downloaded_total: 0,
@@ -173,6 +182,33 @@ impl ResumeInfo {
         self.downloaded_total = self.chunks.iter().map(|c| c.downloaded).sum();
         self.last_modified = SystemTime::now();
     }
+
+    pub fn ensure_current_schema(&mut self) {
+        if self.schema_version < CURRENT_RESUME_SCHEMA_VERSION {
+            self.schema_version = CURRENT_RESUME_SCHEMA_VERSION;
+        }
+
+        if self.part_file_path.is_none() {
+            self.part_file_path = Some(derive_part_file_path(&self.file_path));
+        }
+    }
+
+    pub fn part_file_path(&self) -> PathBuf {
+        self.part_file_path
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| derive_part_path(Path::new(&self.file_path)))
+    }
+}
+
+fn default_resume_schema_version() -> u32 {
+    CURRENT_RESUME_SCHEMA_VERSION
+}
+
+fn derive_part_file_path(file_path: &str) -> String {
+    derive_part_path(Path::new(file_path))
+        .to_string_lossy()
+        .to_string()
 }
 
 /// 断点续传下载器配置
@@ -371,6 +407,8 @@ impl ResumeDownloader {
                 total_size.unwrap_or(0),
             )
         });
+        resume_info.file_path = file_path.to_string_lossy().to_string();
+        resume_info.ensure_current_schema();
 
         // 如果没有总大小信息，尝试获取
         if resume_info.total_size == 0 {
@@ -385,14 +423,20 @@ impl ResumeDownloader {
             bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
         }
 
+        // 创建输出目录
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
         // 检测服务器支持能力
         resume_info.server_capabilities = self.detect_server_capabilities(url).await?;
 
         // 如果文件不存在或大小不匹配，重新开始
-        if !self.validate_existing_file(&resume_info).await? {
-            tracing::info!("文件不存在或已损坏，重新开始下载");
+        if !self.validate_existing_state(&resume_info).await? {
+            tracing::info!("下载中间状态不存在或已损坏，重新开始下载");
             resume_info.chunks.clear();
             resume_info.downloaded_total = 0;
+            self.clear_chunk_progress(&mut resume_info);
         }
 
         // 创建分片策略
@@ -400,18 +444,15 @@ impl ResumeDownloader {
             resume_info.chunks = self.create_chunks(&resume_info).await?;
         }
 
-        // 如果已有分片临时文件，回填已下载进度
-        self.sync_chunks_with_temp_files(&mut resume_info).await?;
-
-        // 创建输出目录
-        if let Some(parent) = file_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
+        let part_writer = self.prepare_storage(file_path, &mut resume_info).await?;
+        self.sync_chunks_with_part_file(&mut resume_info).await?;
+        self.save_resume_info(&resume_info).await?;
 
         // 开始下载
         self.download_chunks(
             url,
             &mut resume_info,
+            &part_writer,
             progress_callback.clone(),
             cancel_flag.clone(),
             pause_flag.clone(),
@@ -424,10 +465,8 @@ impl ResumeDownloader {
             bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
         }
 
-        // 合并分片
-        if resume_info.server_capabilities.supports_ranges && resume_info.chunks.len() > 1 {
-            self.merge_chunks(&resume_info).await?;
-        }
+        part_writer.commit().await?;
+        self.clear_chunk_progress(&mut resume_info);
 
         // 保存最终状态
         self.save_resume_info(&resume_info).await?;
@@ -466,6 +505,7 @@ impl ResumeDownloader {
         &self,
         url: &str,
         resume_info: &mut ResumeInfo,
+        part_writer: &PartFileWriter,
         progress_callback: Option<ResumeProgressCallback>,
         cancel_flag: Option<Arc<AtomicBool>>,
         pause_flag: Option<Arc<AtomicBool>>,
@@ -520,6 +560,7 @@ impl ResumeDownloader {
             let client = self.client.clone();
             let config = self.config.clone();
             let resume_info_clone = resume_info.clone();
+            let part_writer = part_writer.clone();
             let task_id = Arc::new(resume_info_clone.task_id.clone());
             let total_size = resume_info_clone.total_size;
             let progress_callback = progress_callback.clone();
@@ -542,6 +583,7 @@ impl ResumeDownloader {
                     &config,
                     &url,
                     &resume_info_clone,
+                    &part_writer,
                     chunk_index,
                     task_id,
                     total_size,
@@ -591,9 +633,6 @@ impl ResumeDownloader {
             }
         }
 
-        // 磁盘优先同步（本地断点优先），兜底收敛未回传的分片进度
-        self.sync_chunks_with_temp_files(resume_info).await?;
-
         // 重新计算总下载量
         resume_info.downloaded_total = resume_info.chunks.iter().map(|c| c.downloaded).sum();
         resume_info.last_modified = SystemTime::now();
@@ -615,6 +654,7 @@ impl ResumeDownloader {
         config: &ResumeDownloaderConfig,
         url: &str,
         resume_info: &ResumeInfo,
+        part_writer: &PartFileWriter,
         chunk_index: usize,
         task_id: Arc<String>,
         total_size: u64,
@@ -655,6 +695,7 @@ impl ResumeDownloader {
                 config,
                 url,
                 resume_info,
+                part_writer,
                 &mut chunk,
                 &task_id,
                 total_size,
@@ -709,9 +750,10 @@ impl ResumeDownloader {
     #[allow(clippy::too_many_arguments)]
     async fn download_chunk_attempt(
         client: &Client,
-        config: &ResumeDownloaderConfig,
+        _config: &ResumeDownloaderConfig,
         url: &str,
         resume_info: &ResumeInfo,
+        part_writer: &PartFileWriter,
         chunk: &mut ChunkInfo,
         task_id: &Arc<String>,
         total_size: u64,
@@ -758,16 +800,14 @@ impl ResumeDownloader {
             bail!("服务器未返回分片响应(206)，无法安全续传: {}", status);
         }
 
-        // 创建或打开分片临时文件
-        let temp_file_path = Self::get_chunk_temp_path(config, &resume_info.task_id, chunk.index);
-        let mut file = Self::open_chunk_file(&temp_file_path, chunk.downloaded).await?;
+        // 在共享 .part 文件上进行偏移写入，每个分片使用独立文件句柄避免 seek 互相干扰。
+        let mut file = part_writer.open_chunk_writer(range_start).await?;
 
         // 下载数据流
         let mut stream = response.bytes_stream();
         while let Some(chunk_data) = stream.next().await {
             if Self::should_interrupt(&cancel_flag, &pause_flag) {
-                let _ = file.flush().await;
-                let _ = file.sync_all().await;
+                let _ = file.flush_and_sync().await;
                 bail!(Self::interrupt_reason(&cancel_flag, &pause_flag));
             }
             let chunk_data = chunk_data?;
@@ -785,51 +825,8 @@ impl ResumeDownloader {
             }
         }
 
-        file.flush().await?;
-        file.sync_all().await?;
+        file.flush_and_sync().await?;
 
-        Ok(())
-    }
-
-    /// 合并所有分片到最终文件
-    async fn merge_chunks(&self, resume_info: &ResumeInfo) -> Result<()> {
-        if resume_info.chunks.len() <= 1 {
-            // 单个分片，直接移动文件
-            if let Some(_chunk) = resume_info.chunks.first() {
-                let temp_path = Self::get_chunk_temp_path(&self.config, &resume_info.task_id, 0);
-                let final_path = Path::new(&resume_info.file_path);
-
-                if temp_path.exists() {
-                    tokio::fs::rename(temp_path, final_path).await?;
-                }
-            }
-            return Ok(());
-        }
-
-        tracing::info!("开始合并 {} 个分片", resume_info.chunks.len());
-
-        let final_path = Path::new(&resume_info.file_path);
-        let mut final_file = File::create(final_path).await?;
-
-        for chunk in &resume_info.chunks {
-            let temp_path =
-                Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
-
-            if temp_path.exists() {
-                let mut temp_file = File::open(&temp_path).await?;
-                tokio::io::copy(&mut temp_file, &mut final_file).await?;
-
-                // 删除临时文件
-                tokio::fs::remove_file(&temp_path).await.ok();
-            } else {
-                bail!("分片临时文件不存在: {:?}", temp_path);
-            }
-        }
-
-        final_file.flush().await?;
-        final_file.sync_all().await?;
-
-        tracing::info!("分片合并完成: {:?}", final_path);
         Ok(())
     }
 
@@ -861,80 +858,137 @@ impl ResumeDownloader {
         Ok(false)
     }
 
-    /// 验证现有文件
-    async fn validate_existing_file(&self, resume_info: &ResumeInfo) -> Result<bool> {
-        let file_path = Path::new(&resume_info.file_path);
+    async fn validate_existing_state(&self, resume_info: &ResumeInfo) -> Result<bool> {
+        let final_path = Path::new(&resume_info.file_path);
+        let part_path = resume_info.part_file_path();
 
-        if !file_path.exists() {
-            if !resume_info.chunks.is_empty() {
-                for chunk in &resume_info.chunks {
-                    let temp_path =
-                        Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
-                    if temp_path.exists() {
-                        return Ok(true);
-                    }
-                }
-            }
-
-            return self.has_any_chunk_files(&resume_info.task_id).await;
-        }
-
-        let metadata = tokio::fs::metadata(file_path).await?;
-        let file_size = metadata.len();
-
-        // 如果文件大小与预期一致，可能已完成
-        if file_size == resume_info.total_size {
+        if part_path.exists() {
             return Ok(true);
         }
 
-        // 如果有分片信息，检查分片临时文件
-        if !resume_info.chunks.is_empty() {
-            for chunk in &resume_info.chunks {
-                let temp_path =
-                    Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
-                if temp_path.exists() {
-                    return Ok(true);
-                }
+        if final_path.exists() {
+            let metadata = tokio::fs::metadata(final_path).await?;
+            let file_size = metadata.len();
+
+            if resume_info.total_size > 0 && file_size <= resume_info.total_size {
+                return Ok(true);
             }
         }
 
-        // 即使当前没有分片信息，也尝试扫描临时分片文件
-        if self.has_any_chunk_files(&resume_info.task_id).await? {
-            return Ok(true);
-        }
-
-        Ok(file_size > 0 && file_size < resume_info.total_size)
+        self.has_any_chunk_files(&resume_info.task_id).await
     }
 
-    async fn sync_chunks_with_temp_files(&self, resume_info: &mut ResumeInfo) -> Result<()> {
+    async fn prepare_storage(
+        &self,
+        file_path: &Path,
+        resume_info: &mut ResumeInfo,
+    ) -> Result<PartFileWriter> {
+        let writer = PartFileWriter::new(file_path);
+        resume_info.part_file_path = Some(writer.part_path().to_string_lossy().to_string());
+        resume_info.ensure_current_schema();
+
+        if !writer.part_path().exists() && file_path.exists() {
+            let metadata = tokio::fs::metadata(file_path).await?;
+            if metadata.len() < resume_info.total_size {
+                tokio::fs::rename(file_path, writer.part_path()).await?;
+
+                if resume_info.chunks.len() == 1 {
+                    let downloaded = metadata.len().min(resume_info.chunks[0].size());
+                    resume_info.chunks[0].downloaded = downloaded;
+                    resume_info.chunks[0].status = if downloaded >= resume_info.chunks[0].size() {
+                        ChunkStatus::Completed
+                    } else if downloaded > 0 {
+                        ChunkStatus::Paused
+                    } else {
+                        ChunkStatus::Pending
+                    };
+                    resume_info.downloaded_total = downloaded;
+                }
+            }
+        }
+
+        writer.prepare(None).await?;
+        self.migrate_legacy_chunk_files_to_part(resume_info, &writer)
+            .await?;
+
+        Ok(writer)
+    }
+
+    async fn migrate_legacy_chunk_files_to_part(
+        &self,
+        resume_info: &mut ResumeInfo,
+        writer: &PartFileWriter,
+    ) -> Result<()> {
+        if resume_info.chunks.is_empty() || !self.has_any_chunk_files(&resume_info.task_id).await? {
+            return Ok(());
+        }
+
+        let mut migrated_any = false;
+
+        for chunk in &mut resume_info.chunks {
+            let temp_path =
+                Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
+            if !temp_path.exists() {
+                continue;
+            }
+
+            let bytes = tokio::fs::read(&temp_path).await?;
+            let migrated_len = (bytes.len() as u64).min(chunk.size());
+            let mut writer_handle = writer.open_chunk_writer(chunk.start).await?;
+            writer_handle
+                .write_all(&bytes[..migrated_len as usize])
+                .await?;
+            writer_handle.flush_and_sync().await?;
+
+            chunk.downloaded = migrated_len;
+            chunk.status = if migrated_len >= chunk.size() {
+                ChunkStatus::Completed
+            } else if migrated_len > 0 {
+                ChunkStatus::Paused
+            } else {
+                ChunkStatus::Pending
+            };
+            tokio::fs::remove_file(&temp_path).await.ok();
+            migrated_any = true;
+        }
+
+        if migrated_any {
+            resume_info.downloaded_total = resume_info.chunks.iter().map(|c| c.downloaded).sum();
+            resume_info.last_modified = SystemTime::now();
+        }
+
+        Ok(())
+    }
+
+    async fn sync_chunks_with_part_file(&self, resume_info: &mut ResumeInfo) -> Result<()> {
         if resume_info.chunks.is_empty() {
             return Ok(());
         }
 
+        let part_path = resume_info.part_file_path();
+        if !part_path.exists() {
+            return Ok(());
+        }
+
         let mut updated = false;
-        for chunk in &mut resume_info.chunks {
-            let temp_path =
-                Self::get_chunk_temp_path(&self.config, &resume_info.task_id, chunk.index);
-            if temp_path.exists() {
-                let metadata = tokio::fs::metadata(&temp_path).await?;
-                let size = metadata.len().min(chunk.size());
-                if size != chunk.downloaded {
-                    chunk.downloaded = size;
-                    updated = true;
-                }
-                if chunk.is_completed() {
-                    chunk.status = ChunkStatus::Completed;
-                } else if chunk.downloaded > 0 {
-                    chunk.status = ChunkStatus::Paused;
-                } else {
-                    chunk.status = ChunkStatus::Pending;
-                }
-            } else if chunk.downloaded != 0 {
-                // 本地分片文件不存在时，优先以本地实际状态为准，避免使用过期进度导致 range 偏移。
-                chunk.downloaded = 0;
-                chunk.status = ChunkStatus::Pending;
+
+        if resume_info.chunks.len() == 1 {
+            let metadata = tokio::fs::metadata(&part_path).await?;
+            let size = metadata.len().min(resume_info.chunks[0].size());
+            if size != resume_info.chunks[0].downloaded {
+                resume_info.chunks[0].downloaded = size;
                 updated = true;
             }
+        }
+
+        for chunk in &mut resume_info.chunks {
+            chunk.status = if chunk.downloaded >= chunk.size() {
+                ChunkStatus::Completed
+            } else if chunk.downloaded > 0 {
+                ChunkStatus::Paused
+            } else {
+                ChunkStatus::Pending
+            };
         }
 
         if updated {
@@ -943,6 +997,15 @@ impl ResumeDownloader {
         }
 
         Ok(())
+    }
+
+    fn clear_chunk_progress(&self, resume_info: &mut ResumeInfo) {
+        for chunk in &mut resume_info.chunks {
+            chunk.downloaded = 0;
+            chunk.retry_count = 0;
+            chunk.status = ChunkStatus::Pending;
+            chunk.last_update = SystemTime::now();
+        }
     }
 
     /// 加载断点续传信息
@@ -969,6 +1032,7 @@ impl ResumeDownloader {
         let mut resume_info: ResumeInfo =
             serde_json::from_str(&content).with_context(|| "解析断点续传信息失败")?;
         let mut sanitized = false;
+        resume_info.ensure_current_schema();
 
         if resume_info.total_size > 0 && !resume_info.chunks.is_empty() {
             for chunk in resume_info.chunks.iter_mut() {
@@ -1011,13 +1075,16 @@ impl ResumeDownloader {
 
     /// 保存断点续传信息
     async fn save_resume_info(&self, resume_info: &ResumeInfo) -> Result<()> {
+        let mut resume_info = resume_info.clone();
+        resume_info.ensure_current_schema();
+
         let resume_file_path = self
             .config
             .resume_info_dir
             .join(format!("{}.json", resume_info.task_id));
 
-        let content =
-            serde_json::to_string_pretty(resume_info).with_context(|| "序列化断点续传信息失败")?;
+        let content = serde_json::to_string_pretty(&resume_info)
+            .with_context(|| "序列化断点续传信息失败")?;
 
         tokio::fs::write(resume_file_path, content).await?;
 
@@ -1030,7 +1097,7 @@ impl ResumeDownloader {
         Ok(())
     }
 
-    /// 获取分片临时文件路径
+    /// 获取 legacy 分片临时文件路径
     fn get_chunk_temp_path(
         config: &ResumeDownloaderConfig,
         task_id: &str,
@@ -1039,22 +1106,6 @@ impl ResumeDownloader {
         config
             .resume_info_dir
             .join(format!("{}.chunk.{}", task_id, chunk_index))
-    }
-
-    /// 打开分片文件
-    async fn open_chunk_file(path: &Path, offset: u64) -> Result<File> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(path)
-            .await?;
-
-        if offset > 0 {
-            file.seek(SeekFrom::Start(offset)).await?;
-        }
-
-        Ok(file)
     }
 
     /// 提取主机名
@@ -1068,6 +1119,8 @@ impl ResumeDownloader {
 
     /// 清理任务的临时文件和断点信息
     pub async fn cleanup_task(&self, task_id: &str) -> Result<()> {
+        let resume_info = self.load_resume_info(task_id).await.ok().flatten();
+
         // 删除断点信息文件
         let resume_file_path = self
             .config
@@ -1077,7 +1130,14 @@ impl ResumeDownloader {
             tokio::fs::remove_file(resume_file_path).await.ok();
         }
 
-        // 删除所有分片临时文件
+        if let Some(resume_info) = resume_info {
+            let part_path = resume_info.part_file_path();
+            if part_path.exists() {
+                tokio::fs::remove_file(part_path).await.ok();
+            }
+        }
+
+        // 删除 legacy 分片临时文件
         if let Ok(entries) = tokio::fs::read_dir(&self.config.resume_info_dir).await {
             let mut entries = entries;
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -1135,6 +1195,8 @@ mod tests {
 
         assert_eq!(resume_info.progress(), 0.0);
         assert_eq!(resume_info.pending_chunks().len(), 0);
+        assert_eq!(resume_info.schema_version, CURRENT_RESUME_SCHEMA_VERSION);
+        assert!(resume_info.part_file_path.as_deref().unwrap().ends_with(".part"));
     }
 
     #[tokio::test]
@@ -1179,6 +1241,83 @@ mod tests {
 
         assert_eq!(resume_info.task_id, deserialized.task_id);
         assert_eq!(resume_info.total_size, deserialized.total_size);
+    }
+
+    #[tokio::test]
+    async fn test_migrates_legacy_chunk_files_into_single_part_file() {
+        let temp_dir = tempdir().unwrap();
+        let mut config = ResumeDownloaderConfig::default();
+        config.resume_info_dir = temp_dir.path().to_path_buf();
+
+        let client = Client::new();
+        let downloader = ResumeDownloader::new(config.clone(), client, BandwidthController::new())
+            .unwrap();
+
+        let final_path = temp_dir.path().join("video.mp4");
+        let mut resume_info = ResumeInfo::new(
+            "legacy-task".to_string(),
+            final_path.to_string_lossy().to_string(),
+            "https://example.com/video.mp4".to_string(),
+            8,
+        );
+        resume_info.server_capabilities.supports_ranges = true;
+        resume_info.chunks = vec![ChunkInfo::new(0, 0, 3), ChunkInfo::new(1, 4, 7)];
+
+        tokio::fs::write(
+            ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 0),
+            b"abcd",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 1),
+            b"wxyz",
+        )
+        .await
+        .unwrap();
+
+        let writer = downloader.prepare_storage(&final_path, &mut resume_info).await.unwrap();
+
+        assert!(writer.part_path().exists());
+        assert_eq!(tokio::fs::read(writer.part_path()).await.unwrap(), b"abcdwxyz");
+        assert_eq!(resume_info.downloaded_total, 8);
+        assert!(resume_info.chunks.iter().all(ChunkInfo::is_completed));
+        assert!(
+            !ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 0).exists()
+        );
+        assert!(
+            !ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 1).exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_removes_part_file_and_resume_metadata() {
+        let temp_dir = tempdir().unwrap();
+        let mut config = ResumeDownloaderConfig::default();
+        config.resume_info_dir = temp_dir.path().to_path_buf();
+
+        let client = Client::new();
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
+
+        let final_path = temp_dir.path().join("cleanup-video.mp4");
+        let writer = PartFileWriter::new(&final_path);
+        writer.prepare(None).await.unwrap();
+        let mut chunk_writer = writer.open_chunk_writer(0).await.unwrap();
+        chunk_writer.write_all(b"hello").await.unwrap();
+        chunk_writer.flush_and_sync().await.unwrap();
+
+        let resume_info = ResumeInfo::new(
+            "cleanup-task".to_string(),
+            final_path.to_string_lossy().to_string(),
+            "https://example.com/video.mp4".to_string(),
+            5,
+        );
+        downloader.save_resume_info(&resume_info).await.unwrap();
+
+        downloader.cleanup_task("cleanup-task").await.unwrap();
+
+        assert!(!writer.part_path().exists());
+        assert!(!temp_dir.path().join("cleanup-task.json").exists());
     }
 
     #[tokio::test]

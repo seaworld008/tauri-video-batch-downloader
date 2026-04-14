@@ -283,50 +283,26 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let output = tokio::process::Command::new("explorer")
+        tokio::process::Command::new("explorer.exe")
             .arg(folder_path)
-            .output()
-            .await
+            .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::System(format!(
-                "Explorer command failed: {}",
-                error
-            )));
-        }
     }
 
     #[cfg(target_os = "macos")]
     {
-        let output = tokio::process::Command::new("open")
+        tokio::process::Command::new("open")
             .arg(folder_path)
-            .output()
-            .await
+            .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::System(format!("Open command failed: {}", error)));
-        }
     }
 
     #[cfg(target_os = "linux")]
     {
-        let output = tokio::process::Command::new("xdg-open")
+        tokio::process::Command::new("xdg-open")
             .arg(folder_path)
-            .output()
-            .await
+            .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::System(format!(
-                "xdg-open command failed: {}",
-                error
-            )));
-        }
     }
 
     Ok(())
@@ -344,38 +320,19 @@ async fn show_in_folder_impl(file_path: &str) -> AppResult<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let output = tokio::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(file_path)
-            .output()
-            .await
+        tokio::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", file_path))
+            .spawn()
             .map_err(|e| AppError::System(format!("Failed to show file: {}", e)))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::System(format!(
-                "Explorer select command failed: {}",
-                error
-            )));
-        }
     }
 
     #[cfg(target_os = "macos")]
     {
-        let output = tokio::process::Command::new("open")
+        tokio::process::Command::new("open")
             .arg("-R")
             .arg(file_path)
-            .output()
-            .await
+            .spawn()
             .map_err(|e| AppError::System(format!("Failed to show file: {}", e)))?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::System(format!(
-                "Open reveal command failed: {}",
-                error
-            )));
-        }
     }
 
     #[cfg(target_os = "linux")]

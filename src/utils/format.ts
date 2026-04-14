@@ -223,6 +223,7 @@ export function formatTaskStatus(status: string): string {
   const statusMap: Record<string, string> = {
     pending: '等待中',
     downloading: '下载中',
+    committing: '提交中',
     paused: '已暂停',
     completed: '已完成',
     failed: '失败',

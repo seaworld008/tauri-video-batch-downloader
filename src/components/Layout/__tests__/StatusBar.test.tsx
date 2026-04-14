@@ -21,6 +21,14 @@ describe('StatusBar', () => {
         total_downloaded: 0,
         active_downloads: 2,
         average_speed: 2048,
+        display_total_speed_bps: 4096,
+        queue_paused: false,
+        average_transfer_duration: 6.2,
+        average_commit_duration: 1.4,
+        p95_commit_duration: 2.7,
+        failed_commit_count: 0,
+        commit_warning_count: 1,
+        commit_elevated_warning_count: 0,
       },
     };
 
@@ -62,5 +70,43 @@ describe('StatusBar', () => {
     expect(screen.getByText(/CPU:/)).toHaveTextContent('CPU: 42.3%');
     expect(screen.getByText(/内存/)).toHaveTextContent('65.5%');
     expect(screen.getByText(/下载:/)).toHaveTextContent('下载: ↓2 KB/s ↑1 KB/s');
+  });
+
+  it('renders commit timing metrics when available', () => {
+    render(<StatusBar />);
+
+    expect(screen.getByText(/提交均值:/)).toHaveTextContent('提交均值: 1.4s');
+    expect(screen.getByText(/提交 P95:/)).toHaveTextContent('提交 P95: 2.7s');
+  });
+
+  it('hides commit timing metrics when values are not available', () => {
+    const mockState = {
+      tasks: [],
+      stats: {
+        total_tasks: 0,
+        completed_tasks: 0,
+        failed_tasks: 0,
+        total_downloaded: 0,
+        active_downloads: 0,
+        average_speed: 0,
+        display_total_speed_bps: 0,
+        queue_paused: false,
+        average_transfer_duration: 0,
+        average_commit_duration: 0,
+        p95_commit_duration: 0,
+        failed_commit_count: 0,
+        commit_warning_count: 0,
+        commit_elevated_warning_count: 0,
+      },
+    };
+
+    mockUseDownloadStore.mockImplementation((selector?: any) =>
+      typeof selector === 'function' ? selector(mockState) : (mockState as any)
+    );
+
+    render(<StatusBar />);
+
+    expect(screen.queryByText(/提交均值:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/提交 P95:/)).not.toBeInTheDocument();
   });
 });

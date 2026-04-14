@@ -37,12 +37,14 @@ describe('download_event_v1 contracts', () => {
       task_id: 'task-1',
       downloaded_size: 512,
       total_size: 1024,
+      display_speed_bps: 256,
       progress: 0.5,
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.progress).toBe(0.5);
+      expect(result.data.display_speed_bps).toBe(256);
     }
   });
 
@@ -73,13 +75,24 @@ describe('download_event_v1 contracts', () => {
       total_tasks: 12,
       completed_tasks: 8,
       average_speed: 300,
+      display_total_speed_bps: 1200,
       queue_paused: true,
+      average_transfer_duration: 5.4,
+      average_commit_duration: 1.7,
+      p95_commit_duration: 3.2,
+      failed_commit_count: 2,
+      commit_warning_count: 4,
+      commit_elevated_warning_count: 1,
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.total_tasks).toBe(12);
+      expect(result.data.display_total_speed_bps).toBe(1200);
       expect(result.data.queue_paused).toBe(true);
+      expect(result.data.average_commit_duration).toBe(1.7);
+      expect(result.data.p95_commit_duration).toBe(3.2);
+      expect(result.data.failed_commit_count).toBe(2);
     }
   });
 

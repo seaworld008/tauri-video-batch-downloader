@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
-import { formatBytes } from '../../utils/format';
+import { formatBytes, formatSpeed } from '../../utils/format';
 import type { VideoTask, TaskStatus } from '../../types';
 import {
   PlayIcon,
@@ -68,6 +68,13 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({
           bg: 'bg-blue-50 dark:bg-blue-900/20',
           label: '下载中',
         };
+      case 'committing':
+        return {
+          color: 'bg-indigo-500',
+          text: 'text-indigo-600 dark:text-indigo-300',
+          bg: 'bg-indigo-50 dark:bg-indigo-900/20',
+          label: '提交中',
+        };
       case 'paused':
         return {
           color: 'bg-orange-500',
@@ -107,6 +114,7 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({
   };
 
   const statusConfig = getStatusConfig(task.status);
+  const displaySpeed = task.display_speed_bps ?? 0;
 
   const handleAction = async (
     e: React.MouseEvent,
@@ -199,12 +207,18 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({
               <span className={`font-medium ${statusConfig.text}`}>
                 {statusConfig.label} {task.progress > 0 && `${task.progress.toFixed(1)}%`}
               </span>
-              {task.status === 'downloading' && (
+              {task.status === 'downloading' && displaySpeed > 0 && (
                 <>
                   <span className='text-gray-300 dark:text-gray-600'>|</span>
-                  <span className='text-gray-500 dark:text-gray-400 font-mono'>
-                    {formatBytes(task.speed)}/s
+                  <span className='text-gray-500 dark:text-gray-400 font-mono tabular-nums whitespace-nowrap'>
+                    {formatSpeed(displaySpeed)}
                   </span>
+                </>
+              )}
+              {task.status === 'committing' && (
+                <>
+                  <span className='text-gray-300 dark:text-gray-600'>|</span>
+                  <span className='text-indigo-600 dark:text-indigo-300'>提交中</span>
                 </>
               )}
             </div>
@@ -282,13 +296,15 @@ export const VideoTableItem: React.FC<VideoTableItemProps> = ({
           </button>
         ) : null}
 
-        <button
-          onClick={e => handleAction(e, 'remove')}
-          className='p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors'
-          title='删除任务'
-        >
-          <TrashIcon className='w-5 h-5' />
-        </button>
+        {task.status !== 'committing' && (
+          <button
+            onClick={e => handleAction(e, 'remove')}
+            className='p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors'
+            title='删除任务'
+          >
+            <TrashIcon className='w-5 h-5' />
+          </button>
+        )}
       </div>
 
       {/* 状态标签 - 在未悬浮且非下载中状态显示 */}

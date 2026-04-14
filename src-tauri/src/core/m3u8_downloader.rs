@@ -8,6 +8,7 @@
 //! - 实时进度跟踪
 
 use crate::core::downloader::DownloadStats;
+use crate::core::models::TaskStatus;
 use aes::Aes128;
 use anyhow::{anyhow, bail, Result};
 use cbc::Decryptor;
@@ -586,12 +587,18 @@ impl M3U8Downloader {
                 };
 
                 if let Some(ref tx) = progress_tx {
+                    let is_committing = progress >= 1.0;
                     let stats = DownloadStats {
-                        speed,
+                        speed: if is_committing { 0.0 } else { speed },
                         downloaded_bytes: total_written,
                         total_bytes: total_bytes_stat,
-                        progress,
-                        eta,
+                        progress: if is_committing { 0.999 } else { progress },
+                        eta: if is_committing { None } else { eta },
+                        status_hint: if is_committing {
+                            Some(TaskStatus::Committing)
+                        } else {
+                            None
+                        },
                         start_time: chrono::Utc::now(),
                         last_update: chrono::Utc::now(),
                     };

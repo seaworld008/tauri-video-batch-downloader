@@ -21,6 +21,7 @@ import { z } from 'zod';
 export const TaskStatusSchema = z.enum([
   'pending',
   'downloading',
+  'committing',
   'paused',
   'completed',
   'failed',
@@ -114,11 +115,13 @@ const VideoTaskBaseSchema = z.object({
   url: z.string().url('请输入有效的URL'),
   title: z.string().min(1, '标题不能为空'),
   output_path: z.string().min(1, '输出路径不能为空'),
+  resolved_path: z.string().optional(),
   status: TaskStatusSchema,
   progress: z.number().min(0).max(100, '进度必须在0-100之间'),
   file_size: z.number().nonnegative().optional(),
   downloaded_size: z.number().nonnegative(),
   speed: z.number().nonnegative(),
+  display_speed_bps: z.number().nonnegative().optional().default(0),
   eta: z.number().nonnegative().nullable().optional(),
   error_message: z.string().nullable().optional(),
   created_at: z.string().datetime('创建时间必须是有效的ISO datetime'),
@@ -156,6 +159,7 @@ export const ProgressUpdateSchema = z.object({
   downloaded_size: z.number().nonnegative(),
   total_size: z.number().nonnegative().nullable().optional(),
   speed: z.number(), // 允许任何数值，负数会在前端被规范化为0
+  display_speed_bps: z.number().nonnegative().optional().default(0),
   eta: z.number().nullable().optional(),
   progress: z.number().min(0).max(1.01).optional(), // 允许略微超过1的值（浮点精度问题）
 });
@@ -343,8 +347,15 @@ export const DownloadStatsSchema = z
     failed_tasks: z.number().nonnegative(),
     total_downloaded: z.number().nonnegative(),
     average_speed: z.number().nonnegative(),
+    display_total_speed_bps: z.number().nonnegative().optional().default(0),
     active_downloads: z.number().nonnegative(),
     queue_paused: z.boolean().optional().default(false),
+    average_transfer_duration: z.number().nonnegative().optional().default(0),
+    average_commit_duration: z.number().nonnegative().optional().default(0),
+    p95_commit_duration: z.number().nonnegative().optional().default(0),
+    failed_commit_count: z.number().nonnegative().optional().default(0),
+    commit_warning_count: z.number().nonnegative().optional().default(0),
+    commit_elevated_warning_count: z.number().nonnegative().optional().default(0),
   })
   .refine(
     data => {

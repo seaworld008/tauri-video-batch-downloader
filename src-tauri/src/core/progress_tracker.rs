@@ -81,7 +81,7 @@ impl Default for ProgressStatistics {
 #[derive(Debug, Clone)]
 struct SpeedMeasurement {
     /// Timestamp in nanoseconds (using coarsetime)
-    _timestamp_nanos: u64,
+    timestamp_nanos: u64,
     /// Downloaded bytes at this measurement
     bytes: u64,
     /// Calculated speed in bytes per second
@@ -113,6 +113,9 @@ pub struct TaskProgressTracker {
     max_history_size: usize,
 }
 
+const DISPLAY_SPEED_WINDOW_NANOS: u64 = 1_000_000_000;
+const MIN_SPEED_SAMPLE_WINDOW_NANOS: u64 = 750_000_000;
+
 impl TaskProgressTracker {
     /// Create a new task progress tracker
     pub fn new(task_id: String, total_bytes: Option<u64>) -> Self {
@@ -128,42 +131,29 @@ impl TaskProgressTracker {
             start_time: now,
             start_timestamp,
             last_measurement: now,
-            speed_measurements: VecDeque::with_capacity(50),
-            ema_alpha: 0.2, // 20% weight for new measurements
+            speed_measurements: VecDeque::with_capacity(240),
+            ema_alpha: 0.15, // Lower alpha gives a calmer, more user-friendly display.
             smoothed_speed: 0.0,
             statistics: ProgressStatistics::default(),
-            max_history_size: 50,
+            max_history_size: 240,
         }
     }
 
     /// Update progress with new downloaded bytes
     pub fn update_progress(&mut self, downloaded_bytes: u64) -> AppResult<EnhancedProgressStats> {
         let now = Instant::now();
-        let duration_since_last = now.duration_since(self.last_measurement);
-        let duration_nanos = duration_since_last.as_nanos() as u64;
-
-        // Calculate instantaneous speed
-        let current_speed = if !self.speed_measurements.is_empty() {
-            let last_measurement = self.speed_measurements.back().unwrap();
-            let bytes_diff = downloaded_bytes.saturating_sub(last_measurement.bytes);
-            let time_diff_secs = duration_nanos as f64 / 1_000_000_000.0;
-
-            if time_diff_secs > 0.0 {
-                bytes_diff as f64 / time_diff_secs
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
-
-        // Add new measurement
         let timestamp_nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
+        let total_elapsed = now.duration_since(self.start_time).as_secs_f64();
+
+        // Use a rolling time window for display speed instead of raw per-chunk deltas.
+        // This avoids impossible spikes when multiple callbacks land within the same millisecond.
+        let current_speed = self.calculate_window_speed(downloaded_bytes, timestamp_nanos, total_elapsed);
+
         let measurement = SpeedMeasurement {
-            _timestamp_nanos: timestamp_nanos,
+            timestamp_nanos,
             bytes: downloaded_bytes,
             speed: current_speed,
         };
@@ -186,7 +176,6 @@ impl TaskProgressTracker {
         }
 
         // Calculate average speed over entire download
-        let total_elapsed = now.duration_since(self.start_time).as_secs_f64();
         let average_speed = if total_elapsed > 0.0 {
             downloaded_bytes as f64 / total_elapsed
         } else {
@@ -304,6 +293,41 @@ impl TaskProgressTracker {
             self.statistics.throughput_efficiency =
                 self.smoothed_speed / self.statistics.peak_speed;
         }
+    }
+
+    fn calculate_window_speed(
+        &self,
+        downloaded_bytes: u64,
+        current_timestamp_nanos: u64,
+        total_elapsed_secs: f64,
+    ) -> f64 {
+        let window_start = current_timestamp_nanos.saturating_sub(DISPLAY_SPEED_WINDOW_NANOS);
+        let mut baseline_measurement: Option<&SpeedMeasurement> = None;
+
+        for measurement in self.speed_measurements.iter().rev() {
+            if measurement.timestamp_nanos >= window_start {
+                baseline_measurement = Some(measurement);
+            } else {
+                break;
+            }
+        }
+
+        if let Some(baseline) = baseline_measurement {
+            let elapsed_nanos = current_timestamp_nanos.saturating_sub(baseline.timestamp_nanos);
+            if elapsed_nanos >= MIN_SPEED_SAMPLE_WINDOW_NANOS {
+                let bytes_diff = downloaded_bytes.saturating_sub(baseline.bytes);
+                let elapsed_secs = elapsed_nanos as f64 / 1_000_000_000.0;
+                if elapsed_secs > 0.0 {
+                    return bytes_diff as f64 / elapsed_secs;
+                }
+            }
+        }
+
+        if total_elapsed_secs >= 1.0 {
+            return downloaded_bytes as f64 / total_elapsed_secs;
+        }
+
+        self.smoothed_speed
     }
 
     /// Get current progress stats
@@ -556,7 +580,7 @@ mod tests {
         assert_eq!(stats1.progress_percent, 1.0);
         assert!(stats1.current_speed >= 0.0);
 
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(900)).await;
         let stats2 = tracker.update_progress(50000).unwrap();
         assert_eq!(stats2.downloaded_bytes, 50000);
         assert_eq!(stats2.progress_percent, 5.0);
@@ -597,11 +621,11 @@ mod tests {
         let speeds = vec![100000, 150000, 120000, 180000, 90000];
         let mut cumulative_bytes = 0u64;
         for (i, &bytes) in speeds.iter().enumerate() {
-            sleep(Duration::from_millis(50)).await;
+            sleep(Duration::from_millis(250)).await;
             cumulative_bytes += bytes;
             let stats = tracker.update_progress(cumulative_bytes).unwrap();
 
-            if i > 0 {
+            if i >= 3 {
                 assert!(stats.current_speed > 0.0);
                 assert!(stats.smoothed_speed > 0.0);
                 assert!(stats.statistics.measurement_count > 0);

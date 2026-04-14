@@ -5,10 +5,11 @@ import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import { formatBytes } from '../../utils/format';
+import { formatBytes, formatSpeed } from '../../utils/format';
 
 export const StatusBar: React.FC = () => {
   const tasks = useDownloadStore(state => state.tasks);
+  const stats = useDownloadStore(state => state.stats);
 
   // Calculate real-time stats
   const activeStats = React.useMemo(() => {
@@ -16,7 +17,8 @@ export const StatusBar: React.FC = () => {
       (acc, task) => {
         if (task.status === 'downloading') {
           acc.downloading++;
-          acc.speed += task.speed || 0;
+        } else if (task.status === 'committing') {
+          acc.committing++;
         } else if (task.status === 'paused') {
           acc.paused++;
         } else if (task.status === 'pending') {
@@ -28,7 +30,7 @@ export const StatusBar: React.FC = () => {
         }
         return acc;
       },
-      { downloading: 0, pending: 0, paused: 0, failed: 0, completed: 0, speed: 0 }
+      { downloading: 0, committing: 0, pending: 0, paused: 0, failed: 0, completed: 0 }
     );
   }, [tasks]);
 
@@ -56,7 +58,9 @@ export const StatusBar: React.FC = () => {
             <div className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'>
               <span className='truncate text-gray-500 dark:text-gray-400'>总速度</span>
               <span className='ml-auto inline-flex min-w-[5.75rem] justify-end font-semibold tabular-nums text-gray-800 dark:text-gray-100'>
-                {activeStats.speed > 0 ? `${formatBytes(activeStats.speed)}/s` : '0 B/s'}
+                {stats.display_total_speed_bps && stats.display_total_speed_bps > 0
+                  ? formatSpeed(stats.display_total_speed_bps)
+                  : '0 B/s'}
               </span>
             </div>
 
@@ -64,9 +68,16 @@ export const StatusBar: React.FC = () => {
               data-testid='active-tasks'
               className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'
             >
-              <span className='truncate text-gray-500 dark:text-gray-400'>下载中</span>
+              <span className='truncate text-gray-500 dark:text-gray-400'>传输中</span>
               <span className='ml-auto inline-flex min-w-[3.75rem] justify-end font-semibold tabular-nums text-blue-600 dark:text-blue-400'>
                 {activeStats.downloading}
+              </span>
+            </div>
+
+            <div className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'>
+              <span className='truncate text-gray-500 dark:text-gray-400'>提交中</span>
+              <span className='ml-auto inline-flex min-w-[3.75rem] justify-end font-semibold tabular-nums text-indigo-600 dark:text-indigo-300'>
+                {activeStats.committing}
               </span>
             </div>
 
@@ -81,6 +92,24 @@ export const StatusBar: React.FC = () => {
               <span className='truncate text-gray-500 dark:text-gray-400'>等待</span>
               <span className='ml-auto inline-flex min-w-[3.75rem] justify-end font-semibold tabular-nums text-yellow-600 dark:text-yellow-500'>
                 {activeStats.pending}
+              </span>
+            </div>
+
+            <div className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'>
+              <span className='truncate text-gray-500 dark:text-gray-400'>平均提交耗时</span>
+              <span className='ml-auto inline-flex min-w-[5rem] justify-end font-semibold tabular-nums text-indigo-600 dark:text-indigo-300'>
+                {stats.average_commit_duration && stats.average_commit_duration > 0
+                  ? `${stats.average_commit_duration.toFixed(1)}s`
+                  : '--'}
+              </span>
+            </div>
+
+            <div className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'>
+              <span className='truncate text-gray-500 dark:text-gray-400'>提交 P95</span>
+              <span className='ml-auto inline-flex min-w-[5rem] justify-end font-semibold tabular-nums text-indigo-600 dark:text-indigo-300'>
+                {stats.p95_commit_duration && stats.p95_commit_duration > 0
+                  ? `${stats.p95_commit_duration.toFixed(1)}s`
+                  : '--'}
               </span>
             </div>
           </div>
@@ -135,6 +164,20 @@ export const StatusBar: React.FC = () => {
               <span className='truncate text-gray-500 dark:text-gray-400'>已下载</span>
               <span className='ml-auto inline-flex min-w-[6.5rem] justify-end font-semibold tabular-nums text-gray-800 dark:text-gray-100'>
                 {formatBytes(totalDownloaded)}
+              </span>
+            </div>
+
+            <div className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'>
+              <span className='truncate text-gray-500 dark:text-gray-400'>提交告警</span>
+              <span className='ml-auto inline-flex min-w-[4.5rem] justify-end font-semibold tabular-nums text-amber-600 dark:text-amber-400'>
+                {stats.commit_warning_count ?? 0}
+              </span>
+            </div>
+
+            <div className='flex min-w-0 items-center gap-4 rounded bg-white px-3 py-1.5 dark:bg-gray-800/80'>
+              <span className='truncate text-gray-500 dark:text-gray-400'>提交失败</span>
+              <span className='ml-auto inline-flex min-w-[4.5rem] justify-end font-semibold tabular-nums text-red-600 dark:text-red-400'>
+                {stats.failed_commit_count ?? 0}
               </span>
             </div>
           </div>

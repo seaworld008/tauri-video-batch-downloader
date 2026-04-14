@@ -175,6 +175,7 @@ export class StateValidator {
       'active_downloads',
       'total_downloaded',
       'average_speed',
+      'display_total_speed_bps',
       'queue_paused',
     ] as const;
 

@@ -222,6 +222,7 @@ describe('formatTaskStatus', () => {
   it('formats task status to Chinese', () => {
     expect(formatTaskStatus('pending')).toBe('等待中');
     expect(formatTaskStatus('downloading')).toBe('下载中');
+    expect(formatTaskStatus('committing')).toBe('提交中');
     expect(formatTaskStatus('paused')).toBe('已暂停');
     expect(formatTaskStatus('completed')).toBe('已完成');
     expect(formatTaskStatus('failed')).toBe('失败');

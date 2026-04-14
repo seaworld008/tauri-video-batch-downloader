@@ -5,6 +5,7 @@ description = "Professional batch video downloader"
 authors = ["Video Downloader Team"]
 edition = "2021"
 license = "MIT"
+default-run = "video-downloader-pro"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

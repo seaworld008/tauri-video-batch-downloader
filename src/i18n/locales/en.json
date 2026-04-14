@@ -84,6 +84,7 @@
       "status": {
         "pending": "Pending",
         "downloading": "Downloading",
+        "committing": "Committing",
         "paused": "Paused",
         "completed": "Completed",
         "failed": "Failed",

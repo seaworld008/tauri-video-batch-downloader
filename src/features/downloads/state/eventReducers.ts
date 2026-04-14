@@ -5,6 +5,7 @@ export interface ProgressEventPayload {
   downloaded_size: number;
   total_size?: number | null;
   speed?: number;
+  display_speed_bps?: number;
   eta?: number | null;
   progress?: number;
 }
@@ -24,10 +25,20 @@ export const reduceTasksWithStatusUpdate = (
       return task;
     }
 
+    const isNonTransferringStatus =
+      payload.status === 'committing' ||
+      payload.status === 'completed' ||
+      payload.status === 'failed' ||
+      payload.status === 'cancelled';
+
     return {
       ...task,
       status: payload.status,
       error_message: payload.error_message,
+      speed: isNonTransferringStatus ? 0 : task.speed,
+      display_speed_bps: isNonTransferringStatus ? 0 : task.display_speed_bps,
+      eta: isNonTransferringStatus ? undefined : task.eta,
+      progress: task.progress,
       updated_at: new Date().toISOString(),
     };
   });
@@ -45,6 +56,12 @@ export const reduceTasksWithProgressUpdate = (
   const normalizedSpeed = Math.max(
     0,
     typeof update.speed === 'number' && Number.isFinite(update.speed) ? update.speed : 0
+  );
+  const normalizedDisplaySpeed = Math.max(
+    0,
+    typeof update.display_speed_bps === 'number' && Number.isFinite(update.display_speed_bps)
+      ? update.display_speed_bps
+      : normalizedSpeed
   );
   const normalizedProgress =
     typeof update.progress === 'number' && Number.isFinite(update.progress)
@@ -77,19 +94,12 @@ export const reduceTasksWithProgressUpdate = (
       progress = task.progress;
     }
 
-    if (task.status === 'downloading' && progress >= 100) {
-      if (fallbackTotal && fallbackTotal > 0 && update.downloaded_size < fallbackTotal) {
-        progress = Math.min((update.downloaded_size / fallbackTotal) * 100, 99);
-      } else if (!fallbackTotal && hasDownloaded) {
-        progress = 99;
-      }
-    }
-
     return {
       ...task,
       downloaded_size: update.downloaded_size,
       file_size: totalSize ?? task.file_size,
       speed: normalizedSpeed,
+      display_speed_bps: normalizedDisplaySpeed,
       eta: etaValue,
       progress,
       updated_at: new Date().toISOString(),

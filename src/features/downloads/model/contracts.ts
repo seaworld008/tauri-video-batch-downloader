@@ -13,6 +13,7 @@ export interface TaskProgressedPayload {
   downloaded_size: number;
   total_size?: number;
   speed?: number;
+  display_speed_bps?: number;
   eta?: number;
   progress?: number;
 }
@@ -29,8 +30,15 @@ export interface TaskStatsUpdatedPayload {
   failed_tasks?: number;
   total_downloaded?: number;
   average_speed?: number;
+  display_total_speed_bps?: number;
   active_downloads?: number;
   queue_paused?: boolean;
+  average_transfer_duration?: number;
+  average_commit_duration?: number;
+  p95_commit_duration?: number;
+  failed_commit_count?: number;
+  commit_warning_count?: number;
+  commit_elevated_warning_count?: number;
 }
 
 export const SUPPORTED_DOWNLOAD_EVENT_SCHEMA = 1;
@@ -117,6 +125,7 @@ export const parseTaskProgressedPayload = (
       downloaded_size: downloadedSize,
       total_size: asFiniteNumber(candidate.total_size),
       speed: asFiniteNumber(candidate.speed),
+      display_speed_bps: asFiniteNumber(candidate.display_speed_bps),
       eta: asFiniteNumber(candidate.eta),
       progress: asFiniteNumber(candidate.progress),
     },
@@ -180,8 +189,15 @@ export const parseTaskStatsUpdatedPayload = (
       failed_tasks: asFiniteNumber(candidate.failed_tasks),
       total_downloaded: asFiniteNumber(candidate.total_downloaded),
       average_speed: asFiniteNumber(candidate.average_speed),
+      display_total_speed_bps: asFiniteNumber(candidate.display_total_speed_bps),
       active_downloads: asFiniteNumber(candidate.active_downloads),
       queue_paused: queuePaused,
+      average_transfer_duration: asFiniteNumber(candidate.average_transfer_duration),
+      average_commit_duration: asFiniteNumber(candidate.average_commit_duration),
+      p95_commit_duration: asFiniteNumber(candidate.p95_commit_duration),
+      failed_commit_count: asFiniteNumber(candidate.failed_commit_count),
+      commit_warning_count: asFiniteNumber(candidate.commit_warning_count),
+      commit_elevated_warning_count: asFiniteNumber(candidate.commit_elevated_warning_count),
     },
   };
 };

@@ -138,6 +138,8 @@ pub struct DownloadStats {
     pub progress: f64,
     /// 预计剩余时间（秒）
     pub eta: Option<u64>,
+    /// Optional lifecycle hint for UI-facing status transitions.
+    pub status_hint: Option<TaskStatus>,
     /// 开始时间
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// 最后更新时间
@@ -153,6 +155,7 @@ impl Default for DownloadStats {
             total_bytes: None,
             progress: 0.0,
             eta: None,
+            status_hint: None,
             start_time: now,
             last_update: now,
         }
@@ -189,6 +192,7 @@ impl DownloadTask {
                 total_bytes: None,
                 progress: 0.0,
                 eta: None,
+                status_hint: None,
                 start_time: now,
                 last_update: now,
             },
@@ -685,6 +689,9 @@ impl HttpDownloader {
                         Some(delta) => {
                             downloaded = downloaded.saturating_add(delta);
                             let total = total_hint.unwrap_or(downloaded);
+                            if total_hint.is_some() && downloaded >= total {
+                                task.status = TaskStatus::Committing;
+                            }
                             self.update_progress(task, downloaded, total, start_time).await;
                         }
                         None => {
@@ -706,6 +713,7 @@ impl HttpDownloader {
                         resume_info.total_size
                     };
                     downloaded = resume_info.downloaded_total.max(downloaded);
+                    task.status = TaskStatus::Committing;
                     self.update_progress(task, downloaded, final_total, start_time).await;
                     task.stats.total_bytes = Some(final_total);
                     break;
@@ -978,13 +986,14 @@ impl HttpDownloader {
             }
         }
 
+        // 传输字节已经完成，但任务尚未真正完成。
+        // 在 flush/sync_all 期间把状态切到 Committing，避免 UI 在 Downloading 状态下显示 100%。
+        task.status = TaskStatus::Committing;
+        self.update_progress(task, downloaded, total_size, start_time).await;
+
         // 确保文件数据写入磁盘
         file.flush().await?;
         file.sync_all().await?;
-
-        // 最后一次进度更新
-        self.update_progress(task, downloaded, total_size, start_time)
-            .await;
 
         tracing::info!("文件下载完成: {} ({} 字节)", task.filename, downloaded);
         Ok(())
@@ -1007,7 +1016,11 @@ impl HttpDownloader {
             .num_milliseconds();
         let bytes_since_last = downloaded.saturating_sub(previous_downloaded);
 
-        let speed = if ms_since_last > 0 && bytes_since_last > 0 {
+        let is_committing = matches!(task.status, TaskStatus::Committing);
+
+        let speed = if is_committing {
+            0.0
+        } else if ms_since_last > 0 && bytes_since_last > 0 {
             bytes_since_last as f64 / (ms_since_last as f64 / 1000.0)
         } else if elapsed_secs > 0.0 {
             // Fallback to average speed since start to avoid showing 0
@@ -1024,7 +1037,7 @@ impl HttpDownloader {
             Some(total.max(downloaded))
         };
 
-        let progress = if let Some(total_bytes) = safe_total {
+        let mut progress = if let Some(total_bytes) = safe_total {
             if total_bytes > 0 {
                 downloaded as f64 / total_bytes as f64
             } else {
@@ -1034,7 +1047,14 @@ impl HttpDownloader {
             0.0
         };
 
-        let eta = if let Some(total_bytes) = safe_total {
+        if matches!(task.status, TaskStatus::Downloading | TaskStatus::Committing) && progress >= 1.0
+        {
+            progress = 0.999;
+        }
+
+        let eta = if is_committing {
+            None
+        } else if let Some(total_bytes) = safe_total {
             if speed > 0.0 && total_bytes > downloaded {
                 Some(((total_bytes - downloaded) as f64 / speed) as u64)
             } else {
@@ -1048,6 +1068,11 @@ impl HttpDownloader {
         task.stats.speed = speed;
         task.stats.progress = progress;
         task.stats.eta = eta;
+        task.stats.status_hint = if is_committing {
+            Some(TaskStatus::Committing)
+        } else {
+            None
+        };
         task.stats.last_update = now_utc;
         task.stats.total_bytes = safe_total;
 

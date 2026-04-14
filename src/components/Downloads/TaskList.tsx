@@ -18,11 +18,12 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
   const sortedTasks = React.useMemo(() => {
     const statusPriority = {
       downloading: 0,
-      paused: 1,
-      failed: 2,
-      pending: 3,
-      completed: 4,
-      cancelled: 5,
+      committing: 1,
+      paused: 2,
+      failed: 3,
+      pending: 4,
+      completed: 5,
+      cancelled: 6,
     };
 
     return [...tasks].sort((a, b) => {
@@ -166,7 +167,11 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
           <span>共 {sortedTasks.length} 个任务</span>
           <div className='flex items-center space-x-4'>
             <span>已完成: {sortedTasks.filter(t => t.status === 'completed').length}</span>
-            <span>进行中: {sortedTasks.filter(t => t.status === 'downloading').length}</span>
+            <span>
+              进行中:{' '}
+              {sortedTasks.filter(t => t.status === 'downloading' || t.status === 'committing')
+                .length}
+            </span>
             <span>已暂停: {sortedTasks.filter(t => t.status === 'paused').length}</span>
             <span>失败: {sortedTasks.filter(t => t.status === 'failed').length}</span>
           </div>

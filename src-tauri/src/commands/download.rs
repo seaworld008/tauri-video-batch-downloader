@@ -1,4 +1,5 @@
 //! Download management commands
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
 use tauri::{command, State};
@@ -16,6 +17,12 @@ fn map_runtime_error(prefix: &str, error: impl std::fmt::Display) -> CommandErro
         return CommandError::concurrency_limit(message);
     }
     CommandError::internal(message)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskOutputPathUpdate {
+    pub task_id: String,
+    pub output_path: String,
 }
 
 /// 调试命令：测试下载系统是否工作
@@ -129,6 +136,23 @@ pub async fn add_download_tasks(
     // 即使有一些失败或重复，也返回成功创建的任务
     created_tasks.extend(reused_tasks);
     Ok(created_tasks)
+}
+
+#[command]
+pub async fn update_task_output_paths(
+    task_updates: Vec<TaskOutputPathUpdate>,
+    state: State<'_, AppState>,
+) -> Result<Vec<VideoTask>, String> {
+    let mut manager = state.download_manager.write().await;
+    let updates: Vec<(String, String)> = task_updates
+        .into_iter()
+        .map(|item| (item.task_id, item.output_path))
+        .collect();
+
+    manager
+        .update_task_output_paths(&updates)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[command]

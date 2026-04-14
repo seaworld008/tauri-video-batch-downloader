@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
   CogIcon,
   FolderIcon,
@@ -75,8 +76,12 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
 
   const selectOutputDirectory = async () => {
     try {
-      const selected = await invoke<string>('select_output_directory');
-      if (selected && localConfig) {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: localConfig?.download.output_directory || config.download.output_directory,
+      });
+      if (typeof selected === 'string' && selected && localConfig) {
         handleConfigChange('download', 'output_directory', selected);
       }
     } catch (error) {
@@ -159,22 +164,25 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
               />
             </div>
 
-            <div>
+            <div className='md:col-span-2'>
               <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-                下载目录
+                默认下载目录
               </label>
-              <div className='flex items-center space-x-2'>
-                <input
-                  type='text'
-                  value={localConfig.download.output_directory}
-                  onChange={e => handleConfigChange('download', 'output_directory', e.target.value)}
-                  className='flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                />
+              <div className='rounded-md border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-3'>
+                <div className='text-sm text-gray-900 dark:text-gray-100 break-all'>
+                  {localConfig.download.output_directory || '未设置目录'}
+                </div>
+                <p className='text-xs text-gray-500 dark:text-gray-400 mt-2'>
+                  这是未来新任务和导入任务的默认保存根目录。开始下载时可以对本次任务临时覆盖，不会修改这里。
+                </p>
+              </div>
+              <div className='mt-3 flex items-center justify-end'>
                 <button
                   onClick={selectOutputDirectory}
-                  className='px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors'
+                  className='inline-flex items-center px-3 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors'
                 >
-                  <FolderIcon className='w-4 h-4' />
+                  <FolderIcon className='w-4 h-4 mr-2' />
+                  选择目录
                 </button>
               </div>
             </div>

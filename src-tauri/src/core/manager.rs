@@ -34,6 +34,7 @@ use crate::core::youtube_downloader::{
     DownloadPriority, YoutubeDownloadFormat, YoutubeDownloadStatus, YoutubeDownloader,
     YoutubeDownloaderConfig, YoutubeVideoInfo,
 };
+use crate::utils::file_utils::sanitize_filename;
 
 /// Events that can be emitted by the download manager
 #[allow(clippy::large_enum_variant)]
@@ -45,6 +46,9 @@ pub enum DownloadEvent {
         task: VideoTask,
     },
     TaskStarted {
+        task_id: String,
+    },
+    TaskCommitting {
         task_id: String,
     },
     TaskProgress {
@@ -264,6 +268,12 @@ pub struct DownloadManager {
     /// Real-time monitoring and statistics system
     monitoring_system: Arc<MonitoringSystem>,
 
+    /// Per-task lifecycle timing snapshots for transfer/commit observability
+    task_lifecycle_timings: HashMap<String, TaskLifecycleTiming>,
+
+    /// Aggregated lifecycle metrics derived from completed/failed tasks
+    lifecycle_metrics: DownloadLifecycleMetrics,
+
     /// YouTube downloader for YouTube video downloads
     youtube_downloader: Option<Arc<YoutubeDownloader>>,
 
@@ -283,6 +293,25 @@ struct PersistedManagerState {
     tasks: Vec<VideoTask>,
     queue: Vec<TaskPriority>,
     queue_paused: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TaskLifecycleTiming {
+    transfer_started_at: chrono::DateTime<chrono::Utc>,
+    commit_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    final_status: Option<TaskStatus>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DownloadLifecycleMetrics {
+    transfer_duration_secs: Vec<f64>,
+    commit_duration_secs: Vec<f64>,
+    total_duration_secs: Vec<f64>,
+    peak_download_speed_bps: f64,
+    failed_commit_count: u64,
+    commit_warning_count: u64,
+    commit_elevated_warning_count: u64,
 }
 
 impl DownloadManager {
@@ -386,6 +415,8 @@ impl DownloadManager {
             integrity_checker: Arc::new(integrity_checker),
             retry_executor: Arc::new(retry_executor),
             monitoring_system: Arc::new(monitoring_system),
+            task_lifecycle_timings: HashMap::new(),
+            lifecycle_metrics: DownloadLifecycleMetrics::default(),
             youtube_downloader: None, // Initialize as None, can be enabled later
             scheduler_handle: None,
         };
@@ -565,6 +596,18 @@ impl DownloadManager {
         } else {
             current_speeds.iter().sum::<f64>() / current_speeds.len() as f64
         };
+        let display_total_speed_bps = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Downloading)
+            .map(|t| t.display_speed_bps)
+            .sum();
+        let average_transfer_duration =
+            Self::average_metric(&self.lifecycle_metrics.transfer_duration_secs);
+        let average_commit_duration =
+            Self::average_metric(&self.lifecycle_metrics.commit_duration_secs);
+        let p95_commit_duration =
+            Self::percentile_metric(&self.lifecycle_metrics.commit_duration_secs, 0.95);
 
         self.stats = ModelsDownloadStats {
             total_tasks,
@@ -572,8 +615,15 @@ impl DownloadManager {
             failed_tasks,
             total_downloaded,
             average_speed,
+            display_total_speed_bps,
             active_downloads,
             queue_paused: self.queue_paused,
+            average_transfer_duration,
+            average_commit_duration,
+            p95_commit_duration,
+            failed_commit_count: self.lifecycle_metrics.failed_commit_count,
+            commit_warning_count: self.lifecycle_metrics.commit_warning_count,
+            commit_elevated_warning_count: self.lifecycle_metrics.commit_elevated_warning_count,
         };
     }
 
@@ -650,6 +700,64 @@ impl DownloadManager {
         self.add_task_with_priority(url, output_path, 5).await // Default priority = 5
     }
 
+    pub async fn update_task_output_paths(
+        &mut self,
+        updates: &[(String, String)],
+    ) -> AppResult<Vec<VideoTask>> {
+        let mut updated_tasks = Vec::with_capacity(updates.len());
+
+        for (task_id, next_output_path) in updates {
+            if self.active_downloads.contains_key(task_id) {
+                return Err(AppError::Download(format!(
+                    "Cannot update output path for active task: {}",
+                    task_id
+                )));
+            }
+
+            let task = self
+                .tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
+
+            if matches!(
+                task.status,
+                TaskStatus::Downloading
+                    | TaskStatus::Committing
+                    | TaskStatus::Completed
+                    | TaskStatus::Cancelled
+            ) {
+                return Err(AppError::Download(format!(
+                    "Task output path can only be changed before start or while paused/failed: {}",
+                    task_id
+                )));
+            }
+
+            let (output_dir, filename) =
+                Self::split_output_path(&task.url, next_output_path, Some(&task.title));
+            task.output_path = output_dir.clone();
+            task.resolved_path = if output_dir.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    Path::new(&output_dir)
+                        .join(&filename)
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            };
+            task.updated_at = chrono::Utc::now();
+            updated_tasks.push(task.clone());
+        }
+
+        if !updated_tasks.is_empty() {
+            if let Err(err) = self.persist_state().await {
+                warn!("Failed to persist state after updating output paths: {}", err);
+            }
+        }
+
+        Ok(updated_tasks)
+    }
+
     /// Add a complete VideoTask directly to storage and return the stored record (after hydration)
     pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<AddVideoTaskResult> {
         let mut normalized_task = task.clone();
@@ -662,8 +770,11 @@ impl DownloadManager {
             normalized_task.output_path = Self::normalize_output_path(&dir);
             normalized_task.resolved_path = Some(resolved);
         } else {
-            let (output_dir, filename) =
-                Self::split_output_path(&normalized_task.url, &normalized_task.output_path);
+            let (output_dir, filename) = Self::split_output_path(
+                &normalized_task.url,
+                &normalized_task.output_path,
+                Some(&normalized_task.title),
+            );
             normalized_task.output_path = output_dir.clone();
             normalized_task.resolved_path = if output_dir.trim().is_empty() {
                 None
@@ -731,8 +842,11 @@ impl DownloadManager {
             normalized_task.output_path = Self::normalize_output_path(&dir);
             normalized_task.resolved_path = Some(resolved);
         } else {
-            let (output_dir, filename) =
-                Self::split_output_path(&normalized_task.url, &normalized_task.output_path);
+            let (output_dir, filename) = Self::split_output_path(
+                &normalized_task.url,
+                &normalized_task.output_path,
+                Some(&normalized_task.title),
+            );
             normalized_task.output_path = output_dir.clone();
             normalized_task.resolved_path = if output_dir.trim().is_empty() {
                 None
@@ -795,7 +909,9 @@ impl DownloadManager {
     ) -> AppResult<String> {
         let task_id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
-        let (output_dir, filename) = Self::split_output_path(&url, &output_path);
+        let inferred_title = Self::extract_title_from_url(&url);
+        let (output_dir, filename) =
+            Self::split_output_path(&url, &output_path, Some(&inferred_title));
         let resolved_path = if output_dir.trim().is_empty() {
             None
         } else {
@@ -810,7 +926,7 @@ impl DownloadManager {
         let mut task = VideoTask {
             id: task_id.clone(),
             url: url.clone(),
-            title: Self::extract_title_from_url(&url),
+            title: inferred_title,
             output_path: output_dir,
             resolved_path,
             status: TaskStatus::Pending,
@@ -818,6 +934,7 @@ impl DownloadManager {
             file_size: None,
             downloaded_size: 0,
             speed: 0.0,
+            display_speed_bps: 0,
             eta: None,
             error_message: None,
             created_at: now,
@@ -884,7 +1001,9 @@ impl DownloadManager {
             .clone();
 
         // 幂等防护：已在下载或句柄存在则直接返回成功
-        if task.status == TaskStatus::Downloading || self.active_downloads.contains_key(task_id) {
+        if matches!(task.status, TaskStatus::Downloading | TaskStatus::Committing)
+            || self.active_downloads.contains_key(task_id)
+        {
             let _ = self.remove_task_from_queue(task_id).await;
             return Ok(());
         }
@@ -978,7 +1097,10 @@ impl DownloadManager {
         // Create download task
         let task_id_clone = task_id.to_string();
         let url = task.url.clone();
-        let output_path = task.output_path.clone();
+        let output_path = task
+            .resolved_path
+            .clone()
+            .unwrap_or_else(|| task.output_path.clone());
         let initial_downloaded_size = task.downloaded_size;
         let initial_file_size = task.file_size;
         let event_sender = self.event_sender.as_ref().unwrap().clone();
@@ -1035,7 +1157,10 @@ impl DownloadManager {
             .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
             .clone();
 
-        if matches!(task.status, TaskStatus::Completed | TaskStatus::Cancelled) {
+        if matches!(
+            task.status,
+            TaskStatus::Completed | TaskStatus::Cancelled | TaskStatus::Committing
+        ) {
             return Err(AppError::Download(format!(
                 "Task {} cannot be paused from status: {:?}",
                 task_id, task.status
@@ -1315,7 +1440,10 @@ impl DownloadManager {
             .tasks
             .iter()
             .filter_map(|(task_id, task)| match task.status {
-                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => None,
+                TaskStatus::Completed
+                | TaskStatus::Failed
+                | TaskStatus::Cancelled
+                | TaskStatus::Committing => None,
                 _ => Some(task_id.clone()),
             })
             .collect();
@@ -1480,22 +1608,34 @@ impl DownloadManager {
             initial_file_size,
         ) = {
             let mut guard = manager.write().await;
-            let task_mut = guard
-                .tasks
-                .get_mut(task_id)
-                .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
+            let (effective_output_path, current_downloaded_size, current_file_size, current_url) = {
+                let task_mut = guard
+                    .tasks
+                    .get_mut(task_id)
+                    .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
 
-            task_mut.error_message = None;
-            task_mut.paused_at = None;
-            task_mut.paused_from_active = false;
-            task_mut.status = TaskStatus::Downloading;
-            task_mut.updated_at = chrono::Utc::now();
-            task_mut.speed = 0.0;
-            if task_mut.downloaded_size == 0 {
-                task_mut.progress = 0.0;
+                task_mut.error_message = None;
+                task_mut.paused_at = None;
+                task_mut.paused_from_active = false;
+                task_mut.status = TaskStatus::Downloading;
+                task_mut.updated_at = chrono::Utc::now();
                 task_mut.speed = 0.0;
-                task_mut.eta = None;
-            }
+                if task_mut.downloaded_size == 0 {
+                    task_mut.progress = 0.0;
+                    task_mut.speed = 0.0;
+                    task_mut.eta = None;
+                }
+
+                (
+                    task_mut
+                        .resolved_path
+                        .clone()
+                        .unwrap_or_else(|| task.output_path.clone()),
+                    task_mut.downloaded_size,
+                    task_mut.file_size,
+                    task_mut.url.clone(),
+                )
+            };
 
             guard.recompute_stats();
 
@@ -1511,10 +1651,10 @@ impl DownloadManager {
                 Arc::clone(&guard.integrity_checker),
                 Arc::clone(&guard.retry_executor),
                 guard.config.clone(),
-                task.url.clone(),
-                task.output_path.clone(),
-                task.downloaded_size,
-                task.file_size,
+                current_url,
+                effective_output_path,
+                current_downloaded_size,
+                current_file_size,
             )
         };
 
@@ -1588,9 +1728,12 @@ impl DownloadManager {
                 .cloned()
                 .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
 
-            if task_snapshot.status == TaskStatus::Downloading {
+            if matches!(
+                task_snapshot.status,
+                TaskStatus::Downloading | TaskStatus::Committing
+            ) {
                 return Err(AppError::Download(format!(
-                    "Task is already downloading: {}",
+                    "Task is already active: {}",
                     task_id
                 )));
             }
@@ -1687,7 +1830,10 @@ impl DownloadManager {
                 .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
                 .clone();
 
-            if task.status == TaskStatus::Completed || task.status == TaskStatus::Cancelled {
+            if matches!(
+                task.status,
+                TaskStatus::Completed | TaskStatus::Cancelled | TaskStatus::Committing
+            ) {
                 return Err(AppError::Download(format!(
                     "Cannot pause task in status: {:?}",
                     task.status
@@ -1760,6 +1906,7 @@ impl DownloadManager {
 
             if hydrated_task.status == TaskStatus::Completed
                 || hydrated_task.status == TaskStatus::Cancelled
+                || hydrated_task.status == TaskStatus::Committing
             {
                 return Err(AppError::Download(format!(
                     "Cannot resume task in status: {:?}",
@@ -2130,8 +2277,14 @@ impl DownloadManager {
             .get(task_id)
             .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
 
+        if self.active_downloads.contains_key(task_id) {
+            return Err(AppError::Download(
+                "Cannot remove task while download worker is still active".to_string(),
+            ));
+        }
+
         match task.status {
-            TaskStatus::Downloading => Err(AppError::Download(
+            TaskStatus::Downloading | TaskStatus::Committing => Err(AppError::Download(
                 "Cannot remove active download".to_string(),
             )),
             _ => {
@@ -2397,7 +2550,8 @@ impl DownloadManager {
             return None;
         }
 
-        let (output_dir, filename) = Self::split_output_path(&task.url, &task.output_path);
+        let (output_dir, filename) =
+            Self::split_output_path(&task.url, &task.output_path, Some(&task.title));
         if output_dir.trim().is_empty() {
             return Some(PathBuf::from(filename));
         }
@@ -2409,9 +2563,9 @@ impl DownloadManager {
         output_path.trim_end_matches(['/', '\\']).to_string()
     }
 
-    fn split_output_path(url: &str, output_path: &str) -> (String, String) {
+    fn split_output_path(url: &str, output_path: &str, preferred_title: Option<&str>) -> (String, String) {
         let trimmed = output_path.trim();
-        let default_filename = Self::extract_title_from_url(url);
+        let default_filename = Self::derive_output_filename(url, preferred_title);
         if trimmed.is_empty() {
             return (String::new(), default_filename);
         }
@@ -2451,11 +2605,11 @@ impl DownloadManager {
             return (Self::normalize_output_path(&dir), filename);
         }
 
-        Self::split_output_path(&task.url, &task.output_path)
+        Self::split_output_path(&task.url, &task.output_path, Some(&task.title))
     }
 
     fn build_identity_key(&self, url: &str, output_path: &str) -> String {
-        let (output_dir, filename) = Self::split_output_path(url, output_path);
+        let (output_dir, filename) = Self::split_output_path(url, output_path, None);
         format!("url:{}|dir:{}|file:{}", url, output_dir, filename)
     }
 
@@ -2562,10 +2716,290 @@ impl DownloadManager {
             .map_err(|e| AppError::System(format!("Failed to persist completion marker: {}", e)))
     }
 
+    fn note_transfer_started(&mut self, task_id: &str) {
+        let should_reset = self
+            .task_lifecycle_timings
+            .get(task_id)
+            .and_then(|timing| timing.final_status.as_ref())
+            .is_some();
+
+        if should_reset || !self.task_lifecycle_timings.contains_key(task_id) {
+            self.task_lifecycle_timings.insert(
+                task_id.to_string(),
+                TaskLifecycleTiming {
+                    transfer_started_at: chrono::Utc::now(),
+                    commit_started_at: None,
+                    finished_at: None,
+                    final_status: None,
+                },
+            );
+        }
+    }
+
+    fn note_commit_started(&mut self, task_id: &str) {
+        let now = chrono::Utc::now();
+        let entry = self
+            .task_lifecycle_timings
+            .entry(task_id.to_string())
+            .or_insert(TaskLifecycleTiming {
+                transfer_started_at: now,
+                commit_started_at: None,
+                finished_at: None,
+                final_status: None,
+            });
+
+        if entry.commit_started_at.is_none() {
+            entry.commit_started_at = Some(now);
+        }
+        entry.final_status = None;
+        entry.finished_at = None;
+    }
+
+    fn note_terminal_status(&mut self, task_id: &str, final_status: &TaskStatus) {
+        let now = chrono::Utc::now();
+        let (transfer_started_at, commit_started_at) = {
+            let timing = self
+                .task_lifecycle_timings
+                .entry(task_id.to_string())
+                .or_insert(TaskLifecycleTiming {
+                    transfer_started_at: now,
+                    commit_started_at: None,
+                    finished_at: None,
+                    final_status: None,
+                });
+            (timing.transfer_started_at, timing.commit_started_at)
+        };
+
+        if let Some(commit_started_at) = commit_started_at {
+            let commit_duration = (now - commit_started_at)
+                .to_std()
+                .unwrap_or_default()
+                .as_secs_f64();
+
+            if *final_status == TaskStatus::Completed {
+                Self::push_metric_sample(
+                    &mut self.lifecycle_metrics.commit_duration_secs,
+                    commit_duration,
+                );
+
+                if commit_duration > 2.0 {
+                    self.lifecycle_metrics.commit_warning_count += 1;
+                    warn!(
+                        "Commit stage exceeded warning threshold for task {}: {:.3}s",
+                        task_id, commit_duration
+                    );
+                }
+                if commit_duration > 5.0 {
+                    self.lifecycle_metrics.commit_elevated_warning_count += 1;
+                    warn!(
+                        "Commit stage exceeded elevated threshold for task {}: {:.3}s",
+                        task_id, commit_duration
+                    );
+                }
+            } else if *final_status == TaskStatus::Failed {
+                self.lifecycle_metrics.failed_commit_count += 1;
+                warn!(
+                    "Task {} failed after entering commit stage; commit duration before failure {:.3}s",
+                    task_id, commit_duration
+                );
+            }
+        }
+
+        if *final_status == TaskStatus::Completed {
+            let transfer_end = commit_started_at.unwrap_or(now);
+            let transfer_duration = (transfer_end - transfer_started_at)
+                .to_std()
+                .unwrap_or_default()
+                .as_secs_f64();
+            let total_duration = (now - transfer_started_at)
+                .to_std()
+                .unwrap_or_default()
+                .as_secs_f64();
+
+            Self::push_metric_sample(
+                &mut self.lifecycle_metrics.transfer_duration_secs,
+                transfer_duration,
+            );
+            Self::push_metric_sample(&mut self.lifecycle_metrics.total_duration_secs, total_duration);
+        }
+
+        if let Some(timing) = self.task_lifecycle_timings.get_mut(task_id) {
+            timing.finished_at = Some(now);
+            timing.final_status = Some(final_status.clone());
+        }
+    }
+
+    fn note_peak_download_speed(&mut self, speed_bps: f64) {
+        if speed_bps.is_finite() && speed_bps > self.lifecycle_metrics.peak_download_speed_bps {
+            self.lifecycle_metrics.peak_download_speed_bps = speed_bps;
+        }
+    }
+
+    fn push_metric_sample(samples: &mut Vec<f64>, value: f64) {
+        if !value.is_finite() || value < 0.0 {
+            return;
+        }
+
+        samples.push(value);
+        const MAX_SAMPLES: usize = 512;
+        if samples.len() > MAX_SAMPLES {
+            let overflow = samples.len() - MAX_SAMPLES;
+            samples.drain(0..overflow);
+        }
+    }
+
+    fn average_metric(samples: &[f64]) -> f64 {
+        if samples.is_empty() {
+            0.0
+        } else {
+            samples.iter().sum::<f64>() / samples.len() as f64
+        }
+    }
+
+    fn percentile_metric(samples: &[f64], percentile: f64) -> f64 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+
+        let mut values = samples.to_vec();
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let clamped = percentile.clamp(0.0, 1.0);
+        let idx = ((values.len().saturating_sub(1)) as f64 * clamped).round() as usize;
+        values[idx]
+    }
+
+    fn build_download_statistics_snapshot(&self) -> DownloadStatistics {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut pending_tasks = 0usize;
+        let mut active_downloads = 0usize;
+        let mut completed_downloads = 0usize;
+        let mut failed_downloads = 0usize;
+        let mut paused_downloads = 0usize;
+        let mut cancelled_downloads = 0usize;
+        let mut total_bytes_downloaded = 0u64;
+        let mut current_speed = 0.0f64;
+        let mut size_distribution = crate::core::monitoring::FileSizeDistribution {
+            small_files: 0,
+            medium_files: 0,
+            large_files: 0,
+            huge_files: 0,
+        };
+
+        for task in self.tasks.values() {
+            total_bytes_downloaded = total_bytes_downloaded.saturating_add(task.downloaded_size);
+            match task.status {
+                TaskStatus::Pending => pending_tasks += 1,
+                TaskStatus::Downloading => {
+                    active_downloads += 1;
+                    current_speed += task.speed.max(0.0);
+                }
+                TaskStatus::Committing => active_downloads += 1,
+                TaskStatus::Completed => {
+                    completed_downloads += 1;
+                    if let Some(file_size) = task.file_size {
+                        match file_size {
+                            0..=1_048_575 => size_distribution.small_files += 1,
+                            1_048_576..=10_485_759 => size_distribution.medium_files += 1,
+                            10_485_760..=104_857_599 => size_distribution.large_files += 1,
+                            _ => size_distribution.huge_files += 1,
+                        }
+                    }
+                }
+                TaskStatus::Failed => failed_downloads += 1,
+                TaskStatus::Paused => paused_downloads += 1,
+                TaskStatus::Cancelled => cancelled_downloads += 1,
+            }
+        }
+
+        let terminal_total = completed_downloads + failed_downloads;
+        let success_rate = if terminal_total == 0 {
+            100.0
+        } else {
+            (completed_downloads as f32 / terminal_total as f32) * 100.0
+        };
+
+        DownloadStatistics {
+            timestamp,
+            total_tasks: self.tasks.len(),
+            pending_tasks,
+            active_downloads,
+            completed_downloads,
+            failed_downloads,
+            paused_downloads,
+            cancelled_downloads,
+            total_bytes_downloaded,
+            current_speed,
+            average_speed: self.stats.average_speed,
+            peak_speed: self.lifecycle_metrics.peak_download_speed_bps,
+            success_rate,
+            average_duration: Self::average_metric(&self.lifecycle_metrics.total_duration_secs),
+            average_transfer_duration: Self::average_metric(
+                &self.lifecycle_metrics.transfer_duration_secs,
+            ),
+            average_commit_duration: Self::average_metric(
+                &self.lifecycle_metrics.commit_duration_secs,
+            ),
+            p95_commit_duration: Self::percentile_metric(
+                &self.lifecycle_metrics.commit_duration_secs,
+                0.95,
+            ),
+            failed_commit_count: self.lifecycle_metrics.failed_commit_count,
+            commit_warning_count: self.lifecycle_metrics.commit_warning_count,
+            commit_elevated_warning_count: self.lifecycle_metrics.commit_elevated_warning_count,
+            size_distribution,
+            error_distribution: HashMap::new(),
+        }
+    }
+
+    fn build_performance_metrics_snapshot(&self) -> PerformanceMetrics {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let active_threads = self.active_downloads.len() as u32;
+        let average_commit_duration =
+            Self::average_metric(&self.lifecycle_metrics.commit_duration_secs);
+
+        PerformanceMetrics {
+            timestamp,
+            download_throughput: if average_commit_duration > 0.0 {
+                1.0 / average_commit_duration
+            } else {
+                0.0
+            },
+            task_processing_rate: self.tasks.len() as f64,
+            average_queue_length: self.task_queue.try_lock().map(|queue| queue.len()).unwrap_or(0)
+                as f32,
+            app_memory_usage: 0,
+            active_threads,
+            app_cpu_usage: 0.0,
+            db_latency: 0.0,
+            io_operations_per_sec: if average_commit_duration > 0.0 {
+                1.0 / average_commit_duration
+            } else {
+                0.0
+            },
+            network_latency: 0.0,
+        }
+    }
+
     /// Update task status
     pub async fn update_task_status(&mut self, task_id: &str, status: TaskStatus) -> AppResult<()> {
         if let Some(task) = self.tasks.get_mut(task_id) {
             task.status = status;
+            if matches!(task.status, TaskStatus::Committing) {
+                task.speed = 0.0;
+                task.display_speed_bps = 0;
+                task.eta = None;
+                if task.progress >= 100.0 {
+                    task.progress = 99.9;
+                }
+            }
             task.updated_at = chrono::Utc::now();
             self.update_stats().await;
         }
@@ -2606,6 +3040,25 @@ impl DownloadManager {
         match event {
             DownloadEvent::TaskProgress { progress, .. } => {
                 self.update_task_progress_snapshot(progress).await?;
+            }
+            DownloadEvent::TaskCommitting { task_id } => {
+                self.note_commit_started(task_id);
+                if let Some(task) = self.tasks.get_mut(task_id) {
+                    if !matches!(
+                        task.status,
+                        TaskStatus::Completed | TaskStatus::Cancelled | TaskStatus::Failed
+                    ) {
+                        task.status = TaskStatus::Committing;
+                        task.speed = 0.0;
+                        task.display_speed_bps = 0;
+                        task.eta = None;
+                        if task.progress >= 100.0 {
+                            task.progress = 99.9;
+                        }
+                        task.updated_at = chrono::Utc::now();
+                    }
+                }
+                self.update_stats().await;
             }
             DownloadEvent::TaskCompleted { task_id, file_path } => {
                 self.finalize_task_state(task_id, TaskStatus::Completed, Some(file_path), None)
@@ -2648,6 +3101,7 @@ impl DownloadManager {
                 should_replenish_queue = true;
             }
             DownloadEvent::TaskResumed { task_id } | DownloadEvent::TaskStarted { task_id } => {
+                self.note_transfer_started(task_id);
                 // 避免旧 started/resumed 事件把用户刚设置的 Paused 或终态任务覆盖回 Downloading
                 let should_mark_downloading = self.tasks.get(task_id).is_some_and(|task| {
                     matches!(task.status, TaskStatus::Pending | TaskStatus::Downloading)
@@ -2669,6 +3123,7 @@ impl DownloadManager {
 
     /// Persist progress snapshot into task list for consistent refreshes
     async fn update_task_progress_snapshot(&mut self, progress: &ProgressUpdate) -> AppResult<()> {
+        let mut speed_for_peak = None;
         if let Some(task) = self.tasks.get_mut(&progress.task_id) {
             if matches!(
                 task.status,
@@ -2695,12 +3150,12 @@ impl DownloadManager {
 
             task.downloaded_size = next_downloaded;
             task.speed = progress.speed;
+            task.display_speed_bps = progress.display_speed_bps;
             task.eta = progress.eta;
+            speed_for_peak = Some(progress.speed);
 
             let mut next_progress = (progress.progress * 100.0).clamp(0.0, 100.0);
             let total_unknown = progress.total_size.is_none();
-            let effective_total = incoming_total.or(task.file_size);
-
             if total_unknown && progress.downloaded_size > 0 && next_progress == 0.0 {
                 // 续传时服务端未返回 total，避免把已有进度清零。
                 // 但不要保留到 100%，否则会出现“下载中显示 100%”。
@@ -2718,23 +3173,25 @@ impl DownloadManager {
                 next_progress = previous_progress;
             }
 
-            // Downloading 状态下，如果总大小未知，不允许“卡在 100%”假完成。
-            if task.status == TaskStatus::Downloading {
-                if let Some(total) = effective_total {
-                    if total > 0 {
-                        let calculated =
-                            ((next_downloaded as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
-                        if calculated < 100.0 && next_progress >= 100.0 {
-                            next_progress = calculated;
-                        }
-                    }
-                } else if next_progress >= 100.0 && next_downloaded > 0 {
-                    next_progress = 99.0;
+            // 未进入 Completed 之前，传输进度不允许在活跃态显示成 100%。
+            if matches!(task.status, TaskStatus::Downloading | TaskStatus::Committing) {
+                if next_progress >= 100.0 && next_downloaded > 0 {
+                    next_progress = 99.9;
+                }
+
+                if task.status == TaskStatus::Committing {
+                    task.speed = 0.0;
+                    task.display_speed_bps = 0;
+                    task.eta = None;
                 }
             }
 
             task.progress = next_progress;
             task.updated_at = chrono::Utc::now();
+        }
+
+        if let Some(speed) = speed_for_peak {
+            self.note_peak_download_speed(speed);
         }
 
         // Progress events are high frequency; keep this path lightweight to avoid lock contention.
@@ -2752,11 +3209,13 @@ impl DownloadManager {
     ) -> AppResult<()> {
         let _ = self.remove_task_from_queue(task_id).await;
         self.drop_active_handle(task_id);
+        self.note_terminal_status(task_id, &status);
 
         if let Some(task) = self.tasks.get_mut(task_id) {
             task.status = status;
             task.error_message = error_message;
             task.speed = 0.0;
+            task.display_speed_bps = 0;
             task.eta = None;
 
             if let Some(path) = file_path {
@@ -2810,6 +3269,43 @@ impl DownloadManager {
             .and_then(|s| s.split('?').next())
             .unwrap_or("Unknown")
             .to_string()
+    }
+
+    fn derive_output_filename(url: &str, preferred_title: Option<&str>) -> String {
+        let fallback = Self::extract_title_from_url(url);
+        let url_path = url.split('?').next().unwrap_or(url);
+        let url_file_name = Path::new(url_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&fallback);
+        let extension = Path::new(url_file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+
+        let sanitized_title = preferred_title
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(sanitize_filename)
+            .map(|title| title.trim().trim_matches('.').to_string())
+            .filter(|title| !title.is_empty())
+            .filter(|title| title.to_lowercase() != "unknown");
+
+        if let Some(title) = sanitized_title {
+            if extension.is_empty() {
+                return title;
+            }
+
+            let lowercase_title = title.to_lowercase();
+            let lowercase_extension = extension.to_lowercase();
+            if lowercase_title.ends_with(&format!(".{lowercase_extension}")) {
+                return title;
+            }
+
+            return format!("{title}.{extension}");
+        }
+
+        fallback
     }
 
     fn build_resume_key(&self, task: &VideoTask) -> Option<String> {
@@ -2959,7 +3455,7 @@ impl DownloadManager {
         debug!("🔄 Attempting download: {} -> {}", url, output_path);
 
         // Resolve output directory and filename (supports full file path inputs).
-        let (output_dir, filename) = Self::split_output_path(url, output_path);
+        let (output_dir, filename) = Self::split_output_path(url, output_path, None);
 
         // Create download task and ensure IDs match the manager task ID so progress events line up.
         let mut download_task =
@@ -2985,24 +3481,17 @@ impl DownloadManager {
 
         // Spawn enhanced progress tracking task
         let progress_handle = tokio::spawn(async move {
+            let mut committing_emitted = false;
             while let Some((task_id, download_stats)) = download_progress_rx.recv().await {
                 if task_id == task_id_clone {
-                    // Create progress update from download stats
-                    let progress_event = ProgressUpdate {
-                        task_id: task_id_clone.clone(),
-                        downloaded_size: download_stats.downloaded_bytes,
-                        total_size: download_stats.total_bytes,
-                        speed: download_stats.speed,
-                        eta: download_stats.eta,
-                        progress: download_stats.progress,
-                    };
-
-                    let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
-                        task_id: task_id_clone.clone(),
-                        progress: progress_event,
-                    });
-
-                    // Enhanced progress update
+                    if matches!(download_stats.status_hint, Some(TaskStatus::Committing))
+                        && !committing_emitted
+                    {
+                        let _ = event_sender_clone.send(DownloadEvent::TaskCommitting {
+                            task_id: task_id_clone.clone(),
+                        });
+                        committing_emitted = true;
+                    }
                     if let Err(e) = progress_tracker_clone
                         .update_progress(&task_id_clone, download_stats.downloaded_bytes)
                         .await
@@ -3016,6 +3505,33 @@ impl DownloadManager {
                         if let Some(enhanced_stats) =
                             progress_tracker_clone.get_progress(&task_id_clone).await
                         {
+                            let is_committing =
+                                matches!(download_stats.status_hint, Some(TaskStatus::Committing));
+                            let progress_event = ProgressUpdate {
+                                task_id: task_id_clone.clone(),
+                                downloaded_size: download_stats.downloaded_bytes,
+                                total_size: download_stats.total_bytes,
+                                speed: download_stats.speed,
+                                display_speed_bps: if is_committing {
+                                    0
+                                } else if enhanced_stats.smoothed_speed > 0.0 {
+                                    enhanced_stats.smoothed_speed.round() as u64
+                                } else {
+                                    download_stats.speed.max(0.0).round() as u64
+                                },
+                                eta: if is_committing {
+                                    None
+                                } else {
+                                    enhanced_stats.eta_seconds.or(download_stats.eta)
+                                },
+                                progress: download_stats.progress,
+                            };
+
+                            let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
+                                task_id: task_id_clone.clone(),
+                                progress: progress_event,
+                            });
+
                             let _ = event_sender_clone.send(DownloadEvent::EnhancedProgress {
                                 task_id: task_id_clone.clone(),
                                 progress: enhanced_stats,
@@ -3480,20 +3996,12 @@ impl DownloadManager {
 
     /// Get current download statistics from monitoring
     pub async fn get_download_statistics(&self) -> Option<DownloadStatistics> {
-        if let Ok(dashboard_data) = self.monitoring_system.get_current_dashboard_data().await {
-            Some(dashboard_data.download_stats)
-        } else {
-            None
-        }
+        Some(self.build_download_statistics_snapshot())
     }
 
     /// Get current performance metrics
     pub async fn get_performance_metrics(&self) -> Option<PerformanceMetrics> {
-        if let Ok(dashboard_data) = self.monitoring_system.get_current_dashboard_data().await {
-            Some(dashboard_data.performance_metrics)
-        } else {
-            None
-        }
+        Some(self.build_performance_metrics_snapshot())
     }
 
     /// Get current health status
@@ -3640,6 +4148,7 @@ impl DownloadManager {
             status: TaskStatus::Pending,
             progress: 0.0,
             speed: 0.0,
+            display_speed_bps: 0,
             downloaded_size: 0,
             file_size: None,
             eta: None,
@@ -4057,6 +4566,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_update_task_output_paths_updates_pending_task_paths() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("download_state.json");
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/video-a.mp4".to_string(),
+                "/downloads/course-a".to_string(),
+            )
+            .await?;
+
+        let updated = manager
+            .update_task_output_paths(&[(task_id.clone(), "D:/Video/course-a".to_string())])
+            .await?;
+
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].id, task_id);
+        assert_eq!(updated[0].output_path, "D:/Video/course-a");
+        assert_eq!(
+            updated[0].resolved_path.as_deref().map(|path| path.replace('\\', "/")),
+            Some("D:/Video/course-a/video-a.mp4".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_collect_paused_task_ids_prefers_recent_batch() -> AppResult<()> {
         let config = DownloadConfig::default();
         let mut manager = DownloadManager::new(config)?;
@@ -4108,6 +4648,7 @@ mod tests {
             file_size: None,
             downloaded_size: 0,
             speed: 0.0,
+            display_speed_bps: 0,
             eta: None,
             error_message: None,
             created_at: now,
@@ -4140,6 +4681,7 @@ mod tests {
             file_size: None,
             downloaded_size: 0,
             speed: 0.0,
+            display_speed_bps: 0,
             eta: None,
             error_message: None,
             created_at: now,
@@ -4167,6 +4709,240 @@ mod tests {
         assert!(first.created);
         assert!(!second.created);
         assert_eq!(manager.tasks.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recompute_stats_keeps_raw_average_and_display_total_separate() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let first_task_id = manager
+            .add_task(
+                "https://example.com/raw-a.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let second_task_id = manager
+            .add_task(
+                "https://example.com/raw-b.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        if let Some(task) = manager.tasks.get_mut(&first_task_id) {
+            task.status = TaskStatus::Downloading;
+            task.speed = 1400.0;
+            task.display_speed_bps = 900;
+        }
+
+        if let Some(task) = manager.tasks.get_mut(&second_task_id) {
+            task.status = TaskStatus::Downloading;
+            task.speed = 600.0;
+            task.display_speed_bps = 500;
+        }
+
+        manager.recompute_stats();
+
+        assert_eq!(manager.stats.average_speed, 1000.0);
+        assert_eq!(manager.stats.display_total_speed_bps, 1400);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_downloading_task_never_reaches_100_before_completion_event() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/almost-done.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        if let Some(task) = manager.tasks.get_mut(&task_id) {
+            task.status = TaskStatus::Downloading;
+            task.file_size = Some(100);
+            task.downloaded_size = 90;
+            task.progress = 90.0;
+        }
+
+        manager
+            .apply_event_side_effects(&DownloadEvent::TaskProgress {
+                task_id: task_id.clone(),
+                progress: ProgressUpdate {
+                    task_id: task_id.clone(),
+                    downloaded_size: 100,
+                    total_size: Some(100),
+                    speed: 1024.0,
+                    display_speed_bps: 1024,
+                    eta: None,
+                    progress: 1.0,
+                },
+            })
+            .await?;
+
+        let task = manager.tasks.get(&task_id).expect("task must exist");
+        assert_eq!(task.status, TaskStatus::Downloading);
+        assert!(task.progress < 100.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_task_committing_event_sets_non_terminal_active_state() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/committing.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        if let Some(task) = manager.tasks.get_mut(&task_id) {
+            task.status = TaskStatus::Downloading;
+            task.file_size = Some(100);
+            task.downloaded_size = 100;
+            task.progress = 100.0;
+            task.speed = 2048.0;
+            task.display_speed_bps = 2048;
+            task.eta = Some(1);
+        }
+
+        manager
+            .apply_event_side_effects(&DownloadEvent::TaskCommitting {
+                task_id: task_id.clone(),
+            })
+            .await?;
+
+        let task = manager.tasks.get(&task_id).expect("task must exist");
+        assert_eq!(task.status, TaskStatus::Committing);
+        assert_eq!(task.speed, 0.0);
+        assert_eq!(task.display_speed_bps, 0);
+        assert_eq!(task.eta, None);
+        assert!(task.progress < 100.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_download_statistics_capture_transfer_and_commit_metrics() -> AppResult<()> {
+        use tempfile::tempdir;
+
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/metrics.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        let temp_dir = tempdir().unwrap();
+        let final_path = temp_dir.path().join("metrics.mp4");
+        tokio::fs::write(&final_path, b"hello world").await.unwrap();
+
+        manager.note_transfer_started(&task_id);
+        manager.note_commit_started(&task_id);
+
+        if let Some(timing) = manager.task_lifecycle_timings.get_mut(&task_id) {
+            timing.transfer_started_at = chrono::Utc::now() - chrono::Duration::seconds(8);
+            timing.commit_started_at = Some(chrono::Utc::now() - chrono::Duration::seconds(3));
+        }
+
+        manager
+            .finalize_task_state(
+                &task_id,
+                TaskStatus::Completed,
+                Some(final_path.to_string_lossy().as_ref()),
+                None,
+            )
+            .await?;
+
+        let statistics = manager.build_download_statistics_snapshot();
+        assert_eq!(statistics.completed_downloads, 1);
+        assert!(statistics.average_transfer_duration >= 4.5);
+        assert!(statistics.average_commit_duration >= 2.5);
+        assert!(statistics.p95_commit_duration >= statistics.average_commit_duration);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_video_task_uses_title_based_filename_for_generic_media_path() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+        let now = chrono::Utc::now();
+
+        let task = VideoTask {
+            id: "task-generic-filename".to_string(),
+            url: "https://example.com/playlist.f9.mp4".to_string(),
+            title: "2、阳台月季种植".to_string(),
+            output_path: "F:/temp/downloads".to_string(),
+            resolved_path: None,
+            status: TaskStatus::Pending,
+            progress: 0.0,
+            file_size: None,
+            downloaded_size: 0,
+            speed: 0.0,
+            display_speed_bps: 0,
+            eta: None,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+            paused_at: None,
+            paused_from_active: false,
+            downloader_type: Some(DownloaderType::Http),
+            video_info: None,
+        };
+
+        let stored = manager.add_video_task(task).await?;
+
+        assert!(stored.created);
+        assert_eq!(
+            stored
+                .task
+                .resolved_path
+                .as_deref()
+                .map(|path| path.replace('\\', "/")),
+            Some("F:/temp/downloads/2、阳台月季种植.mp4".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remove_task_rejects_when_active_handle_exists() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/active.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        manager.active_downloads.insert(
+            task_id.clone(),
+            tokio::spawn(async {
+                std::future::pending::<()>().await;
+            }),
+        );
+
+        let remove_result = manager.remove_task(&task_id).await;
+        assert!(remove_result.is_err());
+        assert!(manager.tasks.contains_key(&task_id));
+
+        if let Some(handle) = manager.active_downloads.remove(&task_id) {
+            handle.abort();
+        }
 
         Ok(())
     }

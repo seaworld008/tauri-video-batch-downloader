@@ -30,6 +30,7 @@ describe('downloadStore', () => {
     progress: 0,
     downloaded_size: 0,
     speed: 0,
+    display_speed_bps: 0,
     eta: undefined,
     error_message: undefined,
     created_at: new Date(0).toISOString(),
@@ -74,8 +75,15 @@ describe('downloadStore', () => {
         failed_tasks: 0,
         total_downloaded: 0,
         average_speed: 0,
+        display_total_speed_bps: 0,
         active_downloads: 0,
         queue_paused: false,
+        average_transfer_duration: 0,
+        average_commit_duration: 0,
+        p95_commit_duration: 0,
+        failed_commit_count: 0,
+        commit_warning_count: 0,
+        commit_elevated_warning_count: 0,
       });
     });
 
@@ -310,6 +318,7 @@ describe('downloadStore', () => {
             failed_tasks: 0,
             total_downloaded: 0,
             average_speed: 0,
+            display_total_speed_bps: 0,
             active_downloads: 1,
             queue_paused: false,
           });
@@ -382,6 +391,42 @@ describe('downloadStore', () => {
 
       expect(invoke).toHaveBeenCalledWith('get_download_stats');
     });
+
+    it('applies a temporary output directory override to target tasks', async () => {
+      const { result } = renderHook(() => useDownloadStore());
+
+      useDownloadStore.setState({
+        tasks: [buildTask('task-1', 'pending')],
+        config: {
+          ...useDownloadStore.getState().config,
+          output_directory: '/downloads',
+        },
+      });
+
+      vi.mocked(invoke).mockImplementation((command: any) => {
+        if (command === 'update_task_output_paths') {
+          return Promise.resolve([
+            {
+              ...buildTask('task-1', 'pending'),
+              output_path: 'D:/Video/video.mp4',
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      await act(async () => {
+        await result.current.applyOutputDirectoryOverride(['task-1'], 'D:/Video');
+      });
+
+      expect(invoke).toHaveBeenCalledWith(
+        'update_task_output_paths',
+        expect.objectContaining({
+          task_updates: [{ task_id: 'task-1', output_path: 'D:/Video/video.mp4' }],
+        })
+      );
+      expect(useDownloadStore.getState().tasks[0]?.output_path).toBe('D:/Video/video.mp4');
+    });
   });
 
   describe('error handling', () => {
@@ -422,6 +467,7 @@ describe('downloadStore', () => {
             failed_tasks: 0,
             total_downloaded: 0,
             average_speed: 0,
+            display_total_speed_bps: 0,
             active_downloads: 0,
             queue_paused: false,
           });

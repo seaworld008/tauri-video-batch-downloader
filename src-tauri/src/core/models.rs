@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Task status enumeration
 
@@ -11,6 +12,8 @@ pub enum TaskStatus {
     Pending,
 
     Downloading,
+
+    Committing,
 
     Paused,
 
@@ -59,6 +62,10 @@ pub struct VideoTask {
 
     pub speed: f64,
 
+    /// Smoothed task speed for UI display (bytes per second)
+    #[serde(default)]
+    pub display_speed_bps: u64,
+
     pub eta: Option<u64>,
 
     pub error_message: Option<String>,
@@ -93,6 +100,10 @@ pub struct ProgressUpdate {
     pub total_size: Option<u64>,
 
     pub speed: f64,
+
+    /// Smoothed task speed for UI display (bytes per second)
+    #[serde(default)]
+    pub display_speed_bps: u64,
 
     pub eta: Option<u64>,
 
@@ -197,7 +208,7 @@ impl Default for DownloadConfig {
 
             headers: HashMap::new(),
 
-            output_directory: "downloads".to_string(),
+            output_directory: default_download_directory(),
 
             auto_verify_integrity: false, // Disabled by default for performance
 
@@ -205,6 +216,22 @@ impl Default for DownloadConfig {
 
             expected_hashes: HashMap::new(),
         }
+    }
+}
+
+fn default_download_directory() -> String {
+    if cfg!(target_os = "windows") {
+        std::env::var("USERPROFILE")
+            .map(|profile| Path::new(&profile).join("Downloads"))
+            .unwrap_or_else(|_| Path::new(".").join("downloads"))
+            .to_string_lossy()
+            .to_string()
+    } else {
+        std::env::var("HOME")
+            .map(|home| Path::new(&home).join("Downloads"))
+            .unwrap_or_else(|_| Path::new(".").join("downloads"))
+            .to_string_lossy()
+            .to_string()
     }
 }
 
@@ -223,9 +250,37 @@ pub struct DownloadStats {
 
     pub average_speed: f64,
 
+    /// Aggregate display speed for UI status bars (bytes per second)
+    #[serde(default)]
+    pub display_total_speed_bps: u64,
+
     pub active_downloads: usize,
 
     pub queue_paused: bool,
+
+    /// Average transfer duration in seconds for completed downloads
+    #[serde(default)]
+    pub average_transfer_duration: f64,
+
+    /// Average commit duration in seconds for completed downloads
+    #[serde(default)]
+    pub average_commit_duration: f64,
+
+    /// 95th percentile commit duration in seconds
+    #[serde(default)]
+    pub p95_commit_duration: f64,
+
+    /// Number of failures that happened after entering commit stage
+    #[serde(default)]
+    pub failed_commit_count: u64,
+
+    /// Number of completed commits slower than warning threshold
+    #[serde(default)]
+    pub commit_warning_count: u64,
+
+    /// Number of completed commits slower than elevated threshold
+    #[serde(default)]
+    pub commit_elevated_warning_count: u64,
 }
 
 impl Default for DownloadStats {
@@ -241,9 +296,23 @@ impl Default for DownloadStats {
 
             average_speed: 0.0,
 
+            display_total_speed_bps: 0,
+
             active_downloads: 0,
 
             queue_paused: false,
+
+            average_transfer_duration: 0.0,
+
+            average_commit_duration: 0.0,
+
+            p95_commit_duration: 0.0,
+
+            failed_commit_count: 0,
+
+            commit_warning_count: 0,
+
+            commit_elevated_warning_count: 0,
         }
     }
 }

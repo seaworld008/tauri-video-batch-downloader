@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::models::DownloadConfig;
 
@@ -171,13 +171,18 @@ impl AppConfig {
             let content = std::fs::read_to_string(&config_path)
                 .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
 
-            let config: AppConfig =
+            let mut config: AppConfig =
                 serde_json::from_str(&content).with_context(|| "Failed to parse config file")?;
+            let normalized = config.normalize_download_directory();
+            if normalized {
+                config.save()?;
+            }
 
             tracing::info!("Loaded configuration from: {:?}", config_path);
             Ok(config)
         } else {
-            let config = Self::default();
+            let mut config = Self::default();
+            config.normalize_download_directory();
             config.save()?;
             tracing::info!("Created default configuration at: {:?}", config_path);
             Ok(config)
@@ -559,6 +564,52 @@ impl AppConfig {
         }
 
         Ok(())
+    }
+
+    pub fn normalize_download_directory(&mut self) -> bool {
+        let current = self.download.output_directory.trim();
+        let replacement = normalize_download_directory(current);
+        if replacement != self.download.output_directory {
+            self.download.output_directory = replacement;
+            return true;
+        }
+        false
+    }
+}
+
+fn normalize_download_directory(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return platform_downloads_dir();
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return trimmed.to_string();
+    }
+
+    match trimmed {
+        "downloads" | "./downloads" | ".\\downloads" => platform_downloads_dir(),
+        _ => Path::new(&platform_downloads_dir())
+            .join(trimmed.trim_start_matches("./").trim_start_matches(".\\"))
+            .to_string_lossy()
+            .to_string(),
+    }
+}
+
+fn platform_downloads_dir() -> String {
+    if cfg!(target_os = "windows") {
+        std::env::var("USERPROFILE")
+            .map(|profile| Path::new(&profile).join("Downloads"))
+            .unwrap_or_else(|_| Path::new(".").join("downloads"))
+            .to_string_lossy()
+            .to_string()
+    } else {
+        std::env::var("HOME")
+            .map(|home| Path::new(&home).join("Downloads"))
+            .unwrap_or_else(|_| Path::new(".").join("downloads"))
+            .to_string_lossy()
+            .to_string()
     }
 }
 

@@ -40,6 +40,7 @@ import {
   ensureDownloadStats,
   calculateStatsFromTasks,
 } from '../utils/downloadStats';
+import { buildTaskOutputPathUpdates } from '../features/downloads/model/outputPathOverride';
 import {
   parseDownloadEventEnvelopeV1,
   parseTaskProgressedPayload,
@@ -56,9 +57,11 @@ import {
 let listenersInitialized = false;
 let listenerSetupPromise: Promise<void> | null = null;
 let activeSyncTimer: number | null = null;
+const PROGRESS_UI_UPDATE_INTERVAL_MS = 1000;
 const STATUS_TO_BACKEND: Record<TaskStatus, string> = {
   pending: 'Pending',
   downloading: 'Downloading',
+  committing: 'Committing',
   paused: 'Paused',
   completed: 'Completed',
   failed: 'Failed',
@@ -70,6 +73,8 @@ const STATUS_FROM_BACKEND: Record<string, TaskStatus> = {
   Pending: 'pending',
   downloading: 'downloading',
   Downloading: 'downloading',
+  committing: 'committing',
+  Committing: 'committing',
   paused: 'paused',
   Paused: 'paused',
   completed: 'completed',
@@ -134,10 +139,13 @@ const normalizeBackendTask = (task: any) => {
     normalizedVideoInfo && Object.values(normalizedVideoInfo).some(value => value !== undefined);
 
   const fileSize = typeof task?.file_size === 'number' ? task.file_size : undefined;
+  const displaySpeed =
+    typeof task?.display_speed_bps === 'number' ? task.display_speed_bps : undefined;
 
   return {
     ...task,
     file_size: fileSize,
+    display_speed_bps: displaySpeed,
     status: fromBackendStatus(task?.status),
     downloader_type: fromBackendDownloaderType(task?.downloader_type),
     video_info: hasVideoInfo ? normalizedVideoInfo : undefined,
@@ -173,10 +181,13 @@ const isConcurrencyError = (error: unknown) => {
 const CONCURRENCY_NOTICE_INTERVAL = 4000;
 let lastConcurrencyNotice = 0;
 
-const REGRESSION_GUARD_STATUSES: TaskStatus[] = ['pending', 'downloading', 'paused'];
+const REGRESSION_GUARD_STATUSES: TaskStatus[] = ['pending', 'downloading', 'committing', 'paused'];
 
 const shouldGuardProgressRegression = (current: VideoTask, incoming: VideoTask): boolean => {
-  const currentActiveOrPaused = current.status === 'downloading' || current.status === 'paused';
+  const currentActiveOrPaused =
+    current.status === 'downloading' ||
+    current.status === 'committing' ||
+    current.status === 'paused';
   if (!currentActiveOrPaused || !REGRESSION_GUARD_STATUSES.includes(incoming.status)) {
     return false;
   }
@@ -223,24 +234,24 @@ const mergeTaskWithProgressGuard = (
     mergedProgress = currentProgress < 100 ? currentProgress : 0;
   }
 
-  if (incoming.status !== 'completed' && mergedProgress >= 100) {
-    if (
-      typeof mergedFileSize === 'number' &&
-      mergedFileSize > 0 &&
-      mergedDownloaded < mergedFileSize
-    ) {
-      mergedProgress = Math.min((mergedDownloaded / mergedFileSize) * 100, 99);
-    } else if (typeof mergedFileSize !== 'number' && mergedDownloaded > 0) {
-      mergedProgress = 99;
-    }
-  }
+  const shouldResetSpeed =
+    incoming.status === 'committing' ||
+    incoming.status === 'completed' ||
+    incoming.status === 'failed' ||
+    incoming.status === 'cancelled';
 
   return {
     ...incoming,
     downloaded_size: mergedDownloaded,
     file_size: mergedFileSize,
     progress: mergedProgress,
-    speed: incoming.speed > 0 ? incoming.speed : current.speed,
+    speed: shouldResetSpeed ? incoming.speed : incoming.speed > 0 ? incoming.speed : current.speed,
+    display_speed_bps:
+      shouldResetSpeed
+        ? (incoming.display_speed_bps ?? 0)
+        : (incoming.display_speed_bps ?? 0) > 0
+        ? incoming.display_speed_bps
+        : (current.display_speed_bps ?? 0),
   };
 };
 
@@ -339,6 +350,7 @@ interface DownloadState {
   pauseAllDownloads: () => Promise<void>;
 
   retryFailedTasks: () => Promise<void>;
+  applyOutputDirectoryOverride: (taskIds: string[], overrideOutputDirectory: string) => Promise<void>;
 
   // Actions - 文件导入
   importFromFile: (filePath: string) => Promise<void>;
@@ -964,6 +976,42 @@ export const useDownloadStore = create<DownloadState>()(
       toast.success(`已将 ${failedTasks.length} 个失败任务重新提交到下载队列`);
     },
 
+    applyOutputDirectoryOverride: async (taskIds, overrideOutputDirectory) => {
+      try {
+        const state = get();
+        const targetTasks = state.tasks.filter(task => taskIds.includes(task.id));
+        if (targetTasks.length === 0) {
+          return;
+        }
+
+        const taskUpdates = buildTaskOutputPathUpdates(
+          targetTasks,
+          state.config.output_directory,
+          overrideOutputDirectory
+        );
+
+        const updatedTasks = await invoke<VideoTask[]>('update_task_output_paths', {
+          taskUpdates,
+          task_updates: taskUpdates,
+        });
+
+        if (updatedTasks.length === 0) {
+          return;
+        }
+
+        const updatedTaskMap = new Map(
+          updatedTasks.map(task => [task.id, normalizeTaskData(task)] as const)
+        );
+
+        set(current => ({
+          tasks: current.tasks.map(task => updatedTaskMap.get(task.id) ?? task),
+        }));
+      } catch (error) {
+        handleError('更新本次保存位置', error);
+        throw error;
+      }
+    },
+
     enqueueDownloads: taskIds => {
       const existingIds = new Set(get().tasks.map(task => task.id));
       const uniqueIds = taskIds.filter(id => id && existingIds.has(id));
@@ -1118,6 +1166,7 @@ export const useDownloadStore = create<DownloadState>()(
               downloaded_size: 0,
 
               speed: 0,
+              display_speed_bps: 0,
 
               eta: undefined,
 
@@ -1230,6 +1279,7 @@ export const useDownloadStore = create<DownloadState>()(
         downloaded_size: 0,
 
         speed: 0,
+        display_speed_bps: 0,
 
         eta: undefined,
 
@@ -1482,7 +1532,6 @@ export const useDownloadStore = create<DownloadState>()(
               failed_tasks: derivedStats.failed_tasks,
               active_downloads: derivedStats.active_downloads,
               total_downloaded: derivedStats.total_downloaded,
-              average_speed: derivedStats.average_speed,
             }
           : ensuredStats;
 
@@ -1758,7 +1807,16 @@ export const initializeProgressListener = async () => {
       let progressEventCount = 0;
       let hasVersionedEvents = false;
       const lastProgressUpdate = new Map<string, number>();
+      const warmupProgressEventsByTask = new Map<string, number>();
       const updateTaskStatus = (payload: StatusEventPayload) => {
+        if (
+          payload.status === 'completed' ||
+          payload.status === 'failed' ||
+          payload.status === 'cancelled'
+        ) {
+          lastProgressUpdate.delete(payload.task_id);
+          warmupProgressEventsByTask.delete(payload.task_id);
+        }
         useDownloadStore.setState(state => {
           return {
             tasks: reduceTasksWithStatusUpdate(state.tasks, payload),
@@ -1772,6 +1830,24 @@ export const initializeProgressListener = async () => {
         useDownloadStore.setState(state => ({
           tasks: reduceTasksWithProgressUpdate(state.tasks, update),
         }));
+      };
+
+      const shouldDispatchProgressUpdate = (
+        taskId: string,
+        progress?: number
+      ) => {
+        const now = Date.now();
+        const last = lastProgressUpdate.get(taskId) ?? 0;
+        const warmupCount = warmupProgressEventsByTask.get(taskId) ?? 0;
+        const isWarmupEvent = warmupCount < 2;
+        const shouldEmit = last === 0 || isWarmupEvent || now - last >= PROGRESS_UI_UPDATE_INTERVAL_MS;
+
+        if (shouldEmit) {
+          lastProgressUpdate.set(taskId, now);
+          warmupProgressEventsByTask.set(taskId, warmupCount + 1);
+        }
+
+        return shouldEmit;
       };
 
       const unlistenV1 = await listen<any>('download_event_v1', event => {
@@ -1790,11 +1866,17 @@ export const initializeProgressListener = async () => {
             if (parsedPayload.success === false) {
               return;
             }
+            if (!shouldDispatchProgressUpdate(parsedPayload.data.task_id, parsedPayload.data.progress)) {
+              progressEventCount++;
+              return;
+            }
+            progressEventCount++;
             updateTaskProgress({
               task_id: parsedPayload.data.task_id,
               downloaded_size: parsedPayload.data.downloaded_size,
               total_size: parsedPayload.data.total_size,
               speed: parsedPayload.data.speed,
+              display_speed_bps: parsedPayload.data.display_speed_bps,
               eta: parsedPayload.data.eta,
               progress: parsedPayload.data.progress,
             });
@@ -1865,6 +1947,7 @@ export const initializeProgressListener = async () => {
               downloaded_size: rawPayload.downloaded_size ?? 0,
               total_size: rawPayload.total_size,
               speed: rawPayload.speed ?? 0,
+              display_speed_bps: rawPayload.display_speed_bps ?? rawPayload.speed ?? 0,
               eta: rawPayload.eta,
               progress: rawPayload.progress ?? 0,
             };
@@ -1876,19 +1959,15 @@ export const initializeProgressListener = async () => {
 
         const update = validationResult.data!;
         if (update.task_id && typeof update.downloaded_size === 'number') {
-          const now = Date.now();
-          const last = lastProgressUpdate.get(update.task_id) ?? 0;
-          const pct = typeof update.progress === 'number' ? update.progress * 100 : undefined;
-          const forceEmit = (pct ?? 0) >= 99 || progressEventCount <= 3;
-          if (!forceEmit && now - last < 1000) {
-            return; // 节流：默认1秒一次
+          if (!shouldDispatchProgressUpdate(update.task_id, update.progress)) {
+            return;
           }
-          lastProgressUpdate.set(update.task_id, now);
           updateTaskProgress({
             task_id: update.task_id,
             downloaded_size: update.downloaded_size,
             total_size: update.total_size,
             speed: update.speed,
+            display_speed_bps: update.display_speed_bps,
             eta: update.eta,
             progress: update.progress,
           });
@@ -1968,7 +2047,9 @@ export const initializeProgressListener = async () => {
   if (typeof window !== 'undefined' && activeSyncTimer === null) {
     activeSyncTimer = window.setInterval(() => {
       const state = useDownloadStore.getState();
-      const hasActiveDownloads = state.tasks.some(task => task.status === 'downloading');
+      const hasActiveDownloads = state.tasks.some(
+        task => task.status === 'downloading' || task.status === 'committing'
+      );
       const hasPendingTasks = state.tasks.some(task => task.status === 'pending');
 
       if (!hasActiveDownloads && !hasPendingTasks) {

@@ -12,6 +12,7 @@ pub mod m3u8_downloader;
 pub mod manager;
 pub mod models;
 pub mod monitoring;
+pub mod part_file;
 pub mod progress_tracker;
 pub mod resume_downloader;
 pub mod runtime;

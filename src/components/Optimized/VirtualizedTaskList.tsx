@@ -10,6 +10,7 @@
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
+import { formatSpeed } from '../../utils/format';
 import type { VideoTask, TaskStatus } from '../../types';
 
 interface VirtualizedTaskListProps {
@@ -26,21 +27,13 @@ interface VirtualItem {
 
 const STATUS_PRIORITY: Record<TaskStatus, number> = {
   downloading: 0,
-  paused: 1,
-  failed: 2,
-  pending: 3,
-  completed: 4,
-  cancelled: 5,
+  committing: 1,
+  paused: 2,
+  failed: 3,
+  pending: 4,
+  completed: 5,
+  cancelled: 6,
 };
-
-// 工具函数
-function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond === 0) return '0 B/s';
-  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(1024));
-  const size = bytesPerSecond / Math.pow(1024, i);
-  return `${size.toFixed(1)} ${units[i]}`;
-}
 
 function formatTime(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -58,6 +51,7 @@ const TaskItem = React.memo<{
   onSelect: (selected: boolean) => void;
   index: number;
 }>(({ task, style, isSelected, onSelect, index }) => {
+  const displaySpeed = task.display_speed_bps ?? 0;
   const handleSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSelect(e.target.checked);
   };
@@ -68,6 +62,8 @@ const TaskItem = React.memo<{
         return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
       case 'downloading':
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'committing':
+        return 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300';
       case 'failed':
         return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
       case 'paused':
@@ -118,6 +114,8 @@ const TaskItem = React.memo<{
               ? '等待中'
               : task.status === 'downloading'
                 ? '下载中'
+                : task.status === 'committing'
+                  ? '提交中'
                 : task.status === 'completed'
                   ? '已完成'
                   : task.status === 'failed'
@@ -132,11 +130,22 @@ const TaskItem = React.memo<{
           {task.status === 'downloading' && (
             <>
               <span className='w-16'>{progressPercentage}%</span>
-              <span className='w-20'>{formatSpeed(task.speed)}</span>
+              <span className='w-24 font-mono tabular-nums whitespace-nowrap'>
+                {formatSpeed(displaySpeed)}
+              </span>
               <span>剩余: {task.eta ? formatTime(task.eta) : '--'}</span>
             </>
           )}
-          {task.status !== 'downloading' && (
+          {task.status === 'committing' && (
+            <>
+              <span className='w-16'>{progressPercentage}%</span>
+              <span className='w-24 text-indigo-600 dark:text-indigo-300 whitespace-nowrap'>
+                提交中
+              </span>
+              <span>剩余: --</span>
+            </>
+          )}
+          {task.status !== 'downloading' && task.status !== 'committing' && (
             <span className='truncate text-gray-400'>{task.output_path}</span>
           )}
         </div>
@@ -186,7 +195,11 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
 
     // 状态过滤
     if (filterStatus !== 'all') {
-      result = result.filter(t => t.status === filterStatus);
+      result = result.filter(t =>
+        filterStatus === 'downloading'
+          ? t.status === 'downloading' || t.status === 'committing'
+          : t.status === filterStatus
+      );
     }
 
     // 搜索过滤

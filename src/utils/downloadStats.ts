@@ -6,8 +6,15 @@ export const DEFAULT_DOWNLOAD_STATS: DownloadStats = {
   failed_tasks: 0,
   total_downloaded: 0,
   average_speed: 0,
+  display_total_speed_bps: 0,
   active_downloads: 0,
   queue_paused: false,
+  average_transfer_duration: 0,
+  average_commit_duration: 0,
+  p95_commit_duration: 0,
+  failed_commit_count: 0,
+  commit_warning_count: 0,
+  commit_elevated_warning_count: 0,
 };
 
 export const createDefaultDownloadStats = (): DownloadStats => ({
@@ -30,7 +37,6 @@ export const calculateStatsFromTasks = (tasks: VideoTask[]): DownloadStats => {
   let failed = 0;
   let active = 0;
   let totalDownloaded = 0;
-  let speedSum = 0;
 
   tasks.forEach(task => {
     totalDownloaded += Number.isFinite(task.downloaded_size) ? task.downloaded_size : 0;
@@ -43,8 +49,8 @@ export const calculateStatsFromTasks = (tasks: VideoTask[]): DownloadStats => {
         failed += 1;
         break;
       case 'downloading':
+      case 'committing':
         active += 1;
-        speedSum += Number.isFinite(task.speed) ? task.speed : 0;
         break;
       default:
         break;
@@ -57,7 +63,14 @@ export const calculateStatsFromTasks = (tasks: VideoTask[]): DownloadStats => {
     failed_tasks: failed,
     active_downloads: active,
     total_downloaded: totalDownloaded,
-    average_speed: active > 0 ? speedSum / active : 0,
+    average_speed: 0,
+    display_total_speed_bps: 0,
     queue_paused: false,
+    average_transfer_duration: 0,
+    average_commit_duration: 0,
+    p95_commit_duration: 0,
+    failed_commit_count: 0,
+    commit_warning_count: 0,
+    commit_elevated_warning_count: 0,
   };
 };
