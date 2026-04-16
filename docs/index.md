@@ -62,6 +62,7 @@
 - 旧 `DownloadsView` / `OptimizedDownloadsView` / `TaskList` / `TaskItem` 已删除
 - 现行前端主链 consumer audit 又确认 `ImportSuccessGuide.tsx` / `WorkflowTips.tsx` / `EmptyState.tsx` 已无生产消费者并已删除
 - 本轮继续确认旧 `ImportView.tsx` / `useImportGuide.ts` 已无生产消费者并已删除，正式导入 UI 继续收敛为 `UnifiedView -> FileImportPanel`
+- 本轮又继续把正式导入 command surface 的假契约删掉：由于当前 UI 并无 Excel sheet 选择能力，`importCommands.ts` 与 Rust `commands/import.rs` 中伪存在的 `sheetName/sheet_name` 参数已被移除，避免主链继续暴露未实现的导入能力
 - 前端生产代码里的零散 `invoke(...)` 已收口到 feature-local API seam
 - Rust 侧 `resume_all_downloads` / `start_all_pending` / `cancel_all_downloads` 的 command/runtime/manager dead paths 已删除
 - Rust monitoring observability compile surface 已完成进一步 mainline-only cleanup：在确认 `core/monitoring.rs` / `monitoring_integration_tests.rs` 只剩历史债务意义后，这整块 monitoring 模块与测试已从源码树删除，manager 中仅服务该模块的 cfg 挂件也已一并摘除

@@ -160,7 +160,6 @@ describe('downloads api command seams', () => {
     expect(invoke).toHaveBeenNthCalledWith(4, 'import_excel_file', {
       filePath: '/tmp/tasks.xlsx',
       fieldMapping: { url: 'video_url' },
-      sheetName: null,
     });
 
     vi.mocked(open).mockResolvedValueOnce('/tmp/tasks.csv' as never);

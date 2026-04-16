@@ -14,7 +14,6 @@ export interface ImportStructuredFileOptions {
   filePath: string;
   fieldMapping: Record<string, string>;
   encoding?: string;
-  sheetName?: string | null;
 }
 
 export interface SelectImportFileOptions {
@@ -52,7 +51,6 @@ export const importStructuredFileCommand = async ({
   filePath,
   fieldMapping,
   encoding,
-  sheetName,
 }: ImportStructuredFileOptions): Promise<ImportedData[]> => {
   const command = resolveImportFileCommand(filePath);
   const args: Record<string, unknown> = {
@@ -64,27 +62,18 @@ export const importStructuredFileCommand = async ({
     args.encoding = encoding;
   }
 
-  if (command === 'import_excel_file') {
-    args.sheetName = sheetName ?? null;
-  }
-
   return invokeTauri<ImportedData[]>(command, args);
 };
 
 export const importRawFileCommand = async ({
   filePath,
   encoding,
-  sheetName,
 }: Omit<ImportStructuredFileOptions, 'fieldMapping'>): Promise<ImportedData[]> => {
   const command = resolveImportFileCommand(filePath);
   const args: Record<string, unknown> = { filePath };
 
   if (encoding) {
     args.encoding = encoding;
-  }
-
-  if (command === 'import_excel_file') {
-    args.sheetName = sheetName ?? null;
   }
 
   return invokeTauri<ImportedData[]>(command, args);

@@ -94,7 +94,7 @@ pub async fn import_file(
     }
 }
 
-/// Import tasks from a CSV file (legacy compatibility)
+/// Import tasks from a CSV file using the structured import command surface.
 #[tauri::command]
 pub async fn import_csv_file(
     app: AppHandle,
@@ -103,7 +103,7 @@ pub async fn import_csv_file(
     _encoding: Option<String>,
     field_mapping: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<ImportedData>, String> {
-    info!("📄 Importing CSV file (legacy): {}", file_path);
+    info!("📄 Importing CSV file: {}", file_path);
 
     // Convert field mapping format: HashMap<String, String> -> HashMap<String, Vec<String>>
     let converted_mapping = field_mapping.map(|mapping| {
@@ -118,19 +118,15 @@ pub async fn import_csv_file(
     Ok(result.imported_data)
 }
 
-/// Import tasks from an Excel file (legacy compatibility)
+/// Import tasks from an Excel file using the structured import command surface.
 #[tauri::command]
 pub async fn import_excel_file(
     app: AppHandle,
     state: State<'_, AppState>,
     file_path: String,
-    sheet_name: Option<String>,
     field_mapping: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<ImportedData>, String> {
-    info!(
-        "📊 Importing Excel file (legacy): {} (sheet: {:?})",
-        file_path, sheet_name
-    );
+    info!("📊 Importing Excel file: {}", file_path);
 
     // Convert field mapping format: HashMap<String, String> -> HashMap<String, Vec<String>>
     let converted_mapping = field_mapping.map(|mapping| {
