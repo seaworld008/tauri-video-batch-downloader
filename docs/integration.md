@@ -34,7 +34,6 @@
 
 - 下载：`add_download_tasks` / `start_download` / `pause_download` /
   `resume_download`
-- 批量：`pause_all_downloads` / `resume_all_downloads` /
-  `start_all_pending_downloads`
-- 导入：`import_file` / `preview_import_data` / `import_tasks_and_enqueue`
+- 批量：`pause_all_downloads` / `start_all_downloads`
+- 导入：`import_file` / `preview_import_data`
 - 配置：`get_config` / `update_config` / `export_config` / `import_config`

@@ -1,5 +1,7 @@
 # Video Downloader Pro 全局 Code Review（2026-04-07）
 
+> **说明（2026-04-15 更新）：** 这是历史评审文档，不是当前事实源。文中提到的旧事件名与 system monitor 占位命令，已在后续 mainline-only cleanup 中被删除或替换；使用时请始终以 `docs/current-state.md` 为准。
+
 > 审查目标：从全局架构、关键链路、并发安全、状态一致性、可维护性、可扩展性角度进行全面评估，并给出可执行的重构优先级。
 
 ## 一、总体结论
@@ -33,18 +35,16 @@
 
 ### 2) 后端事件桥与前端合并策略仍需协议化
 
-- 现状：前端虽有 progress regression guard，但事件载荷无版本号，字段演进风险高。
-- 风险：后续新增状态字段时，旧前端可能误判覆盖。
-- 建议：
-  - 为 `task_status_changed` / `download_progress` 增加 `schema_version`。
-  - 在前端按版本分支兼容处理。
+- 历史现状：当时前端仍依赖旧事件名（如 `task_status_changed` / `download_progress`），事件载荷也尚未统一协议化。
+- 当前状态：主链已收敛到 `download.events`，并通过 envelope 的 `schema_version` 管理版本兼容。
+- 仍然有效的建议：继续把版本控制放在 envelope/schema 层，而不是重新回到多通道、多旧事件名并存。
 
 ## P1（高收益）
 
-### 3) `system.rs` 部分命令仍为占位
+### 3) `system.rs` 部分命令曾为占位
 
-- `start_system_monitor` / `stop_system_monitor` 目前返回成功但缺少实际控制逻辑。
-- 建议：最少实现“后台任务句柄 + 状态位 + 幂等调用语义”。
+- 历史状态：`start_system_monitor` / `stop_system_monitor` 一度是占位控制命令。
+- 当前状态：这组无消费者、无主链价值的命令已从正式主链移除，而不是继续保留空壳。
 
 ### 4) YouTube 能力存在“命令层简化实现”与“core/youtube_downloader”双路径
 
@@ -104,7 +104,7 @@
 
 ## 阶段 C（可观测性与运维）
 
-1. 完成 system monitor 控制命令。
+1. system monitor 占位控制命令已不再作为当前主链目标；若未来需要恢复，应基于真实消费者重新设计。
 2. 统一日志上下文（task_id、command_id、event_seq）。
 3. 增加“状态机快照导出”用于问题复盘。
 

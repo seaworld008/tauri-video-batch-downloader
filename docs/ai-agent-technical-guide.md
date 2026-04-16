@@ -1,5 +1,7 @@
 # Video Downloader Pro — AI Agent 技术导览与上手手册
 
+> **说明（2026-04-15 更新）：** 这是历史技术导览，部分启动链、事件名和系统命令描述已落后于当前主链。优先以 `docs/current-state.md`、`docs/entrypoints.md` 与 `graphify-out/GRAPH_REPORT.md` 为准。
+
 > 目标读者：后续接手本仓库的 AI Agent（代码修复、排障、扩展功能）。
 > 
 > 文档目标：让 Agent **快速建立系统级心智模型**，明确哪些模块是关键路径、哪些区域高风险、如何安全改动并验证。
@@ -40,10 +42,9 @@
 ## 2.1 前端启动链路
 
 1. `src/main.tsx` 初始化 i18n、React Query、全局错误日志桥接。
-2. `App.tsx` 启动时顺序执行：
-   - `initializeProgressListener()`（绑定事件监听）
-   - `invoke('get_system_info')`（后端可用性探测）
-   - 加载配置与下载 store 初始化
+2. `App.tsx` 启动时顺序执行（当前主链已更新）：
+   - `initializeDownloadEventBridge()`（绑定 `download.events` 监听）
+   - 加载配置与下载 store 初始化（`loadConfig()` + `initializeStore()`）
 3. 初始化成功后渲染 `UnifiedView`。
 
 ### 2.2 后端启动链路
@@ -53,7 +54,7 @@
 1. 构建 `AppState`（`DownloadManager` + `HttpDownloader` + `AppConfig` + `DownloadRuntimeHandle`）。
 2. Tauri `.setup()` 中执行：
    - `spawn_router_loop(...)`：启动 runtime 命令路由（非常关键）
-   - 启动事件桥，将 `DownloadManager` 事件转发到前端事件（如 `download_progress`）
+   - 启动事件桥，将 `DownloadManager` 事件转发到前端统一事件通道 `download.events`
    - 异步调用 `manager.start_with_sender(sender)` 并启动队列调度器
 3. 通过 `invoke_handler` 注册命令集。
 
@@ -86,7 +87,7 @@
 `manager.rs` 中定义了高密度事件：
 
 - 任务生命周期：Created/Started/Progress/Paused/Resumed/Completed/Failed/Cancelled
-- 统计与监控：StatsUpdated/SystemMetricsUpdated 等
+- 统计事件：StatsUpdated 等（system monitor 占位控制命令已在当前主链中移除）
 - 完整性校验与重试事件
 - YouTube 特化事件
 
@@ -122,7 +123,8 @@
 - **pause**：触发暂停标记并等待下载侧安全退出（含 part 文件落盘）。
 - **resume**：恢复暂停任务，优先复用断点。
 - **cancel**：取消并清理活跃句柄。
-- **start_all/pause_all/resume_all/cancel_all**：批量状态机控制。
+- **start_all/pause_all**：当前正式前端主链在用的批量状态机控制。
+- `resume_all_downloads` / `start_all_pending_downloads` / `cancel_all_downloads` 目前已不再注册为正式 Tauri invoke surface；若后续继续清理，应先在可跑 Rust 全量验证的环境中确认内部实现是否还需要保留。
 
 ---
 
@@ -162,10 +164,10 @@
 `src-tauri/src/main.rs` 注册命令可分组如下：
 
 - 下载控制：`add_download_tasks`、`start_download`、`pause_download`、`resume_download`、`cancel_download`、批量控制等
-- 导入：`import_file`、`import_csv_file`、`import_excel_file`、`preview_import_data`、`import_tasks_and_enqueue`
+- 导入：`import_file`、`import_csv_file`、`import_excel_file`、`preview_import_data`
 - YouTube：`get_youtube_info`、`get_youtube_formats`、`download_youtube_playlist`
 - 配置：`get_config`、`update_config`、`reset_config`、`export_config`、`import_config`
-- 系统：`get_system_info`、`open_download_folder`、`show_in_folder`、`check_ffmpeg`、`check_yt_dlp`
+- 系统：`open_download_folder`、`get_video_info`、`get_youtube_info`、`log_frontend_event`（前端 `systemCommands.ts` 仍承接 `select_output_directory` seam，但该动作本轮已切回 `@tauri-apps/plugin-dialog` 正式能力，不再经 Rust invoke 暴露；`get_system_info` 已不再暴露；`validate_url` / `check_ffmpeg` / `check_yt_dlp` 仅作为内部 helper 能力保留；`show_in_folder` 已从当前主链实现中删除）
 
 ### 6.1 前端 Store 的契约处理特征
 
@@ -242,7 +244,7 @@
 
 ## 10.2 中风险（实现完整性）
 
-1. `system.rs` 部分能力是占位实现（如 system monitor start/stop）。
+1. 历史上 `system.rs` 曾有占位实现（如 system monitor start/stop），但这组无消费者命令已从当前主链移除。
 2. YouTube 命令层与 `core/youtube_downloader.rs` 可能存在双路径能力，后续应统一入口。
 3. 导入字段映射兼容逻辑较多，需特别关注旧字段与空值容错。
 
@@ -270,7 +272,7 @@
 
 优先排查：
 
-1. `download_manager_ready` 是否发出（后端 setup 初始化是否成功）。
+1. 后端 setup 日志里是否出现 `Download manager started successfully` / `failed to start` / `startup timed out`（当前已不再依赖 `download_manager_ready` 事件）。
 2. runtime router 是否已 spawn（`take_router_rx` 是否被消费）。
 3. task 是否真实存在、状态是否为 Pending/Paused。
 4. 事件桥是否在转发 `TaskStarted/TaskProgress`。
@@ -287,7 +289,7 @@
 
 优先排查：
 
-1. `import_tasks_and_enqueue` 是否将导入记录转换为 `VideoTask` 成功。
+1. `import_file` / `import_csv_file` / `import_excel_file` 是否正确产出导入记录，并由当前前端 import/store 主链继续创建任务。
 2. `add_video_task` 是否命中去重复用逻辑。
 3. 前端回包验证失败后是否 fallback 到本地数据。
 
@@ -296,7 +298,7 @@
 ## 13. 未来扩展建议（按收益排序）
 
 1. **统一下载命令路径**：所有下载控制只走 runtime router。
-2. **完善系统监控命令实现**：让 `start_system_monitor/stop_system_monitor` 真正可控。
+2. **不要恢复空壳监控命令**：若未来需要监控事件，应先确定真实消费者和协议，再重新设计。
 3. **统一 YouTube 能力层**：命令层直接复用 `core/youtube_downloader.rs`，避免重复逻辑。
 4. **状态机测试矩阵化**：覆盖 Downloading -> Paused -> Resumed -> Completed / Failed / Cancelled 全链路。
 5. **事件协议版本化**：为前后端事件 payload 增加版本字段，便于未来演进。

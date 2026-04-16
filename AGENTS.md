@@ -36,6 +36,14 @@ Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.)
 
   - For E2E tests, utilize **Tauri MCP** tools (via `@hypothesi/tauri-mcp-server` configured in `.cursor/mcp.json`). **Never use Chrome DevTools MCP**, since this is exclusively a Tauri app.
 
+  - **GSD + graphify workflow**:
+    - GSD (local Codex runtime) is installed in `./.codex/` for this repo.
+    - Use GSD to manage planning/execution cadence: start with `$gsd-map-codebase`, then `$gsd-new-project`, then phase/plan/execute workflows as needed.
+    - Graphify outputs live in `graphify-out/`. Before answering architecture questions or planning significant refactors, read `graphify-out/GRAPH_REPORT.md` first.
+    - Prefer `./scripts/graphify-sync.sh smart` after code changes to keep the code graph fresh with low overhead.
+    - If docs/media changes should affect semantic understanding, run a full graph rebuild manually instead of relying on smart sync.
+    - Treat `.planning/` and `graphify-out/` as local workflow artifacts; they are ignored by git unless explicitly added.
+
 - Tech stack reference:
 
   - Framework: **Tauri v2** (Rust Backend, Plugin Architecture)
