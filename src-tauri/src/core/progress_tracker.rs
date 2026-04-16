@@ -150,7 +150,8 @@ impl TaskProgressTracker {
 
         // Use a rolling time window for display speed instead of raw per-chunk deltas.
         // This avoids impossible spikes when multiple callbacks land within the same millisecond.
-        let current_speed = self.calculate_window_speed(downloaded_bytes, timestamp_nanos, total_elapsed);
+        let current_speed =
+            self.calculate_window_speed(downloaded_bytes, timestamp_nanos, total_elapsed);
 
         let measurement = SpeedMeasurement {
             timestamp_nanos,

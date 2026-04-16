@@ -1,8 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use tauri::Emitter;
 
-use serde_json::json;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tokio::sync::{mpsc, RwLock};
@@ -25,11 +23,12 @@ use commands::*;
 use core::{
     downloader::{DownloaderConfig, HttpDownloader},
     models::AppError,
+    queue_scheduler::spawn_queue_scheduler,
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
     AppConfig, DownloadManager,
 };
 use engine::task_engine::{spawn_task_engine, TaskEngineHandle};
-use infra::event_bus::emit_download_event;
+use infra::download_event_bridge::spawn_download_event_bridge;
 use utils::logging;
 
 /// 简化的应用程序状态，防止初始化失败
@@ -39,15 +38,8 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub download_runtime: DownloadRuntimeHandle,
     pub task_engine: TaskEngineHandle,
-    pub system_monitor: Arc<SystemMonitorController>,
     /// Router receiver - needs to be spawned in Tauri runtime during setup
     router_rx: std::sync::Mutex<Option<mpsc::Receiver<core::runtime::RuntimeCommand>>>,
-}
-
-#[derive(Default)]
-pub struct SystemMonitorController {
-    pub running: std::sync::atomic::AtomicBool,
-    pub handle: tokio::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -111,7 +103,6 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             download_runtime,
             task_engine,
-            system_monitor: Arc::new(SystemMonitorController::default()),
             router_rx: std::sync::Mutex::new(Some(router_rx)),
         })
     }
@@ -182,7 +173,6 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             download_runtime,
             task_engine,
-            system_monitor: Arc::new(SystemMonitorController::default()),
             router_rx: std::sync::Mutex::new(Some(router_rx)),
         }
     }
@@ -235,12 +225,8 @@ fn main() {
             pause_download,
             resume_download,
             cancel_download,
-            debug_download_test,
             pause_all_downloads,
-            resume_all_downloads,
             start_all_downloads,
-            cancel_all_downloads,
-            start_all_pending_downloads,
             remove_download,
             remove_download_tasks,
             get_download_tasks,
@@ -252,15 +238,10 @@ fn main() {
             // 导入相关命令
             import_file,
             import_csv_file,
-            import_tasks_and_enqueue,
             import_excel_file,
             detect_file_encoding,
             preview_import_data,
             get_supported_formats,
-            // YouTube 相关命令
-            get_youtube_info,
-            get_youtube_formats,
-            download_youtube_playlist,
             // 配置相关命令
             get_config,
             update_config,
@@ -268,18 +249,8 @@ fn main() {
             export_config,
             import_config,
             // 系统相关命令
-            get_system_info,
-            start_system_monitor,
-            stop_system_monitor,
-            get_system_monitor_status,
             open_download_folder,
-            show_in_folder,
-            // 工具命令
-            validate_url,
             get_video_info,
-            check_ffmpeg,
-            check_yt_dlp,
-            select_output_directory,
             log_frontend_event,
         ])
         .setup(|app| {
@@ -301,14 +272,9 @@ fn main() {
 
             if logging::local_logging_enabled() {
                 // Emit a bootstrap log so frontend diagnostics file exists even before UI mounts
-                let bootstrap_handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = log_frontend_event(
-                        bootstrap_handle,
-                        Some("info".to_string()),
-                        "backend_setup".to_string(),
-                    )
-                    .await
+                    if let Err(error) =
+                        logging::append_frontend_log_entry(Some("info"), "backend_setup")
                     {
                         error!("Failed to write frontend bootstrap log: {}", error);
                     }
@@ -316,203 +282,43 @@ fn main() {
             }
 
             // Create event channel for DownloadManager
-            let (sender, mut receiver) = mpsc::unbounded_channel::<core::manager::DownloadEvent>();
+            let (sender, receiver) = mpsc::unbounded_channel::<core::manager::DownloadEvent>();
 
             let download_runtime_for_events = app_state.download_runtime.clone();
-            // Spawn event handler to bridge DownloadManager events to Tauri events
             let app_handle_clone = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                info!("🔌 Event bridge started - listening for DownloadManager events");
-                let mut progress_event_count = 0u64;
-                while let Some(event) = receiver.recv().await {
-                    if let Err(sync_err) = download_runtime_for_events.apply_event(event.clone()).await
-                    {
-                        error!("[EVENT_BRIDGE] Failed to sync manager state: {}", sync_err);
-                    }
-
-                    match event {
-                        core::manager::DownloadEvent::TaskProgress {
-                            task_id,
-                            progress,
-                        } => {
-                            progress_event_count += 1;
-                            // Log every progress event initially, then every 20th for debugging
-                            if progress_event_count <= 5 || progress_event_count % 20 == 0 {
-                                info!(
-                                    "[EVENT_BRIDGE] TaskProgress #{} for task {}: progress={:.1}%, speed={:.0} B/s, downloaded={}",
-                                    progress_event_count, task_id, progress.progress * 100.0, progress.speed, progress.downloaded_size
-                                );
-                            }
-                            if let Err(e) = app_handle_clone.emit("download_progress", &progress) {
-                                error!("[EVENT_BRIDGE] Failed to emit download_progress: {}", e);
-                            }
-                            if let Err(e) = emit_download_event(
-                                &app_handle_clone,
-                                "task.progressed",
-                                &progress,
-                            ) {
-                                error!(
-                                    "[EVENT_BRIDGE] Failed to emit download_event_v1(task.progressed): {}",
-                                    e
-                                );
-                            }
-                        }
-                        core::manager::DownloadEvent::TaskStarted { task_id } => {
-                            info!("[EVENT_BRIDGE] TaskStarted for task {}", task_id);
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Downloading",
-                                "error_message": null
-                            });
-                            if let Err(e) =
-                                app_handle_clone.emit("task_status_changed", payload.clone())
-                            {
-                                error!("[EVENT_BRIDGE] Failed to emit task_status_changed: {}", e);
-                            }
-                            if let Err(e) = emit_download_event(
-                                &app_handle_clone,
-                                "task.status_changed",
-                                &payload,
-                            ) {
-                                error!(
-                                    "[EVENT_BRIDGE] Failed to emit download_event_v1(task.status_changed): {}",
-                                    e
-                                );
-                            }
-                        }
-                        core::manager::DownloadEvent::TaskCommitting { task_id } => {
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Committing",
-                                "error_message": null
-                            });
-                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
-                        }
-                        core::manager::DownloadEvent::TaskCompleted {
-                            task_id,
-                            file_path: _,
-                        } => {
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Completed",
-                                "error_message": null
-                            });
-                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
-                        }
-                        core::manager::DownloadEvent::TaskFailed { task_id, error } => {
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Failed",
-                                "error_message": error
-                            });
-                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
-                        }
-                        core::manager::DownloadEvent::TaskPaused { task_id } => {
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Paused",
-                                "error_message": null
-                            });
-                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
-                        }
-                        core::manager::DownloadEvent::TaskResumed { task_id } => {
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Downloading",
-                                "error_message": null
-                            });
-                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
-                        }
-                        core::manager::DownloadEvent::TaskCancelled { task_id } => {
-                            let payload = json!({
-                                "task_id": task_id,
-                                "status": "Cancelled",
-                                "error_message": null
-                            });
-                            let _ = app_handle_clone.emit("task_status_changed", payload.clone());
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.status_changed", &payload);
-                        }
-                        core::manager::DownloadEvent::StatsUpdated { stats } => {
-                            let _ = app_handle_clone.emit("download_stats", &stats);
-                            let _ =
-                                emit_download_event(&app_handle_clone, "task.stats_updated", &stats);
-                        }
-                        _ => {}
-                    }
-                }
-                warn!("🔌 Event bridge stopped");
-            });
+            spawn_download_event_bridge(app_handle_clone, download_runtime_for_events, receiver);
 
             // 🔑 异步启动下载管理器
             // 使用 spawn 而不是 block_on，避免在 setup 中阻塞
             info!("🚀 启动下载管理器 (异步)...");
             let download_manager = app_state.download_manager.clone();
-            let app_handle_for_manager = app_handle.clone();
-
             tauri::async_runtime::spawn(async move {
                 info!("[MANAGER_INIT] Starting manager initialization in async task");
 
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    async {
-                        info!("[MANAGER_INIT] Acquiring write lock...");
-                        let mut manager = download_manager.write().await;
-                        info!("[MANAGER_INIT] Write lock acquired, calling start()...");
-                        manager.start_with_sender(sender).await?;
-                        let scheduler_handle =
-                            core::manager::DownloadManager::spawn_queue_scheduler(
-                                download_manager.clone(),
-                            );
-                        manager.set_scheduler_handle(scheduler_handle);
-                        Ok::<(), AppError>(())
-                    },
-                )
+                match tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    info!("[MANAGER_INIT] Acquiring write lock...");
+                    let mut manager = download_manager.write().await;
+                    info!("[MANAGER_INIT] Write lock acquired, calling start()...");
+                    manager.start_with_sender(sender).await?;
+                    let scheduler_handle = spawn_queue_scheduler(download_manager.clone());
+                    manager.set_scheduler_handle(scheduler_handle);
+                    Ok::<(), AppError>(())
+                })
                 .await
                 {
                     Ok(Ok(_)) => {
                         info!("✅ [MANAGER_INIT] Download manager started successfully");
-                        if let Err(e) = app_handle_for_manager.emit("download_manager_ready", true) {
-                            error!("[MANAGER_INIT] Failed to emit download_manager_ready event: {}", e);
-                        } else {
-                            info!("[MANAGER_INIT] ✅ download_manager_ready event emitted");
-                        }
                     }
                     Ok(Err(e)) => {
                         error!("❌ [MANAGER_INIT] Download manager failed to start: {}", e);
-                        let _ = app_handle_for_manager.emit(
-                            "download_manager_error",
-                            format!("Download manager failed: {}", e),
-                        );
                     }
                     Err(_) => {
                         error!("❌ [MANAGER_INIT] Download manager startup timed out");
-                        let _ = app_handle_for_manager.emit(
-                            "download_manager_error",
-                            "Download manager startup timed out".to_string(),
-                        );
                     }
                 }
             });
 
             // 后台维持并发数：持续填充空槽位（仅后端调度）
-            // 立即发送应用准备就绪信号
-            if let Err(e) = app.emit("app_ready", true) {
-                error!("Failed to emit app_ready event: {}", e);
-            } else {
-                info!("✅ App ready event emitted");
-            }
-
             Ok(())
         })
         .on_window_event(|_window, event| {

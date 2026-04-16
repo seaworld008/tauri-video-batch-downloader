@@ -371,45 +371,7 @@ export const DownloadStatsSchema = z
 // YouTube 相关 Schemas
 // ====================================================
 
-/**
- * 视频格式 Schema
- */
-export const VideoFormatSchema = z.object({
-  format_id: z.string(),
-  ext: z.string(),
-  width: z.number().positive().optional(),
-  height: z.number().positive().optional(),
-  fps: z.number().positive().optional(),
-  vbr: z.number().nonnegative().optional(),
-  abr: z.number().nonnegative().optional(),
-  filesize: z.number().nonnegative().optional(),
-  quality: z.string(),
-});
 
-/**
- * 字幕轨道 Schema
- */
-export const SubtitleTrackSchema = z.object({
-  language: z.string().min(1),
-  language_code: z.string().length(2, '语言代码必须是2位'),
-  url: z.string().url(),
-  ext: z.string().min(1),
-});
-
-/**
- * YouTube视频信息 Schema
- */
-export const YoutubeVideoInfoSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string(),
-  duration: z.number().nonnegative(),
-  thumbnail: z.string().url(),
-  formats: z.array(VideoFormatSchema),
-  subtitles: z.array(SubtitleTrackSchema),
-});
-
-// ====================================================
 // 文件和导入 Schemas
 // ====================================================
 
@@ -641,9 +603,6 @@ export type NetworkSpeed = z.infer<typeof NetworkSpeedSchema>;
 export type SystemInfo = z.infer<typeof SystemInfoSchema>;
 export type DownloadStats = z.infer<typeof DownloadStatsSchema>;
 
-export type VideoFormat = z.infer<typeof VideoFormatSchema>;
-export type SubtitleTrack = z.infer<typeof SubtitleTrackSchema>;
-export type YoutubeVideoInfo = z.infer<typeof YoutubeVideoInfoSchema>;
 
 export type EncodingDetection = z.infer<typeof EncodingDetectionSchema>;
 export type ImportPreview = z.infer<typeof ImportPreviewSchema>;

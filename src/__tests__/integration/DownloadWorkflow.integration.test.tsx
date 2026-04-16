@@ -341,48 +341,17 @@ describe('下载流程集成测试 - Store Level', () => {
     expect(state.tasks).toHaveLength(0); // 任务不应该被添加
   });
 
-  it('应该能够更新配置', async () => {
-    let configUpdated = false;
-    let updatedConfig: any;
-
-    // Mock IPC calls
-    mockIPC((cmd, args) => {
-      switch (cmd) {
-        case 'get_config':
-          return {
-            download: {
-              concurrent_downloads: 3,
-              retry_attempts: 3,
-              timeout_seconds: 30,
-              user_agent: 'Test Agent',
-              output_directory: '/downloads',
-            },
-          };
-        case 'update_config':
-          configUpdated = true;
-          updatedConfig = (args as any).new_config ?? (args as any).newConfig;
-          return Promise.resolve();
-        default:
-          return Promise.resolve();
-      }
-    });
-
+  it('应该能够更新配置镜像状态', () => {
     const store = useDownloadStore.getState();
 
-    // 更新配置
     const newConfig = {
       concurrent_downloads: 5,
       retry_attempts: 5,
       timeout_seconds: 60,
     };
 
-    await store.updateConfig(newConfig);
+    store.setDownloadConfig(newConfig);
 
-    // 验证IPC调用
-    expect(configUpdated).toBe(true);
-    expect(updatedConfig.download).toMatchObject(newConfig);
-
-    // 验证配置已更新
     const updatedState = useDownloadStore.getState();
     expect(updatedState.config.concurrent_downloads).toBe(5);
     expect(updatedState.config.retry_attempts).toBe(5);

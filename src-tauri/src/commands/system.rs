@@ -3,102 +3,14 @@
 //! This module provides commands for system monitoring, file operations,
 //! and system utilities like opening folders and checking tool availability.
 
-use chrono::Local;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::Ordering;
-use tauri::{AppHandle, Emitter, State};
-use tracing::{error, info, warn};
+use tauri::{AppHandle, State};
+use tracing::{error, info};
 
-use crate::core::models::{AppError, AppResult, SystemInfo};
-use crate::infra::event_bus::emit_system_event;
-use crate::infra::providers::capability_service::ToolCapabilityService;
+use crate::core::models::{AppError, AppResult};
+use crate::infra::capability_service::ToolCapabilityService;
 use crate::utils::logging;
 use crate::AppState;
-
-/// Get current system information
-#[tauri::command]
-pub async fn get_system_info(
-    _app: AppHandle,
-    _state: State<'_, AppState>,
-) -> Result<SystemInfo, String> {
-    info!("📊 Getting system information");
-
-    match get_system_info_impl().await {
-        Ok(info) => Ok(info),
-        Err(e) => {
-            error!("❌ Failed to get system info: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Start system monitoring
-#[tauri::command]
-pub async fn start_system_monitor(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    info!("🔍 Starting system monitor");
-
-    if state.system_monitor.running.swap(true, Ordering::SeqCst) {
-        info!("System monitor already running");
-        return Ok(());
-    }
-
-    let controller = state.system_monitor.clone();
-    let app_handle = app.clone();
-    let task = tauri::async_runtime::spawn(async move {
-        while controller.running.load(Ordering::SeqCst) {
-            match get_system_info_impl().await {
-                Ok(system_info) => {
-                    let _ = app_handle.emit("system_info_updated", system_info.clone());
-                    let _ = emit_system_event(&app_handle, "system.metrics.updated", &system_info);
-                }
-                Err(err) => {
-                    warn!("System monitor tick failed: {}", err);
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-    });
-
-    {
-        let mut guard = state.system_monitor.handle.lock().await;
-        *guard = Some(task);
-    }
-
-    Ok(())
-}
-
-/// Stop system monitoring
-#[tauri::command]
-pub async fn stop_system_monitor(
-    _app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    info!("⏹️ Stopping system monitor");
-
-    state.system_monitor.running.store(false, Ordering::SeqCst);
-
-    let handle = {
-        let mut guard = state.system_monitor.handle.lock().await;
-        guard.take()
-    };
-
-    if let Some(task) = handle {
-        task.abort();
-    }
-
-    Ok(())
-}
-
-/// Get system monitor status
-#[tauri::command]
-pub async fn get_system_monitor_status(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.system_monitor.running.load(Ordering::SeqCst))
-}
 
 /// Open the downloads folder
 #[tauri::command]
@@ -123,90 +35,6 @@ pub async fn open_download_folder(
     }
 }
 
-/// Show a specific file in its containing folder
-#[tauri::command]
-pub async fn show_in_folder(
-    _app: AppHandle,
-    _state: State<'_, AppState>,
-    file_path: String,
-) -> Result<(), String> {
-    info!("📂 Showing file in folder: {}", file_path);
-
-    match show_in_folder_impl(&file_path).await {
-        Ok(()) => {
-            info!("✅ Successfully showed file in folder");
-            Ok(())
-        }
-        Err(e) => {
-            error!("❌ Failed to show file in folder: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Check if FFmpeg is available
-#[tauri::command]
-pub async fn check_ffmpeg() -> Result<bool, String> {
-    info!("🎬 Checking FFmpeg availability");
-
-    match check_tool_availability("ffmpeg", &["-version"]).await {
-        Ok(available) => {
-            if available {
-                info!("✅ FFmpeg is available");
-            } else {
-                warn!("⚠️ FFmpeg is not available");
-            }
-            Ok(available)
-        }
-        Err(e) => {
-            error!("❌ Failed to check FFmpeg: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Check if yt-dlp is available
-#[tauri::command]
-pub async fn check_yt_dlp() -> Result<bool, String> {
-    info!("📺 Checking yt-dlp availability");
-
-    match check_tool_availability("yt-dlp", &["--version"]).await {
-        Ok(available) => {
-            if available {
-                info!("✅ yt-dlp is available");
-            } else {
-                warn!("⚠️ yt-dlp is not available");
-            }
-            Ok(available)
-        }
-        Err(e) => {
-            error!("❌ Failed to check yt-dlp: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Validate if a URL is valid for video downloading
-#[tauri::command]
-pub async fn validate_url(url: String) -> Result<bool, String> {
-    info!("🔍 Validating URL: {}", url);
-
-    match validate_url_impl(&url).await {
-        Ok(valid) => {
-            if valid {
-                info!("✅ URL is valid for downloading");
-            } else {
-                warn!("⚠️ URL is not valid for downloading");
-            }
-            Ok(valid)
-        }
-        Err(e) => {
-            error!("❌ Failed to validate URL: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
 /// Get video information from URL
 #[tauri::command]
 pub async fn get_video_info(url: String) -> Result<serde_json::Value, String> {
@@ -224,54 +52,7 @@ pub async fn get_video_info(url: String) -> Result<serde_json::Value, String> {
     }
 }
 
-/// Select output directory via file dialog
-#[tauri::command]
-pub async fn select_output_directory() -> Result<String, String> {
-    info!("📁 Opening directory selection dialog");
-
-    match select_output_directory_impl().await {
-        Ok(path) => {
-            info!("✅ Directory selected: {}", path);
-            Ok(path)
-        }
-        Err(e) => {
-            error!("❌ Failed to select directory: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
 // Implementation functions
-
-async fn get_system_info_impl() -> AppResult<SystemInfo> {
-    use crate::core::models::NetworkSpeed;
-
-    // Get CPU usage (placeholder implementation)
-    let cpu_usage = get_cpu_usage().await.unwrap_or(0.0);
-
-    // Get memory usage
-    let memory_usage = get_memory_usage().await.unwrap_or(0.0);
-
-    // Get disk usage
-    let disk_usage = get_disk_usage().await.unwrap_or(0.0);
-
-    // Get network speed (placeholder)
-    let network_speed = NetworkSpeed {
-        download: 0.0,
-        upload: 0.0,
-    };
-
-    // Get active downloads count (placeholder)
-    let active_downloads = 0;
-
-    Ok(SystemInfo {
-        cpu_usage,
-        memory_usage,
-        disk_usage,
-        network_speed,
-        active_downloads,
-    })
-}
 
 async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     // Create directory if it doesn't exist
@@ -303,48 +84,6 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
             .arg(folder_path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
-    }
-
-    Ok(())
-}
-
-async fn show_in_folder_impl(file_path: &str) -> AppResult<()> {
-    let path = Path::new(file_path);
-
-    if !path.exists() {
-        return Err(AppError::System(format!(
-            "File does not exist: {}",
-            file_path
-        )));
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        tokio::process::Command::new("explorer.exe")
-            .arg(format!("/select,{}", file_path))
-            .spawn()
-            .map_err(|e| AppError::System(format!("Failed to show file: {}", e)))?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        tokio::process::Command::new("open")
-            .arg("-R")
-            .arg(file_path)
-            .spawn()
-            .map_err(|e| AppError::System(format!("Failed to show file: {}", e)))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // On Linux, open the containing directory
-        if let Some(parent) = path.parent() {
-            open_folder_impl(parent.to_str().unwrap()).await?;
-        } else {
-            return Err(AppError::System(
-                "Cannot determine parent directory".to_string(),
-            ));
-        }
     }
 
     Ok(())
@@ -545,143 +284,14 @@ pub async fn log_frontend_event(
     level: Option<String>,
     message: String,
 ) -> Result<(), String> {
-    if !logging::local_logging_enabled() {
-        return Ok(());
-    }
-
-    let log_root = logging::resolve_log_dir()?;
-
-    std::fs::create_dir_all(&log_root)
-        .map_err(|e| format!("Failed to create log directory: {e}"))?;
-
-    let log_path = log_root.join("frontend.log");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .map_err(|e| format!("Failed to open log file: {e}"))?;
-
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    let level = level.unwrap_or_else(|| "info".to_string());
-    let entry = format!("[{timestamp}][{level}] {message}\n");
-
-    file.write_all(entry.as_bytes())
-        .map_err(|e| format!("Failed to write log entry: {e}"))?;
-
-    Ok(())
+    logging::append_frontend_log_entry(level.as_deref(), &message)
 }
-// System monitoring helper functions
-
-async fn get_cpu_usage() -> Option<f32> {
-    // Placeholder implementation
-    // In a real implementation, use a crate like `sysinfo` or `heim`
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows-specific CPU usage detection
-        None
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // macOS-specific CPU usage detection
-        None
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // Linux-specific CPU usage detection
-        // Could parse /proc/stat
-        None
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    None
-}
-
-async fn get_memory_usage() -> Option<f32> {
-    // Placeholder implementation
-    // In a real implementation, use a crate like `sysinfo` or `heim`
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows-specific memory usage detection
-        None
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // macOS-specific memory usage detection
-        None
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // Linux-specific memory usage detection
-        // Could parse /proc/meminfo
-        None
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    None
-}
-
-async fn get_disk_usage() -> Option<f32> {
-    // Placeholder implementation
-    // In a real implementation, use a crate like `sysinfo` or `heim`
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows-specific disk usage detection
-        None
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // macOS-specific disk usage detection
-        None
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // Linux-specific disk usage detection
-        // Could use statvfs system call
-        None
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    None
-}
-
-async fn select_output_directory_impl() -> AppResult<String> {
-    // The directory selection should be handled by the frontend using Tauri's dialog API
-    // This backend command is kept for compatibility but should not be used
-    // Frontend should use: import { open } from '@tauri-apps/api/dialog'
-
-    // Return a sensible default path for fallback scenarios
-    let default_dir = if cfg!(target_os = "windows") {
-        std::env::var("USERPROFILE")
-            .map(|profile| std::path::Path::new(&profile).join("Downloads"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("./downloads"))
-    } else {
-        std::env::var("HOME")
-            .map(|home| std::path::Path::new(&home).join("Downloads"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("./downloads"))
-    };
-
-    let downloads_dir = default_dir.to_string_lossy().to_string();
-    info!("Returning default downloads directory: {}", downloads_dir);
-
-    Ok(downloads_dir)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_check_tool_availability() {
-        // Test with a command that should always exist
         #[cfg(target_os = "windows")]
         let result = check_tool_availability("cmd", &["/?"]).await;
 

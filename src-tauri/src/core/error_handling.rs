@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Maximum retry attempts allowed

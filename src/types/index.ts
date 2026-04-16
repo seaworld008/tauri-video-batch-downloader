@@ -181,38 +181,6 @@ export interface DownloadStats {
   commit_elevated_warning_count?: number;
 }
 
-// YouTube 视频信息接口
-export interface YoutubeVideoInfo {
-  id: string;
-  title: string;
-  description: string;
-  duration: number;
-  thumbnail: string;
-  formats: VideoFormat[];
-  subtitles: SubtitleTrack[];
-}
-
-// 视频格式接口
-export interface VideoFormat {
-  format_id: string;
-  ext: string;
-  width?: number;
-  height?: number;
-  fps?: number;
-  vbr?: number;
-  abr?: number;
-  filesize?: number;
-  quality: string;
-}
-
-// 字幕轨道接口
-export interface SubtitleTrack {
-  language: string;
-  language_code: string;
-  url: string;
-  ext: string;
-}
-
 // 文件编码检测结果
 export interface EncodingDetection {
   encoding: string;

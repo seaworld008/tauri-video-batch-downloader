@@ -1,88 +1,11 @@
-//! YouTube command handlers
+//! YouTube internal helpers
 //!
-//! This module provides commands for YouTube-specific operations including
-//! getting video information, available formats, and playlist handling.
+//! This module now keeps only the YouTube info helper path still reused by
+//! `commands/system.rs::get_video_info_impl()`.
 
-use tauri::{AppHandle, State};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 
-use crate::core::models::{
-    AppError, AppResult, ImportedData, SubtitleTrack, VideoFormat, YoutubeVideoInfo,
-};
-use crate::AppState;
-
-/// Get YouTube video information
-#[tauri::command]
-pub async fn get_youtube_info(
-    _app: AppHandle,
-    _state: State<'_, AppState>,
-    url: String,
-) -> Result<YoutubeVideoInfo, String> {
-    info!("📺 Getting YouTube video info for: {}", url);
-
-    match get_youtube_info_internal(&url).await {
-        Ok(info) => {
-            info!(
-                "✅ Successfully retrieved YouTube info for video: {}",
-                info.title
-            );
-            Ok(info)
-        }
-        Err(e) => {
-            error!("❌ Failed to get YouTube info: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Get available formats for a YouTube video
-#[tauri::command]
-pub async fn get_youtube_formats(
-    _app: AppHandle,
-    _state: State<'_, AppState>,
-    url: String,
-) -> Result<Vec<VideoFormat>, String> {
-    info!("🎬 Getting YouTube formats for: {}", url);
-
-    match get_youtube_formats_impl(&url).await {
-        Ok(formats) => {
-            info!("✅ Successfully retrieved {} formats", formats.len());
-            Ok(formats)
-        }
-        Err(e) => {
-            error!("❌ Failed to get YouTube formats: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Download YouTube playlist and extract individual video URLs
-#[tauri::command]
-pub async fn download_youtube_playlist(
-    _app: AppHandle,
-    _state: State<'_, AppState>,
-    playlist_url: String,
-    max_videos: Option<usize>,
-) -> Result<Vec<ImportedData>, String> {
-    info!(
-        "📋 Processing YouTube playlist: {} (max: {:?})",
-        playlist_url, max_videos
-    );
-
-    match download_youtube_playlist_impl(&playlist_url, max_videos).await {
-        Ok(videos) => {
-            info!(
-                "✅ Successfully processed playlist with {} videos",
-                videos.len()
-            );
-            Ok(videos)
-        }
-        Err(e) => {
-            error!("❌ Failed to process YouTube playlist: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
+use crate::core::models::{AppError, AppResult, SubtitleTrack, VideoFormat, YoutubeVideoInfo};
 
 // Implementation functions
 
@@ -108,50 +31,6 @@ pub(crate) async fn get_youtube_info_internal(url: &str) -> AppResult<YoutubeVid
     }
 }
 
-async fn get_youtube_formats_impl(url: &str) -> AppResult<Vec<VideoFormat>> {
-    // Validate YouTube URL
-    if !is_valid_youtube_url(url) {
-        return Err(AppError::Youtube(format!("Invalid YouTube URL: {}", url)));
-    }
-
-    // Use yt-dlp to get format information
-    match get_formats_with_ytdlp(url).await {
-        Ok(formats) => Ok(formats),
-        Err(e) => {
-            warn!("yt-dlp failed, returning default formats: {}", e);
-            Ok(get_default_formats())
-        }
-    }
-}
-
-async fn download_youtube_playlist_impl(
-    playlist_url: &str,
-    max_videos: Option<usize>,
-) -> AppResult<Vec<ImportedData>> {
-    // Validate playlist URL
-    if !is_valid_youtube_playlist_url(playlist_url) {
-        return Err(AppError::Youtube(format!(
-            "Invalid YouTube playlist URL: {}",
-            playlist_url
-        )));
-    }
-
-    // Extract playlist ID
-    let playlist_id = extract_playlist_id(playlist_url)
-        .ok_or_else(|| AppError::Youtube("Could not extract playlist ID from URL".to_string()))?;
-
-    debug!("Extracted YouTube playlist ID: {}", playlist_id);
-
-    // Use yt-dlp to get playlist information
-    match get_playlist_with_ytdlp(playlist_url, max_videos).await {
-        Ok(videos) => Ok(videos),
-        Err(e) => {
-            warn!("yt-dlp failed, trying fallback method: {}", e);
-            get_playlist_fallback(playlist_url, &playlist_id, max_videos).await
-        }
-    }
-}
-
 // Helper functions using yt-dlp
 
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
@@ -173,55 +52,6 @@ async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
     parse_youtube_info_from_json(json_value)
 }
 
-async fn get_formats_with_ytdlp(url: &str) -> AppResult<Vec<VideoFormat>> {
-    let output = tokio::process::Command::new("yt-dlp")
-        .args(["--list-formats", "--no-warnings", "--no-playlist", url])
-        .output()
-        .await
-        .map_err(|e| AppError::Youtube(format!("Failed to run yt-dlp: {}", e)))?;
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Youtube(format!("yt-dlp failed: {}", error)));
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    parse_formats_from_ytdlp_output(&output_str)
-}
-
-async fn get_playlist_with_ytdlp(
-    playlist_url: &str,
-    max_videos: Option<usize>,
-) -> AppResult<Vec<ImportedData>> {
-    let mut args = vec![
-        "--dump-json",
-        "--no-warnings",
-        "--flat-playlist",
-        playlist_url,
-    ];
-
-    // Add playlist-end argument if max_videos is specified
-    let playlist_end_str;
-    if let Some(max) = max_videos {
-        playlist_end_str = max.to_string();
-        args.extend(&["--playlist-end", &playlist_end_str]);
-    }
-
-    let output = tokio::process::Command::new("yt-dlp")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| AppError::Youtube(format!("Failed to run yt-dlp: {}", e)))?;
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Youtube(format!("yt-dlp failed: {}", error)));
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    parse_playlist_from_ytdlp_output(&output_str)
-}
-
 // Fallback methods (when yt-dlp is not available)
 
 async fn get_video_info_fallback(_url: &str, video_id: &str) -> AppResult<YoutubeVideoInfo> {
@@ -239,19 +69,6 @@ async fn get_video_info_fallback(_url: &str, video_id: &str) -> AppResult<Youtub
         formats: get_default_formats(),
         subtitles: vec![],
     })
-}
-
-async fn get_playlist_fallback(
-    _playlist_url: &str,
-    _playlist_id: &str,
-    _max_videos: Option<usize>,
-) -> AppResult<Vec<ImportedData>> {
-    warn!("Using fallback method for YouTube playlist");
-
-    // This is a placeholder fallback
-    // In a real implementation, you might use YouTube API or web scraping
-
-    Ok(vec![])
 }
 
 // Parsing functions
@@ -387,98 +204,10 @@ fn parse_single_subtitle_from_json(
     })
 }
 
-fn parse_formats_from_ytdlp_output(output: &str) -> AppResult<Vec<VideoFormat>> {
-    let mut formats = Vec::new();
-
-    for line in output.lines() {
-        if let Some(format) = parse_format_line(line) {
-            formats.push(format);
-        }
-    }
-
-    Ok(formats)
-}
-
-fn parse_format_line(line: &str) -> Option<VideoFormat> {
-    // This is a simplified parser for yt-dlp format output
-    // Real implementation would be more robust
-
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 3 {
-        return None;
-    }
-
-    let format_id = parts[0].to_string();
-    let ext = parts.get(1).unwrap_or(&"mp4").to_string();
-    let quality = parts.get(2).unwrap_or(&"unknown").to_string();
-
-    Some(VideoFormat {
-        format_id,
-        ext,
-        width: None,
-        height: None,
-        fps: None,
-        vbr: None,
-        abr: None,
-        filesize: None,
-        quality,
-    })
-}
-
-fn parse_playlist_from_ytdlp_output(output: &str) -> AppResult<Vec<ImportedData>> {
-    let mut videos = Vec::new();
-
-    for line in output.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(line) {
-            if let Some(video) = parse_playlist_entry_from_json(&json_value) {
-                videos.push(video);
-            }
-        }
-    }
-
-    Ok(videos)
-}
-
-fn parse_playlist_entry_from_json(json: &serde_json::Value) -> Option<ImportedData> {
-    let id = json["id"].as_str()?.to_string();
-    let title = json["title"]
-        .as_str()
-        .unwrap_or("Unknown Title")
-        .to_string();
-    let url = format!("https://www.youtube.com/watch?v={}", id);
-
-    Some(ImportedData {
-        // 使用Go版本的标准字段名
-        zl_id: Some(id.clone()),
-        zl_name: Some("YouTube".to_string()),
-        record_url: Some(url.clone()),
-        kc_id: Some(id.clone()),
-        kc_name: Some(title.clone()),
-
-        // 兼容旧版本字段
-        id: Some(id.clone()),
-        name: Some(title),
-        url: Some(url),
-        course_id: Some(id),
-        course_name: None,
-    })
-}
-
-// Utility functions
-
 fn is_valid_youtube_url(url: &str) -> bool {
     url.contains("youtube.com/watch")
         || url.contains("youtu.be/")
         || url.contains("youtube.com/embed/")
-}
-
-fn is_valid_youtube_playlist_url(url: &str) -> bool {
-    url.contains("youtube.com/playlist")
-        || url.contains("youtube.com/watch") && url.contains("list=")
 }
 
 fn extract_youtube_id(url: &str) -> Option<String> {
@@ -501,17 +230,6 @@ fn extract_youtube_id(url: &str) -> Option<String> {
         let id_start = start + 6;
         let id_part = &url[id_start..];
         let id_end = id_part.find('?').unwrap_or(id_part.len());
-        return Some(id_part[..id_end].to_string());
-    }
-
-    None
-}
-
-fn extract_playlist_id(url: &str) -> Option<String> {
-    if let Some(start) = url.find("list=") {
-        let id_start = start + 5;
-        let id_part = &url[id_start..];
-        let id_end = id_part.find('&').unwrap_or(id_part.len());
         return Some(id_part[..id_end].to_string());
     }
 
@@ -594,17 +312,6 @@ mod tests {
             Some("dQw4w9WgXcQ".to_string())
         );
         assert_eq!(extract_youtube_id("https://example.com/video"), None);
-    }
-
-    #[test]
-    fn test_extract_playlist_id() {
-        assert_eq!(
-            extract_playlist_id(
-                "https://www.youtube.com/playlist?list=PLrAXtmRdnEQy6nuLMfCnAp7xfXLPd3BgB"
-            ),
-            Some("PLrAXtmRdnEQy6nuLMfCnAp7xfXLPd3BgB".to_string())
-        );
-        assert_eq!(extract_playlist_id("https://example.com/video"), None);
     }
 
     #[test]

@@ -1,9 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { invoke } from '@tauri-apps/api/core';
 import toast from 'react-hot-toast';
 import { handleError } from '../utils/errorHandler';
 import type { AppConfig, DownloadConfig } from '../types';
+import {
+  exportConfigCommand,
+  getConfigCommand,
+  importConfigCommand,
+  resetConfigCommand,
+  updateConfigCommand,
+} from '../features/downloads/api/configCommands';
 import { useDownloadStore } from './downloadStore';
 
 interface ConfigState {
@@ -16,8 +22,8 @@ interface ConfigState {
   updateConfig: (config: Partial<AppConfig>) => Promise<void>;
   updateDownloadConfig: (config: Partial<DownloadConfig>) => Promise<void>;
   resetConfig: () => Promise<void>;
-  exportConfig: () => Promise<void>;
-  importConfig: (configData: string) => Promise<void>;
+  exportConfig: (filePath: string) => Promise<void>;
+  importConfig: (filePath: string) => Promise<void>;
 }
 
 export const defaultConfig: AppConfig = {
@@ -135,7 +141,7 @@ export const useConfigStore = create<ConfigState>()(
       loadConfig: async () => {
         try {
           set({ isLoading: true });
-          const config = await invoke<AppConfig>('get_config');
+          const config = await getConfigCommand();
           const mergedConfig = mergeConfigWithDefaults(config);
           set({ config: mergedConfig, isLoading: false });
           useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
@@ -177,7 +183,7 @@ export const useConfigStore = create<ConfigState>()(
               ...(newConfig.advanced ?? {}),
             },
           });
-          await invoke('update_config', { newConfig: mergedConfig, new_config: mergedConfig });
+          await updateConfigCommand(mergedConfig);
           set({ config: mergedConfig });
           useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
           toast.success('配置已更新');
@@ -198,7 +204,7 @@ export const useConfigStore = create<ConfigState>()(
 
       resetConfig: async () => {
         try {
-          const resetConfig = await invoke<AppConfig>('reset_config');
+          const resetConfig = await resetConfigCommand();
           const normalizedConfig = mergeConfigWithDefaults(resetConfig);
           set({ config: normalizedConfig });
           useDownloadStore.getState().setDownloadConfig(normalizedConfig.download);
@@ -209,10 +215,9 @@ export const useConfigStore = create<ConfigState>()(
         }
       },
 
-      exportConfig: async () => {
+      exportConfig: async filePath => {
         try {
-          const configJson = JSON.stringify(get().config, null, 2);
-          await invoke('export_config', { configData: configJson });
+          await exportConfigCommand(filePath);
           toast.success('配置已导出');
         } catch (error) {
           handleError('导出配置', error);
@@ -220,10 +225,12 @@ export const useConfigStore = create<ConfigState>()(
         }
       },
 
-      importConfig: async configData => {
+      importConfig: async filePath => {
         try {
-          const importedConfig = JSON.parse(configData) as AppConfig;
-          await get().updateConfig(importedConfig);
+          const importedConfig = await importConfigCommand(filePath);
+          const normalizedConfig = mergeConfigWithDefaults(importedConfig);
+          set({ config: normalizedConfig });
+          useDownloadStore.getState().setDownloadConfig(normalizedConfig.download);
           toast.success('配置已导入');
         } catch (error) {
           handleError('导入配置', error);

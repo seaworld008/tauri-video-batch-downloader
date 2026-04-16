@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import {
   CogIcon,
   FolderIcon,
@@ -11,7 +9,9 @@ import {
 } from '@heroicons/react/24/outline';
 import { useConfigStore } from '../../stores/configStore';
 import { notify } from '../../stores/uiStore';
+import { selectOutputDirectoryCommand } from '../../features/downloads/api/systemCommands';
 import type { AppConfig } from '../../types';
+import { reportFrontendIssue } from '../../utils/frontendLogging';
 
 interface SettingsViewProps {}
 
@@ -53,7 +53,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       setHasChanges(false);
       notify.success('设置已保存', '配置已成功更新');
     } catch (error) {
-      console.error('保存设置失败:', error);
+      reportFrontendIssue('error', 'settings_view:save_failed', error);
       notify.error('保存失败', error as string);
     } finally {
       setIsLoading(false);
@@ -67,7 +67,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       setHasChanges(false);
       notify.success('设置已重置', '已恢复默认配置');
     } catch (error) {
-      console.error('重置设置失败:', error);
+      reportFrontendIssue('error', 'settings_view:reset_failed', error);
       notify.error('重置失败', error as string);
     } finally {
       setIsLoading(false);
@@ -76,16 +76,12 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
 
   const selectOutputDirectory = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: localConfig?.download.output_directory || config.download.output_directory,
-      });
-      if (typeof selected === 'string' && selected && localConfig) {
+      const selected = await selectOutputDirectoryCommand();
+      if (selected && localConfig) {
         handleConfigChange('download', 'output_directory', selected);
       }
     } catch (error) {
-      console.error('选择目录失败:', error);
+      reportFrontendIssue('error', 'settings_view:select_output_directory_failed', error);
       notify.error('选择目录失败', error as string);
     }
   };

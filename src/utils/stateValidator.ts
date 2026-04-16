@@ -2,9 +2,11 @@
  * 状态一致性验证机制
  * 确保前端状态与后端状态保持同步
  */
-import { invoke } from '@tauri-apps/api/core';
 import { handleError } from './errorHandler';
 import type { VideoTask, DownloadStats } from '../types';
+import { ensureDownloadStats } from './downloadStats';
+import { getDownloadStatsCommand, getDownloadTasksCommand } from '../features/downloads/api/runtimeQueries';
+import { reportFrontendDiagnostic, reportFrontendDiagnosticIfEnabled, reportFrontendIssue } from './frontendLogging';
 
 export interface StateValidationResult {
   isConsistent: boolean;
@@ -20,7 +22,7 @@ export interface StateIssue {
   backendValue?: any;
 }
 
-export type SyncStrategy = 'USE_BACKEND' | 'USE_FRONTEND' | 'MERGE' | 'MANUAL_RESOLVE';
+export type SyncStrategy = 'USE_BACKEND' | 'MANUAL_RESOLVE';
 
 export class StateValidator {
   private static lastValidationTime = 0;
@@ -34,7 +36,7 @@ export class StateValidator {
     frontendStats: DownloadStats
   ): Promise<StateValidationResult> {
     if (this.validationInProgress) {
-      console.log('⏳ 状态验证正在进行中，跳过本次验证');
+      reportFrontendDiagnosticIfEnabled('info', 'state_validator:validate:skipped_in_progress');
       return { isConsistent: true, issues: [], syncSuggestion: 'USE_BACKEND' };
     }
 
@@ -42,12 +44,12 @@ export class StateValidator {
       this.validationInProgress = true;
       this.lastValidationTime = Date.now();
 
-      console.log('🔍 开始状态一致性验证...');
+      reportFrontendDiagnosticIfEnabled('info', 'state_validator:validate:start');
 
       // 获取后端状态
       const [backendTasks, backendStats] = await Promise.all([
-        invoke<VideoTask[]>('get_download_tasks'),
-        invoke<DownloadStats>('get_download_stats'),
+        getDownloadTasksCommand<VideoTask>(),
+        getDownloadStatsCommand().then(stats => ensureDownloadStats(stats) as DownloadStats),
       ]);
 
       // 比较任务状态
@@ -59,11 +61,11 @@ export class StateValidator {
       const allIssues = [...taskIssues, ...statsIssues];
       const isConsistent = allIssues.length === 0;
 
-      console.log('📊 状态验证结果:', {
-        是否一致: isConsistent,
-        问题数量: allIssues.length,
-        任务问题: taskIssues.length,
-        统计问题: statsIssues.length,
+      reportFrontendDiagnosticIfEnabled('info', 'state_validator:validate:result', {
+        isConsistent,
+        issueCount: allIssues.length,
+        taskIssueCount: taskIssues.length,
+        statsIssueCount: statsIssues.length,
       });
 
       return {
@@ -201,23 +203,15 @@ export class StateValidator {
 
     // 分析问题类型
     const hasDataCorruption = issues.some(issue => issue.type === 'DATA_CORRUPTION');
-    const hasCriticalMismatches = issues.some(
-      issue => issue.type === 'MISSING_TASK' || issue.type === 'EXTRA_TASK'
-    );
-    const hasMinorMismatches = issues.every(
-      issue => issue.type === 'STATUS_MISMATCH' || issue.type === 'STATS_MISMATCH'
-    );
 
-    // 根据问题严重程度决定策略
+    // 当前正式语义只有两种：
+    // - 数据损坏：人工介入
+    // - 其余漂移：以后端快照为准
     if (hasDataCorruption) {
       return 'MANUAL_RESOLVE';
-    } else if (hasCriticalMismatches) {
-      return 'USE_BACKEND'; // 后端为准
-    } else if (hasMinorMismatches) {
-      return 'MERGE'; // 可以尝试合并
-    } else {
-      return 'USE_BACKEND';
     }
+
+    return 'USE_BACKEND';
   }
 
   /**
@@ -232,21 +226,19 @@ export class StateValidator {
     }
   ): Promise<boolean> {
     try {
-      console.log('🔄 开始状态同步, 策略:', strategy, '问题数量:', issues.length);
+      reportFrontendDiagnosticIfEnabled('info', 'state_validator:sync:start', {
+        strategy,
+        issueCount: issues.length,
+      });
 
       switch (strategy) {
         case 'USE_BACKEND':
           return await this.syncFromBackend(storeUpdater);
 
-        case 'USE_FRONTEND':
-          console.warn('⚠️ USE_FRONTEND 策略暂未实现，回退到 USE_BACKEND');
-          return await this.syncFromBackend(storeUpdater);
-
-        case 'MERGE':
-          return await this.mergeStates(issues, storeUpdater);
-
         case 'MANUAL_RESOLVE':
-          console.error('🚨 需要手动解决状态冲突，建议重新启动应用');
+          reportFrontendIssue('error', 'state_validator:sync:manual_resolution_required', {
+            issueCount: issues.length,
+          });
           return false;
 
         default:
@@ -267,53 +259,21 @@ export class StateValidator {
   }): Promise<boolean> {
     try {
       const [backendTasks, backendStats] = await Promise.all([
-        invoke<VideoTask[]>('get_download_tasks'),
-        invoke<DownloadStats>('get_download_stats'),
+        getDownloadTasksCommand<VideoTask>(),
+        getDownloadStatsCommand().then(stats => ensureDownloadStats(stats) as DownloadStats),
       ]);
 
       storeUpdater.updateTasks(backendTasks);
       storeUpdater.updateStats(backendStats);
 
-      console.log('✅ 已从后端同步状态:', {
-        任务数: backendTasks.length,
-        统计: backendStats,
+      reportFrontendDiagnosticIfEnabled('info', 'state_validator:sync_from_backend:success', {
+        taskCount: backendTasks.length,
+        stats: backendStats,
       });
 
       return true;
     } catch (error) {
       handleError('从后端同步状态', error, false);
-      return false;
-    }
-  }
-
-  /**
-   * 合并状态（适用于轻微不一致的情况）
-   */
-  private static async mergeStates(
-    issues: StateIssue[],
-    storeUpdater: {
-      updateTasks: (tasks: VideoTask[]) => void;
-      updateStats: (stats: DownloadStats) => void;
-    }
-  ): Promise<boolean> {
-    try {
-      // 对于合并策略，我们仍然以后端为准，但会保留一些前端的临时状态
-      console.log('🔀 执行状态合并...');
-
-      const [backendTasks, backendStats] = await Promise.all([
-        invoke<VideoTask[]>('get_download_tasks'),
-        invoke<DownloadStats>('get_download_stats'),
-      ]);
-
-      // TODO: 实现更智能的合并逻辑
-      // 目前简单使用后端状态
-      storeUpdater.updateTasks(backendTasks);
-      storeUpdater.updateStats(backendStats);
-
-      console.log('✅ 状态合并完成');
-      return true;
-    } catch (error) {
-      handleError('合并状态', error, false);
       return false;
     }
   }

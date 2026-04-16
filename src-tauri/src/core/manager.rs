@@ -25,10 +25,7 @@ use crate::core::models::{
     AppError, AppResult, DownloadConfig, DownloadStats as ModelsDownloadStats, ProgressUpdate,
     TaskStatus, VideoTask,
 };
-use crate::core::monitoring::{
-    DashboardData, DownloadStatistics, HealthStatus, MonitoringConfig, MonitoringSystem,
-    PerformanceMetrics, SystemMetrics,
-};
+
 use crate::core::progress_tracker::{EnhancedProgressStats, ProgressTrackingManager};
 use crate::core::youtube_downloader::{
     DownloadPriority, YoutubeDownloadFormat, YoutubeDownloadStatus, YoutubeDownloader,
@@ -115,26 +112,6 @@ pub enum DownloadEvent {
     },
     StatsUpdated {
         stats: ModelsDownloadStats,
-    },
-    /// System metrics updated (CPU, memory, disk, network)
-    SystemMetricsUpdated {
-        metrics: SystemMetrics,
-    },
-    /// Download statistics updated
-    DownloadStatisticsUpdated {
-        statistics: DownloadStatistics,
-    },
-    /// Performance metrics updated
-    PerformanceMetricsUpdated {
-        metrics: PerformanceMetrics,
-    },
-    /// Health status changed
-    HealthStatusChanged {
-        status: HealthStatus,
-    },
-    /// Dashboard data updated (aggregated view)
-    DashboardDataUpdated {
-        data: DashboardData,
     },
     /// YouTube video info fetched
     YoutubeVideoInfoFetched {
@@ -265,9 +242,6 @@ pub struct DownloadManager {
     /// Retry executor for error handling and recovery
     retry_executor: Arc<RetryExecutor>,
 
-    /// Real-time monitoring and statistics system
-    monitoring_system: Arc<MonitoringSystem>,
-
     /// Per-task lifecycle timing snapshots for transfer/commit observability
     task_lifecycle_timings: HashMap<String, TaskLifecycleTiming>,
 
@@ -376,25 +350,6 @@ impl DownloadManager {
 
         let retry_executor = RetryExecutor::new(retry_policy);
 
-        // Create monitoring system configuration
-        let monitoring_config = MonitoringConfig {
-            system_metrics_enabled: true,
-            system_metrics_interval: 5, // Collect system metrics every 5 seconds
-            download_stats_enabled: true,
-            download_stats_interval: 2, // Update download stats every 2 seconds
-            performance_monitoring_enabled: true,
-            performance_monitoring_interval: 1, // Performance metrics every second
-            dashboard_enabled: true,
-            dashboard_update_interval: 1000, // Dashboard updates every 1000ms
-            prometheus_export_enabled: true,
-            prometheus_export_port: 9090,
-            data_retention_hours: 1,     // Keep 1 hour of history
-            max_historical_points: 3600, // Maximum data points to keep
-        };
-
-        // Create monitoring system
-        let monitoring_system = MonitoringSystem::new(monitoring_config);
-
         let mut manager = Self {
             config,
             tasks: HashMap::new(),
@@ -414,7 +369,6 @@ impl DownloadManager {
             progress_tracker: Arc::new(ProgressTrackingManager::new()),
             integrity_checker: Arc::new(integrity_checker),
             retry_executor: Arc::new(retry_executor),
-            monitoring_system: Arc::new(monitoring_system),
             task_lifecycle_timings: HashMap::new(),
             lifecycle_metrics: DownloadLifecycleMetrics::default(),
             youtube_downloader: None, // Initialize as None, can be enabled later
@@ -647,14 +601,11 @@ impl DownloadManager {
         self.event_sender = Some(sender.clone());
 
         // Scheduler handle is managed by the app bootstrap.
-        let monitoring_sender = sender.clone();
         self.scheduler_handle = None;
 
-        // Start monitoring system
-        let monitoring = Arc::clone(&self.monitoring_system);
-        tokio::spawn(async move {
-            Self::start_monitoring_system(monitoring, monitoring_sender).await;
-        });
+        // Monitoring event forwarding is intentionally disabled for now.
+        // The current frontend mainline does not consume dashboard broadcasts,
+        // and the monitoring runtime itself is not started from this seam yet.
 
         info!("✅ Download manager started successfully");
         Ok(())
@@ -684,11 +635,6 @@ impl DownloadManager {
         }
 
         self.queue_paused = false;
-
-        // TODO: Stop monitoring system when Arc issue is fixed
-        // if let Err(e) = self.monitoring_system.stop().await {
-        //     warn!("Failed to stop monitoring system gracefully: {}", e);
-        // }
 
         self.is_running = false;
         info!("✅ Download manager stopped successfully");
@@ -751,11 +697,55 @@ impl DownloadManager {
 
         if !updated_tasks.is_empty() {
             if let Err(err) = self.persist_state().await {
-                warn!("Failed to persist state after updating output paths: {}", err);
+                warn!(
+                    "Failed to persist state after updating output paths: {}",
+                    err
+                );
             }
         }
 
         Ok(updated_tasks)
+    }
+
+    pub async fn runtime_add_tasks(
+        manager: &Arc<RwLock<Self>>,
+        tasks: Vec<VideoTask>,
+    ) -> AppResult<Vec<VideoTask>> {
+        let mut manager = manager.write().await;
+
+        let mut stored_tasks = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            let result = manager.add_video_task(task).await?;
+            stored_tasks.push(result.task);
+        }
+
+        Ok(stored_tasks)
+    }
+
+    pub async fn runtime_update_task_output_paths(
+        manager: &Arc<RwLock<Self>>,
+        updates: Vec<(String, String)>,
+    ) -> AppResult<Vec<VideoTask>> {
+        let mut manager = manager.write().await;
+        manager.update_task_output_paths(&updates).await
+    }
+
+    pub async fn runtime_remove_tasks(
+        manager: &Arc<RwLock<Self>>,
+        task_ids: Vec<String>,
+    ) -> AppResult<usize> {
+        let mut manager = manager.write().await;
+        let mut removed = 0usize;
+
+        for task_id in task_ids {
+            if manager.is_task_active(&task_id).await {
+                manager.cancel_download(&task_id).await?;
+            }
+            manager.remove_task(&task_id).await?;
+            removed += 1;
+        }
+
+        Ok(removed)
     }
 
     /// Add a complete VideoTask directly to storage and return the stored record (after hydration)
@@ -1001,8 +991,10 @@ impl DownloadManager {
             .clone();
 
         // 幂等防护：已在下载或句柄存在则直接返回成功
-        if matches!(task.status, TaskStatus::Downloading | TaskStatus::Committing)
-            || self.active_downloads.contains_key(task_id)
+        if matches!(
+            task.status,
+            TaskStatus::Downloading | TaskStatus::Committing
+        ) || self.active_downloads.contains_key(task_id)
         {
             let _ = self.remove_task_from_queue(task_id).await;
             return Ok(());
@@ -1296,27 +1288,6 @@ impl DownloadManager {
         Ok(task_ids.len())
     }
 
-    /// Resume all paused downloads
-    pub async fn resume_all_downloads(&mut self) -> AppResult<usize> {
-        let downloader = Arc::clone(&self.http_downloader);
-        downloader.resume_all().await;
-        self.queue_paused = false;
-        let paused_ids = self.collect_paused_task_ids_preferred();
-
-        if paused_ids.is_empty() {
-            info!("No paused tasks to resume");
-            return Ok(0);
-        }
-
-        let resumed = self.resume_task_list(&paused_ids, 9).await;
-
-        info!("Resumed {} paused downloads", resumed);
-        if let Err(err) = self.persist_state().await {
-            warn!("Failed to persist state after resume-all: {}", err);
-        }
-        Ok(resumed)
-    }
-
     /// Start all downloads with backend-controlled policy.
     /// First resume paused tasks, then fill remaining slots with pending tasks.
     /// Failed tasks should be retried explicitly to avoid repeatedly replaying hard failures.
@@ -1348,15 +1319,6 @@ impl DownloadManager {
         }
 
         Ok(resumed + started_pending)
-    }
-
-    /// Start all pending/failed tasks (best-effort)
-    pub async fn start_all_pending(&mut self) -> AppResult<usize> {
-        self.start_tasks_by_status(
-            &[TaskStatus::Pending, TaskStatus::Failed],
-            "start_all_pending",
-        )
-        .await
     }
 
     async fn start_tasks_by_status(
@@ -1434,38 +1396,6 @@ impl DownloadManager {
         Ok(started)
     }
 
-    /// Cancel all pending/downloading/paused tasks
-    pub async fn cancel_all_downloads(&mut self) -> AppResult<usize> {
-        let cancellable_ids: Vec<String> = self
-            .tasks
-            .iter()
-            .filter_map(|(task_id, task)| match task.status {
-                TaskStatus::Completed
-                | TaskStatus::Failed
-                | TaskStatus::Cancelled
-                | TaskStatus::Committing => None,
-                _ => Some(task_id.clone()),
-            })
-            .collect();
-
-        let mut cancelled = 0usize;
-        for task_id in cancellable_ids {
-            match self.cancel_download(&task_id).await {
-                Ok(_) => cancelled += 1,
-                Err(e) => warn!("Failed to cancel task {}: {}", task_id, e),
-            }
-        }
-
-        info!("Cancelled {} downloads", cancelled);
-        if let Err(err) = self.persist_state().await {
-            warn!(
-                "Failed to persist state after cancel_all_downloads: {}",
-                err
-            );
-        }
-        Ok(cancelled)
-    }
-
     pub fn is_running(&self) -> bool {
         self.is_running
     }
@@ -1503,20 +1433,8 @@ impl DownloadManager {
         self.pause_all_downloads().await
     }
 
-    pub async fn resume_all_downloads_impl(&mut self) -> AppResult<usize> {
-        self.resume_all_downloads().await
-    }
-
     pub async fn start_all_downloads_impl(&mut self) -> AppResult<usize> {
         self.start_all_downloads().await
-    }
-
-    pub async fn start_all_pending_impl(&mut self) -> AppResult<usize> {
-        self.start_all_pending().await
-    }
-
-    pub async fn cancel_all_downloads_impl(&mut self) -> AppResult<usize> {
-        self.cancel_all_downloads().await
     }
 
     async fn runtime_remove_task_from_queue(manager: &Arc<RwLock<Self>>, task_id: &str) -> bool {
@@ -2005,37 +1923,6 @@ impl DownloadManager {
         guard.pause_all_downloads().await
     }
 
-    /// Runtime command entry: resume all tasks.
-    pub async fn runtime_resume_all_downloads(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
-        let mut guard = manager.write().await;
-        guard.resume_all_downloads().await
-    }
-
-    /// Runtime command entry: cancel all tasks.
-    pub async fn runtime_cancel_all_downloads(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
-        let task_ids = {
-            let guard = manager.read().await;
-            guard.collect_task_ids_by_status(&[
-                TaskStatus::Pending,
-                TaskStatus::Downloading,
-                TaskStatus::Paused,
-                TaskStatus::Failed,
-            ])
-        };
-
-        let mut cancelled = 0usize;
-        for task_id in task_ids {
-            match Self::runtime_cancel_download(manager, &task_id).await {
-                Ok(_) => cancelled += 1,
-                Err(err) => warn!(
-                    "Failed to cancel task {} in runtime_cancel_all_downloads: {}",
-                    task_id, err
-                ),
-            }
-        }
-        Ok(cancelled)
-    }
-
     fn collect_task_ids_by_status(&self, statuses: &[TaskStatus]) -> Vec<String> {
         let mut entries: Vec<(String, chrono::DateTime<chrono::Utc>)> = self
             .tasks
@@ -2243,27 +2130,14 @@ impl DownloadManager {
         }
     }
 
-    pub fn spawn_queue_scheduler(
-        manager: Arc<RwLock<DownloadManager>>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(200));
-            loop {
-                interval.tick().await;
-                // Avoid blocking other command handlers when scheduler tick collides with
-                // long-running write operations. If lock is busy, skip this tick.
-                let mut guard = match manager.try_write() {
-                    Ok(guard) => guard,
-                    Err(_) => continue,
-                };
-                if !guard.is_running {
-                    break;
-                }
-                guard.reap_finished_active_downloads();
+    pub(crate) async fn scheduler_tick(&mut self) -> bool {
+        if !self.is_running {
+            return false;
+        }
 
-                guard.process_task_queue().await;
-            }
-        })
+        self.reap_finished_active_downloads();
+        self.process_task_queue().await;
+        true
     }
 
     pub fn set_scheduler_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
@@ -2355,6 +2229,24 @@ impl DownloadManager {
         Ok(())
     }
 
+    pub async fn runtime_update_config(
+        manager: &Arc<RwLock<Self>>,
+        config: DownloadConfig,
+    ) -> AppResult<()> {
+        let mut manager = manager.write().await;
+        manager.update_config(config).await
+    }
+
+    pub async fn runtime_clear_completed(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
+        let mut manager = manager.write().await;
+        manager.clear_completed().await
+    }
+
+    pub async fn runtime_retry_failed(manager: &Arc<RwLock<Self>>) -> AppResult<usize> {
+        let mut manager = manager.write().await;
+        manager.retry_failed().await
+    }
+
     /// Clear all completed tasks
     pub async fn clear_completed(&mut self) -> AppResult<usize> {
         let initial_count = self.tasks.len();
@@ -2405,6 +2297,15 @@ impl DownloadManager {
         } else {
             info!("🚦 Download rate limit removed");
         }
+    }
+
+    pub async fn runtime_set_rate_limit(
+        manager: &Arc<RwLock<Self>>,
+        bytes_per_second: Option<u64>,
+    ) -> AppResult<Option<u64>> {
+        let manager = manager.write().await;
+        manager.set_rate_limit(bytes_per_second).await;
+        Ok(manager.get_rate_limit().await)
     }
 
     /// Get current rate limit
@@ -2563,7 +2464,11 @@ impl DownloadManager {
         output_path.trim_end_matches(['/', '\\']).to_string()
     }
 
-    fn split_output_path(url: &str, output_path: &str, preferred_title: Option<&str>) -> (String, String) {
+    fn split_output_path(
+        url: &str,
+        output_path: &str,
+        preferred_title: Option<&str>,
+    ) -> (String, String) {
         let trimmed = output_path.trim();
         let default_filename = Self::derive_output_filename(url, preferred_title);
         if trimmed.is_empty() {
@@ -2820,7 +2725,10 @@ impl DownloadManager {
                 &mut self.lifecycle_metrics.transfer_duration_secs,
                 transfer_duration,
             );
-            Self::push_metric_sample(&mut self.lifecycle_metrics.total_duration_secs, total_duration);
+            Self::push_metric_sample(
+                &mut self.lifecycle_metrics.total_duration_secs,
+                total_duration,
+            );
         }
 
         if let Some(timing) = self.task_lifecycle_timings.get_mut(task_id) {
@@ -2868,126 +2776,6 @@ impl DownloadManager {
         values[idx]
     }
 
-    fn build_download_statistics_snapshot(&self) -> DownloadStatistics {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut pending_tasks = 0usize;
-        let mut active_downloads = 0usize;
-        let mut completed_downloads = 0usize;
-        let mut failed_downloads = 0usize;
-        let mut paused_downloads = 0usize;
-        let mut cancelled_downloads = 0usize;
-        let mut total_bytes_downloaded = 0u64;
-        let mut current_speed = 0.0f64;
-        let mut size_distribution = crate::core::monitoring::FileSizeDistribution {
-            small_files: 0,
-            medium_files: 0,
-            large_files: 0,
-            huge_files: 0,
-        };
-
-        for task in self.tasks.values() {
-            total_bytes_downloaded = total_bytes_downloaded.saturating_add(task.downloaded_size);
-            match task.status {
-                TaskStatus::Pending => pending_tasks += 1,
-                TaskStatus::Downloading => {
-                    active_downloads += 1;
-                    current_speed += task.speed.max(0.0);
-                }
-                TaskStatus::Committing => active_downloads += 1,
-                TaskStatus::Completed => {
-                    completed_downloads += 1;
-                    if let Some(file_size) = task.file_size {
-                        match file_size {
-                            0..=1_048_575 => size_distribution.small_files += 1,
-                            1_048_576..=10_485_759 => size_distribution.medium_files += 1,
-                            10_485_760..=104_857_599 => size_distribution.large_files += 1,
-                            _ => size_distribution.huge_files += 1,
-                        }
-                    }
-                }
-                TaskStatus::Failed => failed_downloads += 1,
-                TaskStatus::Paused => paused_downloads += 1,
-                TaskStatus::Cancelled => cancelled_downloads += 1,
-            }
-        }
-
-        let terminal_total = completed_downloads + failed_downloads;
-        let success_rate = if terminal_total == 0 {
-            100.0
-        } else {
-            (completed_downloads as f32 / terminal_total as f32) * 100.0
-        };
-
-        DownloadStatistics {
-            timestamp,
-            total_tasks: self.tasks.len(),
-            pending_tasks,
-            active_downloads,
-            completed_downloads,
-            failed_downloads,
-            paused_downloads,
-            cancelled_downloads,
-            total_bytes_downloaded,
-            current_speed,
-            average_speed: self.stats.average_speed,
-            peak_speed: self.lifecycle_metrics.peak_download_speed_bps,
-            success_rate,
-            average_duration: Self::average_metric(&self.lifecycle_metrics.total_duration_secs),
-            average_transfer_duration: Self::average_metric(
-                &self.lifecycle_metrics.transfer_duration_secs,
-            ),
-            average_commit_duration: Self::average_metric(
-                &self.lifecycle_metrics.commit_duration_secs,
-            ),
-            p95_commit_duration: Self::percentile_metric(
-                &self.lifecycle_metrics.commit_duration_secs,
-                0.95,
-            ),
-            failed_commit_count: self.lifecycle_metrics.failed_commit_count,
-            commit_warning_count: self.lifecycle_metrics.commit_warning_count,
-            commit_elevated_warning_count: self.lifecycle_metrics.commit_elevated_warning_count,
-            size_distribution,
-            error_distribution: HashMap::new(),
-        }
-    }
-
-    fn build_performance_metrics_snapshot(&self) -> PerformanceMetrics {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let active_threads = self.active_downloads.len() as u32;
-        let average_commit_duration =
-            Self::average_metric(&self.lifecycle_metrics.commit_duration_secs);
-
-        PerformanceMetrics {
-            timestamp,
-            download_throughput: if average_commit_duration > 0.0 {
-                1.0 / average_commit_duration
-            } else {
-                0.0
-            },
-            task_processing_rate: self.tasks.len() as f64,
-            average_queue_length: self.task_queue.try_lock().map(|queue| queue.len()).unwrap_or(0)
-                as f32,
-            app_memory_usage: 0,
-            active_threads,
-            app_cpu_usage: 0.0,
-            db_latency: 0.0,
-            io_operations_per_sec: if average_commit_duration > 0.0 {
-                1.0 / average_commit_duration
-            } else {
-                0.0
-            },
-            network_latency: 0.0,
-        }
-    }
-
     /// Update task status
     pub async fn update_task_status(&mut self, task_id: &str, status: TaskStatus) -> AppResult<()> {
         if let Some(task) = self.tasks.get_mut(task_id) {
@@ -3011,12 +2799,6 @@ impl DownloadManager {
 
     /// Update download statistics
     async fn update_stats(&mut self) {
-        let current_speeds: Vec<f64> = self
-            .tasks
-            .values()
-            .filter(|t| t.status == TaskStatus::Downloading)
-            .map(|t| t.speed)
-            .collect();
         self.recompute_stats();
 
         // Emit stats updated event
@@ -3025,13 +2807,6 @@ impl DownloadManager {
                 stats: self.stats.clone(),
             });
         }
-
-        // Update monitoring system with current statistics
-        let _pending_tasks = self.task_queue.lock().await.len();
-        let _current_speed = current_speeds.iter().sum::<f64>() as u64; // Total current speed
-
-        // TODO: Update monitoring statistics when proper method is available
-        // For now, monitoring system will collect its own statistics
     }
 
     /// Apply state updates based on download events so backend state stays consistent with UI
@@ -3174,7 +2949,10 @@ impl DownloadManager {
             }
 
             // 未进入 Completed 之前，传输进度不允许在活跃态显示成 100%。
-            if matches!(task.status, TaskStatus::Downloading | TaskStatus::Committing) {
+            if matches!(
+                task.status,
+                TaskStatus::Downloading | TaskStatus::Committing
+            ) {
                 if next_progress >= 100.0 && next_downloaded > 0 {
                     next_progress = 99.9;
                 }
@@ -3959,107 +3737,6 @@ impl DownloadManager {
         }
     }
 
-    // === Monitoring System Methods ===
-
-    /// Start the monitoring system and connect it to event emission
-    async fn start_monitoring_system(monitoring: Arc<MonitoringSystem>, event_sender: EventSender) {
-        info!("📊 Starting monitoring system...");
-
-        // TODO: Fix monitoring system to use Arc instead of &mut self
-        // For now, skip the start() call to avoid borrowing issues
-
-        // Register as dashboard client to receive monitoring updates
-        let client_id = uuid::Uuid::new_v4().to_string();
-        let mut dashboard_data_rx = monitoring
-            .register_dashboard_client(client_id.clone())
-            .await;
-
-        // Spawn task to forward monitoring events to UI
-        tokio::spawn(async move {
-            while let Some(dashboard_data) = dashboard_data_rx.recv().await {
-                let _ = event_sender.send(DownloadEvent::DashboardDataUpdated {
-                    data: dashboard_data,
-                });
-            }
-        });
-
-        info!("✅ Monitoring system connected to UI events");
-    }
-
-    /// Get current dashboard data including system metrics
-    pub async fn get_dashboard_data(&self) -> Option<DashboardData> {
-        self.monitoring_system
-            .get_current_dashboard_data()
-            .await
-            .ok()
-    }
-
-    /// Get current download statistics from monitoring
-    pub async fn get_download_statistics(&self) -> Option<DownloadStatistics> {
-        Some(self.build_download_statistics_snapshot())
-    }
-
-    /// Get current performance metrics
-    pub async fn get_performance_metrics(&self) -> Option<PerformanceMetrics> {
-        Some(self.build_performance_metrics_snapshot())
-    }
-
-    /// Get current health status
-    pub async fn get_health_status(&self) -> Option<HealthStatus> {
-        if let Ok(dashboard_data) = self.monitoring_system.get_current_dashboard_data().await {
-            Some(dashboard_data.health_status)
-        } else {
-            None
-        }
-    }
-
-    /// Update monitoring system with current download statistics
-    pub async fn update_monitoring_stats(&self) {
-        let _current_stats = self.get_stats().await;
-        let _active_downloads = self.active_downloads.len();
-        let _total_tasks = self.tasks.len();
-        let _pending_tasks = self.task_queue.lock().await.len();
-
-        // TODO: Update monitoring statistics when proper method is available
-        // For now, monitoring system will collect its own statistics
-    }
-
-    /// Enable or disable Prometheus metrics export
-    pub async fn set_prometheus_enabled(&self, _enabled: bool) -> AppResult<()> {
-        // TODO: Implement when monitoring system supports this method
-        Ok(())
-    }
-
-    /// Enable or disable WebSocket dashboard
-    pub async fn set_websocket_dashboard_enabled(&self, _enabled: bool) -> AppResult<()> {
-        // TODO: Implement when monitoring system supports this method
-        Ok(())
-    }
-
-    /// Add a dashboard client for real-time updates
-    pub async fn add_dashboard_client(
-        &self,
-        client_id: String,
-    ) -> AppResult<tokio::sync::mpsc::UnboundedReceiver<DashboardData>> {
-        Ok(self
-            .monitoring_system
-            .register_dashboard_client(client_id)
-            .await)
-    }
-
-    /// Remove a dashboard client
-    pub async fn remove_dashboard_client(&self, client_id: &str) -> AppResult<()> {
-        self.monitoring_system
-            .unregister_dashboard_client(client_id)
-            .await;
-        Ok(())
-    }
-
-    /// Get Prometheus metrics as text format
-    pub async fn get_prometheus_metrics(&self) -> AppResult<String> {
-        self.monitoring_system.export_prometheus_metrics().await
-    }
-
     // === YouTube Download Methods ===
 
     /// Enable YouTube downloader with custom configuration
@@ -4589,7 +4266,10 @@ mod tests {
         assert_eq!(updated[0].id, task_id);
         assert_eq!(updated[0].output_path, "D:/Video/course-a");
         assert_eq!(
-            updated[0].resolved_path.as_deref().map(|path| path.replace('\\', "/")),
+            updated[0]
+                .resolved_path
+                .as_deref()
+                .map(|path| path.replace('\\', "/")),
             Some("D:/Video/course-a/video-a.mp4".to_string())
         );
 
@@ -4831,51 +4511,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_statistics_capture_transfer_and_commit_metrics() -> AppResult<()> {
-        use tempfile::tempdir;
-
-        let config = DownloadConfig::default();
-        let mut manager = DownloadManager::new(config)?;
-
-        let task_id = manager
-            .add_task(
-                "https://example.com/metrics.mp4".to_string(),
-                "./downloads".to_string(),
-            )
-            .await?;
-
-        let temp_dir = tempdir().unwrap();
-        let final_path = temp_dir.path().join("metrics.mp4");
-        tokio::fs::write(&final_path, b"hello world").await.unwrap();
-
-        manager.note_transfer_started(&task_id);
-        manager.note_commit_started(&task_id);
-
-        if let Some(timing) = manager.task_lifecycle_timings.get_mut(&task_id) {
-            timing.transfer_started_at = chrono::Utc::now() - chrono::Duration::seconds(8);
-            timing.commit_started_at = Some(chrono::Utc::now() - chrono::Duration::seconds(3));
-        }
-
-        manager
-            .finalize_task_state(
-                &task_id,
-                TaskStatus::Completed,
-                Some(final_path.to_string_lossy().as_ref()),
-                None,
-            )
-            .await?;
-
-        let statistics = manager.build_download_statistics_snapshot();
-        assert_eq!(statistics.completed_downloads, 1);
-        assert!(statistics.average_transfer_duration >= 4.5);
-        assert!(statistics.average_commit_duration >= 2.5);
-        assert!(statistics.p95_commit_duration >= statistics.average_commit_duration);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_add_video_task_uses_title_based_filename_for_generic_media_path() -> AppResult<()> {
+    async fn test_add_video_task_uses_title_based_filename_for_generic_media_path() -> AppResult<()>
+    {
         let config = DownloadConfig::default();
         let mut manager = DownloadManager::new(config)?;
         let now = chrono::Utc::now();

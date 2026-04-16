@@ -5,22 +5,16 @@
 //!
 //! Uses the advanced FileParser system for robust file parsing with multi-encoding support.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tauri::{AppHandle, State};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::core::file_parser::{
     EncodingDetector, FieldMapping, FileParser, FileParserConfig, VideoRecord,
 };
-use crate::core::models::{
-    AppError, AppResult, DownloaderType, EncodingDetection, ImportPreview, ImportedData,
-    TaskStatus, VideoInfo, VideoTask,
-};
-use crate::utils::file_utils::sanitize_filename;
+use crate::core::models::{AppError, AppResult, EncodingDetection, ImportPreview, ImportedData};
 use crate::AppState;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Complete import result with statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,178 +91,6 @@ pub async fn import_file(
             error!("❌ Failed to import file: {}", e);
             Err(e.to_string())
         }
-    }
-}
-
-/// Import tasks from a file and enqueue them immediately in the download manager
-#[tauri::command]
-pub async fn import_tasks_and_enqueue(
-    _app: AppHandle,
-    state: State<'_, AppState>,
-    file_path: String,
-    _encoding: Option<String>,
-    field_mapping: Option<std::collections::HashMap<String, String>>,
-    output_dir: Option<String>,
-) -> Result<Vec<VideoTask>, String> {
-    info!("\u{1F4E6} Importing and enqueuing tasks: {}", file_path);
-
-    let converted_mapping = field_mapping.map(|mapping| {
-        mapping
-            .into_iter()
-            .map(|(key, value)| (key, vec![value]))
-            .collect::<std::collections::HashMap<String, Vec<String>>>()
-    });
-
-    let import_result = import_file(
-        _app,
-        state.clone(),
-        file_path.clone(),
-        Some(false),
-        None,
-        converted_mapping,
-    )
-    .await?;
-
-    if import_result.imported_data.is_empty() {
-        info!("No valid rows detected in {}", file_path);
-        return Ok(Vec::new());
-    }
-
-    let config = state.config.read().await.clone();
-    let base_dir = output_dir.unwrap_or_else(|| config.download.output_directory.clone());
-    let base_path = PathBuf::from(base_dir);
-
-    let mut manager = state.download_manager.write().await;
-    let mut created_tasks = Vec::new();
-    let mut reused_tasks = Vec::new();
-    let mut failed_items = Vec::new();
-
-    for (index, record) in import_result.imported_data.iter().enumerate() {
-        match build_task_from_import(record, &base_path, index) {
-            Ok(task) => match manager.add_video_task(task.clone()).await {
-                Ok(result) => {
-                    if result.created {
-                        created_tasks.push(result.task);
-                    } else {
-                        reused_tasks.push(result.task);
-                    }
-                }
-                Err(error) => {
-                    failed_items.push(format!(
-                        "{}: {}",
-                        record.record_url.as_deref().unwrap_or("unknown"),
-                        error
-                    ));
-                    error!("Failed to enqueue task: {}", error);
-                }
-            },
-            Err(err) => {
-                failed_items.push(err);
-            }
-        }
-    }
-
-    drop(manager);
-
-    info!(
-        "\u{2705} Enqueued {} tasks ({} reused, {} failed)",
-        created_tasks.len(),
-        reused_tasks.len(),
-        failed_items.len()
-    );
-
-    if !failed_items.is_empty() {
-        warn!("{} tasks failed to import", failed_items.len());
-    }
-
-    created_tasks.extend(reused_tasks);
-    Ok(created_tasks)
-}
-
-fn build_task_from_import(
-    record: &ImportedData,
-    base_path: &Path,
-    index: usize,
-) -> Result<VideoTask, String> {
-    let url = record
-        .record_url
-        .as_ref()
-        .or(record.url.as_ref())
-        .ok_or_else(|| format!("Missing video URL for row {}", index + 1))?
-        .clone();
-
-    let title = record
-        .kc_name
-        .as_ref()
-        .or(record.course_name.as_ref())
-        .or(record.zl_name.as_ref())
-        .or(record.name.as_ref())
-        .cloned()
-        .unwrap_or_else(|| format!("Imported Video {}", index + 1));
-
-    let sanitized_folder = {
-        let candidate = sanitize_filename(&title);
-        if candidate.is_empty() {
-            format!("video_{}", index + 1)
-        } else {
-            candidate
-        }
-    };
-
-    let output_path = base_path.join(&sanitized_folder);
-    let output_path_str = output_path.to_string_lossy().to_string();
-
-    let now = Utc::now();
-
-    Ok(VideoTask {
-        id: Uuid::new_v4().to_string(),
-        url,
-        title,
-        output_path: output_path_str,
-        resolved_path: None,
-        status: TaskStatus::Pending,
-        progress: 0.0,
-        file_size: None,
-        downloaded_size: 0,
-        speed: 0.0,
-        display_speed_bps: 0,
-        eta: None,
-        error_message: None,
-        created_at: now,
-        updated_at: now,
-        paused_at: None,
-        paused_from_active: false,
-        downloader_type: Some(DownloaderType::Http),
-        video_info: build_video_info(record),
-    })
-}
-
-fn build_video_info(record: &ImportedData) -> Option<VideoInfo> {
-    if record.zl_id.is_none()
-        && record.zl_name.is_none()
-        && record.record_url.is_none()
-        && record.kc_id.is_none()
-        && record.kc_name.is_none()
-        && record.id.is_none()
-        && record.name.is_none()
-        && record.url.is_none()
-        && record.course_id.is_none()
-        && record.course_name.is_none()
-    {
-        None
-    } else {
-        Some(VideoInfo {
-            zl_id: record.zl_id.clone(),
-            zl_name: record.zl_name.clone(),
-            record_url: record.record_url.clone(),
-            kc_id: record.kc_id.clone(),
-            kc_name: record.kc_name.clone(),
-            id: record.id.clone(),
-            name: record.name.clone(),
-            url: record.url.clone(),
-            course_id: record.course_id.clone(),
-            course_name: record.course_name.clone(),
-        })
     }
 }
 

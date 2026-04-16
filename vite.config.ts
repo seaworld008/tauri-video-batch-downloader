@@ -5,6 +5,9 @@ import tailwindcss from '@tailwindcss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 // https://vitejs.dev/config/
+// Note: canonical test configs live in vitest.config.ts and vitest.config.integration.ts.
+// Keep the inline test block aligned enough for editor/tooling discovery, but do not treat
+// this file as the source of truth for the project's test workflow.
 export default defineConfig({
   plugins: [
     react(),
@@ -40,11 +43,11 @@ export default defineConfig({
     __TAURI_DEBUG__: JSON.stringify(process.env.TAURI_DEBUG === 'true'),
   },
 
-  // Test configuration
+  // Test configuration (editor/tooling fallback only; see vitest.config*.ts for canonical configs)
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: ['./src/__tests__/setup.ts'],
+    setupFiles: ['./src/test/setup.ts'],
     css: true,
   },
 

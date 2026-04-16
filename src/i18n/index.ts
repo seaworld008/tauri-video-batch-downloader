@@ -5,6 +5,7 @@
 import i18n, { type InitOptions } from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
+import { reportFrontendDiagnosticIfEnabled } from '../utils/frontendLogging';
 
 // Import translation files
 import en from './locales/en.json';
@@ -95,7 +96,11 @@ const initOptions: InitOptions = {
   preload: Object.keys(SUPPORTED_LANGUAGES),
   missingKeyHandler: (lng: string[], ns: string, key: string) => {
     if (process.env.NODE_ENV === 'development') {
-      console.warn(`Missing translation key: ${key} for language: ${lng[0]}`);
+      reportFrontendDiagnosticIfEnabled('warn', 'i18n:missing_translation_key', {
+        key,
+        language: lng[0],
+        namespace: ns,
+      });
     }
   },
   saveMissing: process.env.NODE_ENV === 'development',

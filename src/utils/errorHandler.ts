@@ -4,6 +4,8 @@
  */
 import toast from 'react-hot-toast';
 
+import { reportFrontendIssue } from './frontendLogging';
+
 export enum ErrorType {
   NETWORK = 'NETWORK',
   FILE_NOT_FOUND = 'FILE_NOT_FOUND',
@@ -33,8 +35,7 @@ export class AppErrorHandler {
   static handle(action: string, error: unknown, showToast: boolean = true): AppError {
     const appError = this.classifyError(action, error);
 
-    // 记录详细日志
-    console.error(`❌ ${action} 失败:`, {
+    reportFrontendIssue('error', `${action}:failed`, {
       type: appError.type,
       message: appError.message,
       originalError: appError.originalError,
@@ -291,8 +292,11 @@ export class AppErrorHandler {
       } catch (error) {
         lastError = error;
 
-        // 记录重试日志
-        console.warn(`🔄 ${action} 重试 ${attempt}/${maxRetries}:`, error);
+        reportFrontendIssue('warn', `${action}:retry`, {
+          attempt,
+          maxRetries,
+          error,
+        });
 
         // 如果不是最后一次尝试，等待后重试
         if (attempt < maxRetries) {

@@ -1,9 +1,6 @@
 import React, { useMemo } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { useConfigStore } from '../../stores/configStore';
-import { useUIStore } from '../../stores/uiStore';
-import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
 import toast from 'react-hot-toast';
 import {
   PlayIcon,
@@ -19,14 +16,20 @@ import { ensureDownloadStats } from '../../utils/downloadStats';
 import {
   buildTaskOutputPathPreview,
 } from '../../features/downloads/model/outputPathOverride';
+import {
+  openDownloadFolderCommand,
+  selectOutputDirectoryCommand,
+} from '../../features/downloads/api/systemCommands';
+import { reportFrontendIssue } from '../../utils/frontendLogging';
 import { DownloadStartConfirmDialog } from './DownloadStartConfirmDialog';
 import { DeleteTasksConfirmDialog } from './DeleteTasksConfirmDialog';
 
 interface DashboardToolbarProps {
   onRefresh?: () => void;
+  onOpenSettings?: () => void;
 }
 
-export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh }) => {
+export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh, onOpenSettings }) => {
   const tasks = useDownloadStore(state => state.tasks);
   const selectedTasks = useDownloadStore(state => state.selectedTasks);
   const startAllDownloads = useDownloadStore(state => state.startAllDownloads);
@@ -45,7 +48,6 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
   const forceSync = useDownloadStore(state => state.forceSync);
   const backendStats = useDownloadStore(state => state.stats);
   const config = useConfigStore(state => state.config);
-  const setCurrentView = useUIStore(state => state.setCurrentView);
 
   const [startConfirmOpen, setStartConfirmOpen] = React.useState(false);
   const [startConfirmWorking, setStartConfirmWorking] = React.useState(false);
@@ -236,25 +238,24 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
 
   const handleChangeDirectoryForThisRun = React.useCallback(async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
+      const selected = await selectOutputDirectoryCommand({
+        title: '选择本次保存位置',
         defaultPath: startConfirmDirectory || config.download.output_directory,
       });
-      if (typeof selected === 'string' && selected) {
+      if (selected) {
         setStartConfirmDirectory(selected);
       }
     } catch (error) {
-      console.error('Failed to select temporary directory', error);
+      reportFrontendIssue('error', 'dashboard_toolbar:select_temp_directory_failed', error);
       toast.error('选择本次保存位置失败');
     }
   }, [config.download.output_directory, startConfirmDirectory]);
 
   const handleOpenDownloadFolder = React.useCallback(async () => {
     try {
-      await invoke('open_download_folder');
+      await openDownloadFolderCommand();
     } catch (error) {
-      console.error('Failed to open download folder', error);
+      reportFrontendIssue('error', 'dashboard_toolbar:open_download_folder_failed', error);
       toast.error('打开下载目录失败');
     }
   }, []);
@@ -360,14 +361,16 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh })
                 <span className='truncate'>{config.download.output_directory || '未设置目录'}</span>
               </div>
 
-              <button
-                onClick={() => setCurrentView('settings')}
-                className='hidden md:inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'
-                title='前往设置修改默认下载目录'
-              >
-                <CogIcon className='h-3.5 w-3.5 mr-1' />
-                去设置
-              </button>
+              {onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  className='hidden md:inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'
+                  title='前往设置修改默认下载目录'
+                >
+                  <CogIcon className='h-3.5 w-3.5 mr-1' />
+                  去设置
+                </button>
+              )}
             </div>
 
             <div className='flex items-center gap-2'>

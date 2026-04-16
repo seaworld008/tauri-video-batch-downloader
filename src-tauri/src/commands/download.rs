@@ -1,6 +1,5 @@
 //! Download management commands
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 use tauri::{command, State};
 use uuid::Uuid;
@@ -25,117 +24,16 @@ pub struct TaskOutputPathUpdate {
     pub output_path: String,
 }
 
-/// 调试命令：测试下载系统是否工作
-#[command]
-pub async fn debug_download_test(
-    task_id: String,
-    app_handle: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    tracing::info!("🧪 [DEBUG_TEST] Starting debug test for task: {}", task_id);
-
-    // 1. 检查 manager 是否可访问
-    let manager_check = {
-        let manager = state.download_manager.read().await;
-        format!("Manager is_running: {}", manager.is_running())
-    };
-    tracing::info!("🧪 [DEBUG_TEST] {}", manager_check);
-
-    // 2. 检查 event_sender 是否设置
-    let event_sender_check = {
-        let manager = state.download_manager.read().await;
-        if manager.has_event_sender() {
-            "event_sender: SET ✅".to_string()
-        } else {
-            "event_sender: NOT SET ❌".to_string()
-        }
-    };
-    tracing::info!("🧪 [DEBUG_TEST] {}", event_sender_check);
-
-    // 3. 检查任务是否存在
-    let task_check = {
-        let manager = state.download_manager.read().await;
-        let tasks = manager.get_tasks().await;
-        match tasks.iter().find(|t| t.id == task_id) {
-            Some(task) => format!("Task found: status={:?}, url={}", task.status, task.url),
-            None => format!("Task NOT FOUND ❌ (total tasks: {})", tasks.len()),
-        }
-    };
-    tracing::info!("🧪 [DEBUG_TEST] {}", task_check);
-
-    // 4. 尝试发送一个测试事件到前端
-    let emit_result = app_handle.emit(
-        "debug_test_event",
-        serde_json::json!({
-            "message": "Debug test from backend",
-            "task_id": task_id
-        }),
-    );
-    let emit_check = match emit_result {
-        Ok(_) => "Emit test: SUCCESS ✅".to_string(),
-        Err(e) => format!("Emit test: FAILED ❌ - {}", e),
-    };
-    tracing::info!("🧪 [DEBUG_TEST] {}", emit_check);
-
-    // 返回所有检查结果
-    let result = format!(
-        "Debug Results:\n{}\n{}\n{}\n{}",
-        manager_check, event_sender_check, task_check, emit_check
-    );
-
-    Ok(result)
-}
-
 #[command]
 pub async fn add_download_tasks(
     tasks: Vec<VideoTask>,
     state: State<'_, AppState>,
 ) -> Result<Vec<VideoTask>, String> {
-    let mut manager = state.download_manager.write().await;
-
-    let mut created_tasks = Vec::new();
-    let mut reused_tasks = Vec::new();
-    let mut failed_tasks = Vec::new();
-
-    for task in tasks {
-        // 尝试添加任务到管理器，处理重复项
-        match manager.add_video_task(task.clone()).await {
-            Ok(result) => {
-                if result.created {
-                    created_tasks.push(result.task);
-                } else {
-                    reused_tasks.push(result.task);
-                }
-            }
-            Err(e) => {
-                failed_tasks.push(format!("{}: {}", task.title, e));
-                tracing::error!("Failed to add task {}: {}", task.title, e);
-            }
-        }
-    }
-
-    // 创建详细的日志信息
-    if !reused_tasks.is_empty() {
-        tracing::info!("Reused {} existing tasks", reused_tasks.len());
-    }
-    if !failed_tasks.is_empty() {
-        tracing::warn!(
-            "Failed to add {} tasks: {:?}",
-            failed_tasks.len(),
-            failed_tasks
-        );
-    }
-
-    tracing::info!(
-        "Successfully created {} download tasks (reused {}, {} failed)",
-        created_tasks.len(),
-        reused_tasks.len(),
-        failed_tasks.len()
-    );
-
-    // 即使有一些失败或重复，也返回成功创建的任务
-    created_tasks.extend(reused_tasks);
-    Ok(created_tasks)
+    state
+        .download_runtime
+        .add_tasks(tasks)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[command]
@@ -143,14 +41,14 @@ pub async fn update_task_output_paths(
     task_updates: Vec<TaskOutputPathUpdate>,
     state: State<'_, AppState>,
 ) -> Result<Vec<VideoTask>, String> {
-    let mut manager = state.download_manager.write().await;
     let updates: Vec<(String, String)> = task_updates
         .into_iter()
         .map(|item| (item.task_id, item.output_path))
         .collect();
 
-    manager
-        .update_task_output_paths(&updates)
+    state
+        .download_runtime
+        .update_task_output_paths(updates)
         .await
         .map_err(|error| error.to_string())
 }
@@ -299,16 +197,6 @@ pub async fn pause_all_downloads(state: State<'_, AppState>) -> Result<usize, Co
         .map_err(|e| map_runtime_error("Failed to pause all downloads", e))
 }
 
-#[command]
-pub async fn resume_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
-    tracing::info!("[RESUME_ALL_CMD] Resuming all paused downloads");
-    state
-        .download_runtime
-        .resume_all()
-        .await
-        .map_err(|e| map_runtime_error("Failed to resume all downloads", e))
-}
-
 /// Start all downloads (backend decides resume paused vs start pending)
 #[command]
 pub async fn start_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
@@ -320,124 +208,14 @@ pub async fn start_all_downloads(state: State<'_, AppState>) -> Result<usize, Co
         .map_err(|e| map_runtime_error("Failed to start all downloads", e))
 }
 
-/// Start all pending/failed downloads respecting concurrency limit
-#[command]
-pub async fn start_all_pending_downloads(
-    state: State<'_, AppState>,
-) -> Result<usize, CommandError> {
-    tracing::info!("[START_ALL_CMD] Starting all pending/failed downloads");
-    let task_ids: Vec<String> = {
-        let manager = state.download_manager.read().await;
-        manager
-            .get_tasks()
-            .await
-            .into_iter()
-            .filter(|task| matches!(task.status, TaskStatus::Pending | TaskStatus::Failed))
-            .map(|task| task.id)
-            .collect()
-    };
-
-    let mut started = 0usize;
-    for task_id in task_ids {
-        let request_id = Uuid::new_v4().to_string();
-        match state
-            .task_engine
-            .start_task(task_id.clone(), request_id)
-            .await
-        {
-            Ok(ack) if ack.accepted => started += 1,
-            Ok(ack) => {
-                tracing::warn!(
-                    "[START_ALL_CMD] TaskEngine rejected start for task {}: {:?}",
-                    task_id,
-                    ack.reason
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "[START_ALL_CMD] Failed to enqueue start for task {}: {}",
-                    task_id,
-                    err
-                );
-            }
-        }
-    }
-
-    Ok(started)
-}
-
-#[command]
-pub async fn cancel_all_downloads(state: State<'_, AppState>) -> Result<usize, CommandError> {
-    tracing::info!("[CANCEL_ALL_CMD] Cancelling all in-flight downloads");
-    let task_ids: Vec<String> = {
-        let manager = state.download_manager.read().await;
-        manager
-            .get_tasks()
-            .await
-            .into_iter()
-            .filter(|task| {
-                matches!(
-                    task.status,
-                    TaskStatus::Pending
-                        | TaskStatus::Downloading
-                        | TaskStatus::Paused
-                        | TaskStatus::Failed
-                )
-            })
-            .map(|task| task.id)
-            .collect()
-    };
-
-    let mut cancelled = 0usize;
-    for task_id in task_ids {
-        let request_id = Uuid::new_v4().to_string();
-        match state
-            .task_engine
-            .cancel_task(task_id.clone(), request_id)
-            .await
-        {
-            Ok(ack) if ack.accepted => cancelled += 1,
-            Ok(ack) => {
-                tracing::warn!(
-                    "[CANCEL_ALL_CMD] TaskEngine rejected cancel for task {}: {:?}",
-                    task_id,
-                    ack.reason
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "[CANCEL_ALL_CMD] Failed to enqueue cancel for task {}: {}",
-                    task_id,
-                    err
-                );
-            }
-        }
-    }
-
-    Ok(cancelled)
-}
-
 #[command]
 pub async fn remove_download(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut manager = state.download_manager.write().await;
-
-    // 取消正在进行的下载
-    if manager.is_task_active(&task_id).await {
-        manager
-            .cancel_download(&task_id)
-            .await
-            .map_err(|e| format!("Failed to cancel active download: {}", e))?;
-    }
-
-    // 从任务存储中移除
-    manager
-        .remove_task(&task_id)
+    state
+        .download_runtime
+        .remove_tasks(vec![task_id])
         .await
-        .map_err(|e| format!("Failed to remove task: {}", e))?;
-
-    tracing::info!("Successfully removed task: {}", task_id);
-
-    Ok(())
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[command]
@@ -445,40 +223,12 @@ pub async fn remove_download_tasks(
     task_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut removed_count = 0;
-
-    for task_id in task_ids {
-        // 每个任务独立短持锁，避免批量删除时长时间阻塞其它命令。
-        let removed = {
-            let mut manager = state.download_manager.write().await;
-
-            // 取消正在进行的下载
-            if manager.is_task_active(&task_id).await {
-                if let Err(e) = manager.cancel_download(&task_id).await {
-                    tracing::warn!("Failed to cancel active download {}: {}", task_id, e);
-                }
-            }
-
-            // 从任务存储中移除
-            match manager.remove_task(&task_id).await {
-                Ok(()) => {
-                    tracing::info!("Successfully removed task: {}", task_id);
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to remove task {}: {}", task_id, e);
-                    false
-                }
-            }
-        };
-
-        if removed {
-            removed_count += 1;
-        }
-    }
-
-    tracing::info!("Successfully removed {} tasks", removed_count);
-    Ok(())
+    state
+        .download_runtime
+        .remove_tasks(task_ids)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[command]
@@ -501,31 +251,12 @@ pub async fn get_download_stats(state: State<'_, AppState>) -> Result<DownloadSt
 
 #[command]
 pub async fn clear_completed_tasks(state: State<'_, AppState>) -> Result<(), String> {
-    let mut manager = state.download_manager.write().await;
-
-    // 获取所有已完成的任务ID
-    let completed_task_ids: Vec<String> = manager
-        .get_tasks()
+    state
+        .download_runtime
+        .clear_completed()
         .await
-        .into_iter()
-        .filter(|task| task.status == TaskStatus::Completed)
-        .map(|task| task.id)
-        .collect();
-
-    // 批量删除已完成的任务
-    for task_id in &completed_task_ids {
-        manager
-            .remove_task(task_id)
-            .await
-            .map_err(|e| format!("Failed to remove completed task {}: {}", task_id, e))?;
-    }
-
-    tracing::info!(
-        "Successfully cleared {} completed tasks",
-        completed_task_ids.len()
-    );
-
-    Ok(())
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[command]
@@ -548,12 +279,15 @@ pub async fn retry_failed_tasks(state: State<'_, AppState>) -> Result<(), Comman
 
     tracing::info!("Retrying {} failed tasks", failed_task_ids.len());
 
-    {
-        let mut manager = state.download_manager.write().await;
-        manager
-            .retry_failed()
-            .await
-            .map_err(|e| map_runtime_error("Failed to reset failed tasks", e))?;
+    let reset_count = state
+        .download_runtime
+        .retry_failed()
+        .await
+        .map_err(|e| map_runtime_error("Failed to reset failed tasks", e))?;
+
+    if reset_count == 0 {
+        tracing::info!("No failed tasks were reset for retry");
+        return Ok(());
     }
 
     let mut started = 0usize;
@@ -613,10 +347,11 @@ pub async fn set_rate_limit(
         }
     }
 
-    let manager = state.download_manager.read().await;
-    manager.set_rate_limit(bytes_per_second).await;
-    let applied = manager.get_rate_limit().await;
-    Ok(applied)
+    state
+        .download_runtime
+        .set_rate_limit(bytes_per_second)
+        .await
+        .map_err(|error| map_runtime_error("Failed to set rate limit", error))
 }
 
 #[command]

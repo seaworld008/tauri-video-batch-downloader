@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import {
   PlusIcon,
   LinkIcon,
@@ -16,6 +14,10 @@ import {
 import { useDownloadStore } from '../../stores/downloadStore';
 import { useConfigStore } from '../../stores/configStore';
 import { notify } from '../../stores/uiStore';
+import {
+  getVideoInfoCommand,
+  selectOutputDirectoryCommand,
+} from '../../features/downloads/api/systemCommands';
 import type { VideoTask } from '../../types';
 
 interface ManualUrlEntry {
@@ -104,7 +106,7 @@ export const ManualInputPanel: React.FC = () => {
 
         if (entry.url.includes('youtube.com') || entry.url.includes('youtu.be')) {
           try {
-            const videoInfo = await invoke('get_video_info', { url: entry.url });
+            const videoInfo = await getVideoInfoCommand<any>({ url: entry.url });
             title = (videoInfo as any).title || entry.url;
           } catch {
             // Silent fail
@@ -131,13 +133,9 @@ export const ManualInputPanel: React.FC = () => {
 
   const handleSelectOutputDir = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: '选择下载目录',
-      });
+      const selected = await selectOutputDirectoryCommand();
 
-      if (selected && typeof selected === 'string') {
+      if (selected) {
         setOutputDir(selected);
       }
     } catch (error) {

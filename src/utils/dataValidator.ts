@@ -38,6 +38,7 @@ import type {
   AppError,
 } from '../schemas';
 import { AppErrorHandler } from './errorHandler';
+import { reportFrontendIssue } from './frontendLogging';
 
 // ====================================================
 // 验证结果类型定义
@@ -100,7 +101,7 @@ export class DataValidator {
     originalData: unknown,
     schemaName: string | undefined
   ) {
-    console.error(`[验证失败] ${context}`, {
+    reportFrontendIssue('error', `data_validator:validation_failed:${context}`, {
       validationErrors: errors,
       originalData,
       schemaName,

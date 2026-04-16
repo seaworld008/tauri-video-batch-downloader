@@ -989,7 +989,8 @@ impl HttpDownloader {
         // 传输字节已经完成，但任务尚未真正完成。
         // 在 flush/sync_all 期间把状态切到 Committing，避免 UI 在 Downloading 状态下显示 100%。
         task.status = TaskStatus::Committing;
-        self.update_progress(task, downloaded, total_size, start_time).await;
+        self.update_progress(task, downloaded, total_size, start_time)
+            .await;
 
         // 确保文件数据写入磁盘
         file.flush().await?;
@@ -1047,7 +1048,10 @@ impl HttpDownloader {
             0.0
         };
 
-        if matches!(task.status, TaskStatus::Downloading | TaskStatus::Committing) && progress >= 1.0
+        if matches!(
+            task.status,
+            TaskStatus::Downloading | TaskStatus::Committing
+        ) && progress >= 1.0
         {
             progress = 0.999;
         }

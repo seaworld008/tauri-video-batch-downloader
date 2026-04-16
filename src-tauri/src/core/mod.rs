@@ -11,45 +11,13 @@ pub mod integrity_checker;
 pub mod m3u8_downloader;
 pub mod manager;
 pub mod models;
-pub mod monitoring;
+
 pub mod part_file;
 pub mod progress_tracker;
+pub mod queue_scheduler;
 pub mod resume_downloader;
 pub mod runtime;
 pub mod youtube_downloader;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod manager_test;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod file_parser_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod resume_downloader_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod m3u8_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod file_parser_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod progress_tracker_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod error_handling_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod monitoring_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod youtube_downloader_integration_tests;
-
-#[cfg(all(test, feature = "integration-tests"))]
-mod system_integration_tests;
 
 // Re-export commonly used types
 pub use config::AppConfig;

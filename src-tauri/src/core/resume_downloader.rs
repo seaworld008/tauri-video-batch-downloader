@@ -1083,8 +1083,8 @@ impl ResumeDownloader {
             .resume_info_dir
             .join(format!("{}.json", resume_info.task_id));
 
-        let content = serde_json::to_string_pretty(&resume_info)
-            .with_context(|| "序列化断点续传信息失败")?;
+        let content =
+            serde_json::to_string_pretty(&resume_info).with_context(|| "序列化断点续传信息失败")?;
 
         tokio::fs::write(resume_file_path, content).await?;
 
@@ -1196,7 +1196,11 @@ mod tests {
         assert_eq!(resume_info.progress(), 0.0);
         assert_eq!(resume_info.pending_chunks().len(), 0);
         assert_eq!(resume_info.schema_version, CURRENT_RESUME_SCHEMA_VERSION);
-        assert!(resume_info.part_file_path.as_deref().unwrap().ends_with(".part"));
+        assert!(resume_info
+            .part_file_path
+            .as_deref()
+            .unwrap()
+            .ends_with(".part"));
     }
 
     #[tokio::test]
@@ -1250,8 +1254,8 @@ mod tests {
         config.resume_info_dir = temp_dir.path().to_path_buf();
 
         let client = Client::new();
-        let downloader = ResumeDownloader::new(config.clone(), client, BandwidthController::new())
-            .unwrap();
+        let downloader =
+            ResumeDownloader::new(config.clone(), client, BandwidthController::new()).unwrap();
 
         let final_path = temp_dir.path().join("video.mp4");
         let mut resume_info = ResumeInfo::new(
@@ -1276,18 +1280,20 @@ mod tests {
         .await
         .unwrap();
 
-        let writer = downloader.prepare_storage(&final_path, &mut resume_info).await.unwrap();
+        let writer = downloader
+            .prepare_storage(&final_path, &mut resume_info)
+            .await
+            .unwrap();
 
         assert!(writer.part_path().exists());
-        assert_eq!(tokio::fs::read(writer.part_path()).await.unwrap(), b"abcdwxyz");
+        assert_eq!(
+            tokio::fs::read(writer.part_path()).await.unwrap(),
+            b"abcdwxyz"
+        );
         assert_eq!(resume_info.downloaded_total, 8);
         assert!(resume_info.chunks.iter().all(ChunkInfo::is_completed));
-        assert!(
-            !ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 0).exists()
-        );
-        assert!(
-            !ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 1).exists()
-        );
+        assert!(!ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 0).exists());
+        assert!(!ResumeDownloader::get_chunk_temp_path(&config, &resume_info.task_id, 1).exists());
     }
 
     #[tokio::test]

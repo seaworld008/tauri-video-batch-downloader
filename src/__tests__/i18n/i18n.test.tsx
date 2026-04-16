@@ -7,6 +7,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { renderHook, act } from '@testing-library/react';
 import React from 'react';
+
+const frontendLoggingMocks = vi.hoisted(() => ({
+  reportFrontendDiagnosticIfEnabled: vi.fn(),
+  reportFrontendIssue: vi.fn(),
+}));
+
+vi.mock('../../utils/frontendLogging', () => frontendLoggingMocks);
+
 import i18n from '../../i18n';
 import {
   useI18n,
@@ -185,8 +193,29 @@ describe('i18n System', () => {
       expect(result.current.isSupported('zh')).toBe(true);
       expect(result.current.isSupported('fr')).toBe(false);
     });
-  });
 
+    it('routes language change failures through the shared frontend logging seam', async () => {
+      const changeLanguageSpy = vi
+        .spyOn(i18n, 'changeLanguage')
+        .mockRejectedValueOnce(new Error('language backend offline'));
+
+      const { result } = renderHook(() => useLanguage(), {
+        wrapper: TestWrapper,
+      });
+
+      await act(async () => {
+        await result.current.changeLanguage('zh');
+      });
+
+      expect(frontendLoggingMocks.reportFrontendIssue).toHaveBeenCalledWith(
+        'error',
+        'i18n:change_language_failed',
+        expect.any(Error)
+      );
+
+      changeLanguageSpy.mockRestore();
+    });
+  });
   describe('useFormattedTranslation Hook', () => {
     it('should format bytes correctly', () => {
       const { result } = renderHook(() => useFormattedTranslation(), {
@@ -243,6 +272,25 @@ describe('i18n System', () => {
       });
 
       expect(result.current.t('invalid.key' as any)).toBe('Default fallback');
+    });
+
+    it('routes translation exceptions through the shared frontend logging seam', () => {
+      const translatorSpy = vi.spyOn(i18n, 't').mockImplementationOnce(() => {
+        throw new Error('translator exploded');
+      });
+
+      const { result } = renderHook(() => useSafeTranslation('Default fallback'), {
+        wrapper: TestWrapper,
+      });
+
+      expect(result.current.t('common.loading' as any)).toBe('Default fallback');
+      expect(frontendLoggingMocks.reportFrontendIssue).toHaveBeenCalledWith(
+        'warn',
+        'i18n:safe_translation_failed:common.loading',
+        expect.any(Error)
+      );
+
+      translatorSpy.mockRestore();
     });
   });
 

@@ -137,7 +137,7 @@ export const UnifiedView: React.FC = () => {
 
         {/* Toolbar (Filters & Stats) */}
         <div className='shrink-0 z-10'>
-          <DashboardToolbar />
+          <DashboardToolbar onOpenSettings={() => setShowSettings(true)} />
         </div>
 
         {/* Task List */}

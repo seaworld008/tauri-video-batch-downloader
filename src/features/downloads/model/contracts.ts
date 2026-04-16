@@ -1,4 +1,4 @@
-export interface DownloadEventEnvelopeV1<T = unknown> {
+export interface DownloadEventEnvelope<T = unknown> {
   schema_version: number;
   event_id: string;
   event_type: string;
@@ -6,7 +6,7 @@ export interface DownloadEventEnvelopeV1<T = unknown> {
   payload: T;
 }
 
-export type DownloadEventTypeV1 = 'task.progressed' | 'task.status_changed' | 'task.stats_updated';
+export type DownloadEventType = 'task.progressed' | 'task.status_changed' | 'task.stats_updated';
 
 export interface TaskProgressedPayload {
   task_id: string;
@@ -43,7 +43,7 @@ export interface TaskStatsUpdatedPayload {
 
 export const SUPPORTED_DOWNLOAD_EVENT_SCHEMA = 1;
 
-export const isSupportedDownloadEventType = (value: unknown): value is DownloadEventTypeV1 =>
+export const isSupportedDownloadEventType = (value: unknown): value is DownloadEventType =>
   value === 'task.progressed' || value === 'task.status_changed' || value === 'task.stats_updated';
 
 const isNonEmptyString = (value: unknown): value is string =>
@@ -52,9 +52,9 @@ const isNonEmptyString = (value: unknown): value is string =>
 const asFiniteNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
-export const parseDownloadEventEnvelopeV1 = (
+export const parseDownloadEventEnvelope = (
   raw: unknown
-): { success: true; data: DownloadEventEnvelopeV1 } | { success: false; error: string } => {
+): { success: true; data: DownloadEventEnvelope } | { success: false; error: string } => {
   if (!raw || typeof raw !== 'object') {
     return { success: false, error: 'Event payload must be an object' };
   }
@@ -86,7 +86,7 @@ export const parseDownloadEventEnvelopeV1 = (
   }
 
   const eventId = candidate.event_id as string;
-  const eventType = candidate.event_type as DownloadEventTypeV1;
+  const eventType = candidate.event_type as DownloadEventType;
   const timestamp = candidate.ts as string;
 
   return {

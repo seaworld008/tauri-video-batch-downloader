@@ -67,12 +67,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     });
 
   const handleLanguageChange = async (language: SupportedLanguage) => {
-    try {
-      await changeLanguage(language);
-    } catch (error) {
-      console.error('Failed to change language:', error);
-      // Could show a toast notification here
-    }
+    await changeLanguage(language);
   };
 
   const isLoading = showLoading && isChanging;

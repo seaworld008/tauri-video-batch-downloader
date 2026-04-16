@@ -121,14 +121,12 @@ async fn update_config_impl(state: &State<'_, AppState>, new_config: AppConfig) 
         .save()
         .map_err(|e| AppError::Config(format!("Failed to save configuration: {}", e)))?;
 
-    // Update download manager configuration
-    {
-        let mut download_manager = state.download_manager.write().await;
-        download_manager
-            .update_config(new_config.download.clone())
-            .await
-            .map_err(|e| AppError::Config(format!("Failed to update download manager: {}", e)))?;
-    }
+    // Update download manager configuration through runtime
+    state
+        .download_runtime
+        .update_config(new_config.download.clone())
+        .await
+        .map_err(|e| AppError::Config(format!("Failed to update download manager: {}", e)))?;
 
     Ok(())
 }
@@ -147,14 +145,12 @@ async fn reset_config_impl(state: &State<'_, AppState>) -> AppResult<AppConfig> 
         .save()
         .map_err(|e| AppError::Config(format!("Failed to save default configuration: {}", e)))?;
 
-    // Update download manager configuration
-    {
-        let mut download_manager = state.download_manager.write().await;
-        download_manager
-            .update_config(default_config.download.clone())
-            .await
-            .map_err(|e| AppError::Config(format!("Failed to update download manager: {}", e)))?;
-    }
+    // Update download manager configuration through runtime
+    state
+        .download_runtime
+        .update_config(default_config.download.clone())
+        .await
+        .map_err(|e| AppError::Config(format!("Failed to update download manager: {}", e)))?;
 
     Ok(default_config)
 }
@@ -209,14 +205,12 @@ async fn import_config_impl(state: &State<'_, AppState>, file_path: &str) -> App
         .save()
         .map_err(|e| AppError::Config(format!("Failed to save imported configuration: {}", e)))?;
 
-    // Update download manager configuration
-    {
-        let mut download_manager = state.download_manager.write().await;
-        download_manager
-            .update_config(imported_config.download.clone())
-            .await
-            .map_err(|e| AppError::Config(format!("Failed to update download manager: {}", e)))?;
-    }
+    // Update download manager configuration through runtime
+    state
+        .download_runtime
+        .update_config(imported_config.download.clone())
+        .await
+        .map_err(|e| AppError::Config(format!("Failed to update download manager: {}", e)))?;
 
     Ok(imported_config)
 }

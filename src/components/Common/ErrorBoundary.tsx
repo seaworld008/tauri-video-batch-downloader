@@ -6,6 +6,7 @@
 import React from 'react';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { useSafeTranslation } from '../../i18n/hooks';
+import { reportFrontendIssue } from '../../utils/frontendLogging';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -114,9 +115,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     this.setState({ errorInfo });
 
-    // Log error details
-    console.error('ErrorBoundary caught an error:', error);
-    console.error('Error info:', errorInfo);
+    reportFrontendIssue('error', 'error_boundary:caught_error', {
+      error,
+      componentStack: errorInfo.componentStack,
+    });
 
     // In production, you might want to send this to an error reporting service
     if (typeof import.meta !== 'undefined' && import.meta.env?.PROD) {

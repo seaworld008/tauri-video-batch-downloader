@@ -458,55 +458,6 @@ impl EncodingDetector {
     }
 }
 
-#[cfg(all(test, feature = "integration-tests"))]
-impl EncodingDetector {
-    pub(crate) fn buffer_size_for_tests(&self) -> usize {
-        self.buffer_size
-    }
-
-    pub(crate) fn deep_detection_for_tests(&self) -> bool {
-        self.deep_detection
-    }
-
-    pub(crate) fn priority_encodings_for_tests(&self) -> &[&'static Encoding] {
-        &self.priority_encodings
-    }
-
-    pub(crate) fn test_is_reasonable_text(&self, text: &str) -> bool {
-        self.is_reasonable_text(text)
-    }
-
-    pub(crate) fn test_statistical_chinese_detect(&self, data: &[u8]) -> &'static Encoding {
-        self.statistical_chinese_detect(data)
-    }
-
-    pub(crate) fn test_detect_bom(&self, data: &[u8]) -> Option<&'static Encoding> {
-        self.detect_bom(data)
-    }
-
-    pub(crate) fn test_is_gbk_range(&self, b1: u8, b2: u8) -> bool {
-        self.is_gbk_range(b1, b2)
-    }
-
-    pub(crate) fn test_is_big5_range(&self, b1: u8, b2: u8) -> bool {
-        self.is_big5_range(b1, b2)
-    }
-
-    pub(crate) fn test_is_shift_jis_range(&self, b1: u8, b2: u8) -> bool {
-        self.is_shift_jis_range(b1, b2)
-    }
-}
-
-#[cfg(all(test, feature = "integration-tests"))]
-impl FileParser {
-    pub(crate) fn test_detect_file_format<P: AsRef<Path>>(
-        &self,
-        file_path: P,
-    ) -> Result<FileFormat> {
-        self.detect_file_format(file_path)
-    }
-}
-
 impl FileParser {
     /// 创建新的文件解析器
     pub fn new() -> Self {

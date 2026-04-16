@@ -132,7 +132,7 @@ pub enum DownloadPriority {
 }
 
 /// YouTube video download format options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum YoutubeDownloadFormat {
     /// Complete video with audio
     CompleteVideo {
@@ -152,15 +152,10 @@ pub enum YoutubeDownloadFormat {
         codec: AudioCodecPreference,
     },
     /// Best available format (automatically selected)
+    #[default]
     BestAvailable,
     /// Specific format by format ID
     SpecificFormat { format_id: String },
-}
-
-impl Default for YoutubeDownloadFormat {
-    fn default() -> Self {
-        Self::BestAvailable
-    }
 }
 
 /// YouTube video information
@@ -237,12 +232,13 @@ pub enum YoutubeDownloadStatus {
 pub type YoutubeProgressCallback = Arc<dyn Fn(u64, Option<u64>, Option<f64>) + Send + Sync>;
 
 /// YouTube downloader implementation
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct DownloadTaskHandle {
     manager: Arc<YtDownloadManager>,
     manager_id: u64,
 }
 
+#[derive(Debug)]
 pub struct YoutubeDownloader {
     config: YoutubeDownloaderConfig,
     active_downloads: Arc<RwLock<HashMap<String, YoutubeDownloadStatus>>>,

@@ -1,6 +1,4 @@
 import React, { useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import {
   DocumentArrowUpIcon,
   TableCellsIcon,
@@ -18,7 +16,14 @@ import {
   buildBackendFieldMapping,
   canProceedWithImport,
 } from '../../utils/importMapping';
-import type { ImportPreview, ImportedData, VideoTask } from '../../types';
+import type { ImportPreview, VideoTask } from '../../types';
+import {
+  importStructuredFileCommand,
+  previewImportDataCommand,
+  selectImportFileCommand,
+} from '../../features/downloads/api/importCommands';
+import { selectOutputDirectoryCommand } from '../../features/downloads/api/systemCommands';
+import { reportFrontendIssue } from '../../utils/frontendLogging';
 
 interface FileImportPanelProps {
   onImportSuccess?: () => void;
@@ -59,18 +64,10 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
     state => state.config.download.output_directory
   );
 
-  const getImportCommand = (filePath: string): 'import_csv_file' | 'import_excel_file' => {
-    const lower = filePath.toLowerCase();
-    if (lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.ods')) {
-      return 'import_excel_file';
-    }
-    return 'import_csv_file';
-  };
-
   const previewImportData = async (filePath: string) => {
     setIsLoading(true);
     try {
-      const preview = await invoke<ImportPreview>('preview_import_data', {
+      const preview = await previewImportDataCommand({
         filePath,
         maxRows: 10,
       });
@@ -94,17 +91,9 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
 
   const handleFileSelect = async () => {
     try {
-      const selected = await open({
-        title: '选择导入文件',
-        filters: [
-          {
-            name: '支持的文件',
-            extensions: ['csv', 'xlsx', 'xls'],
-          },
-        ],
-      });
+      const selected = await selectImportFileCommand({ defaultPath: selectedFile ?? undefined });
 
-      if (selected && !Array.isArray(selected)) {
+      if (selected) {
         setSelectedFile(selected);
         const previewResult = await previewImportData(selected);
         if (!previewResult) {
@@ -118,13 +107,12 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
 
   const handleSelectOutputDir = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
+      const selected = await selectOutputDirectoryCommand({
         title: '选择下载目录',
+        defaultPath: outputDir || defaultOutputDirFromConfig,
       });
 
-      if (selected && typeof selected === 'string') {
+      if (selected) {
         setOutputDir(selected);
       }
     } catch (error) {
@@ -148,17 +136,11 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
     setIsLoading(true);
 
     try {
-      const command = getImportCommand(selectedFile);
-      const importArgs: Record<string, unknown> = {
+      const importedData = await importStructuredFileCommand({
         filePath: selectedFile,
         fieldMapping: backendFieldMapping,
         encoding: importPreview.encoding,
-      };
-      if (command === 'import_excel_file') {
-        importArgs.sheetName = null;
-      }
-
-      const importedData = await invoke<ImportedData[]>(command, importArgs);
+      });
       const validRows = importedData.filter(item => item.record_url || item.url);
 
       if (validRows.length === 0) {
@@ -205,7 +187,9 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
       const resolvedTasks = addedTasks.length > 0 ? addedTasks : tasksToAdd;
 
       if (refreshTasks) {
-        await refreshTasks().catch(console.warn);
+        await refreshTasks().catch(error => {
+          reportFrontendIssue('warn', 'file_import_panel:refresh_tasks_failed', error);
+        });
       }
 
       // Identify new tasks for "Recent Imports" logic

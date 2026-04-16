@@ -558,7 +558,7 @@ impl IntegrityChecker {
             // Emit progress every 100ms or 1MB, whichever comes first
             let now = std::time::Instant::now();
             if now.duration_since(last_progress_time).as_millis() >= 100
-                || bytes_processed % (1024 * 1024) == 0
+                || bytes_processed.is_multiple_of(1024 * 1024)
             {
                 if let Some(sender) = &self.progress_sender {
                     let elapsed = now.duration_since(start_time).as_secs_f64();

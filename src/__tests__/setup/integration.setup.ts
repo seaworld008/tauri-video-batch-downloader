@@ -185,18 +185,6 @@ export const setupDefaultMocks = () => {
       case 'import_csv_file':
         return [];
 
-      case 'get_system_info':
-        return {
-          cpu_usage: 25.5,
-          memory_usage: 60.2,
-          disk_usage: 45.8,
-          network_speed: {
-            download: 1048576.0,
-            upload: 262144.0,
-          },
-          active_downloads: 0,
-        };
-
       default:
         console.warn(`未处理的 IPC 命令: ${cmd}`);
         return Promise.resolve();

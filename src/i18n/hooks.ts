@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n, { SUPPORTED_LANGUAGES, SupportedLanguage } from './index';
 import type { AllTranslationKeys, PluralOptions, TranslationParams } from './types';
+import { reportFrontendIssue } from '../utils/frontendLogging';
 
 const LANGUAGE_STORAGE_KEY = 'video-downloader-language';
 const fallbackTranslationMessage = 'Translation missing';
@@ -58,7 +59,7 @@ export const useLanguage = () => {
           })
         );
       } catch (error) {
-        console.error('Failed to change language:', error);
+        reportFrontendIssue('error', 'i18n:change_language_failed', error);
       } finally {
         setIsChanging(false);
       }
@@ -170,7 +171,7 @@ export const useSafeTranslation = (fallback: string = fallbackTranslationMessage
         }
         return (result as string) || fallback;
       } catch (error) {
-        console.warn(`Translation error for key "${String(key)}":`, error);
+        reportFrontendIssue('warn', `i18n:safe_translation_failed:${String(key)}`, error);
         return fallback;
       }
     },

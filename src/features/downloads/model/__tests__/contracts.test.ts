@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseDownloadEventEnvelopeV1,
+  parseDownloadEventEnvelope,
   parseTaskProgressedPayload,
   parseTaskStatsUpdatedPayload,
   parseTaskStatusChangedPayload,
   SUPPORTED_DOWNLOAD_EVENT_SCHEMA,
 } from '../contracts';
 
-describe('download_event_v1 contracts', () => {
+describe('download.events contracts', () => {
   it('parses a valid envelope', () => {
-    const result = parseDownloadEventEnvelopeV1({
+    const result = parseDownloadEventEnvelope({
       schema_version: SUPPORTED_DOWNLOAD_EVENT_SCHEMA,
       event_id: 'evt-1',
       event_type: 'task.progressed',
@@ -21,7 +21,7 @@ describe('download_event_v1 contracts', () => {
   });
 
   it('rejects unknown schema version', () => {
-    const result = parseDownloadEventEnvelopeV1({
+    const result = parseDownloadEventEnvelope({
       schema_version: 99,
       event_id: 'evt-1',
       event_type: 'task.progressed',

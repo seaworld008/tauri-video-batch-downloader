@@ -36,13 +36,6 @@ pub struct AppState {
     pub config: Arc<tokio::sync::RwLock<AppConfig>>,
     pub download_runtime: DownloadRuntimeHandle,
     pub task_engine: TaskEngineHandle,
-    pub system_monitor: Arc<SystemMonitorController>,
-}
-
-#[derive(Default)]
-pub struct SystemMonitorController {
-    pub running: std::sync::atomic::AtomicBool,
-    pub handle: tokio::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -83,7 +76,6 @@ impl AppState {
             config: Arc::new(tokio::sync::RwLock::new(config)),
             download_runtime,
             task_engine,
-            system_monitor: Arc::new(SystemMonitorController::default()),
         })
     }
 
