@@ -3354,13 +3354,13 @@ impl DownloadManager {
             video_info: None, // 没有额外的视频信息
         };
 
-        self.tasks.insert(task_id.clone(), task);
+        self.tasks.insert(task_id.clone(), task.clone());
 
         // Emit events
         if let Some(sender) = &self.event_sender {
             let _ = sender.send(DownloadEvent::TaskCreated {
                 task_id: task_id.clone(),
-                task: self.tasks.get(&task_id).unwrap().clone(),
+                task: task.clone(),
             });
 
             let _ = sender.send(DownloadEvent::YoutubeVideoInfoFetched {

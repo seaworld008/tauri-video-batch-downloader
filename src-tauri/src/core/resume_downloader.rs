@@ -569,7 +569,10 @@ impl ResumeDownloader {
             let pause_flag = pause_flag.clone();
 
             let handle = tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("chunk concurrency semaphore closed"))?;
 
                 if ResumeDownloader::should_interrupt(&cancel_flag, &pause_flag) {
                     return Err(anyhow::anyhow!(Self::interrupt_reason(
