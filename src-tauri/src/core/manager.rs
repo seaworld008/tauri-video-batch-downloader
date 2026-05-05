@@ -1095,7 +1095,16 @@ impl DownloadManager {
             .unwrap_or_else(|| task.output_path.clone());
         let initial_downloaded_size = task.downloaded_size;
         let initial_file_size = task.file_size;
-        let event_sender = self.event_sender.as_ref().unwrap().clone();
+        let event_sender = self
+            .event_sender
+            .as_ref()
+            .ok_or_else(|| {
+                AppError::Download(
+                    "event_sender not initialised — call set_event_sender before start_download"
+                        .to_string(),
+                )
+            })?
+            .clone();
         let downloader = Arc::clone(&self.http_downloader);
         let progress_tracker = Arc::clone(&self.progress_tracker);
         let integrity_checker = Arc::clone(&self.integrity_checker);

@@ -2,6 +2,29 @@
 
 Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.).
 
+## Prerequisites
+
+| Tool | Required version | Notes |
+|------|------------------|-------|
+| Node.js | ≥ 20.x | LTS line; declared in `package.json#engines` |
+| pnpm | ≥ 9.x | Install via `corepack enable` |
+| Rust | stable (≥ 1.78) | `rustup toolchain install stable` |
+| Tauri CLI | v2 (`@tauri-apps/cli ^2.1`) | Already a dev dependency — invoke with `pnpm tauri ...` |
+| Platform SDK | Windows: WebView2 runtime; macOS: Xcode Command Line Tools; Linux: `webkit2gtk` + `libgtk-3` (see `tauri.conf.json#bundle.linux.deb.depends`) | |
+| Optional | `cargo-audit` for dependency CVE scans | `cargo install cargo-audit` |
+
+Quick verification:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm type-check && pnpm lint && pnpm exec vitest run
+cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+## Working agreement
+
 - You are an AI assistant working on the **Video Downloader Pro** project.
 
 - Use Chinese unless another language is explicitly requested by the user, as the primary audience/comments are predominantly in Chinese.
@@ -10,7 +33,7 @@ Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.)
 
   - Run `git status -sb` at session start when managing Git workflows.
 
-  - Read relevant files before editing. Do not overwrite blindly.
+  - Read every file the current task names or imports before editing. Do not overwrite blindly.
 
   - Keep diffs focused; avoid drive-by refactors unless asked.
 
@@ -32,13 +55,13 @@ Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.)
     - Write a failing test (RED), implement minimally (GREEN), refactor (REFACTOR).
     - Ensure robust unit coverage for state machine transitions (Downloading -> Paused -> Completed).
 
-  - No pure dev server for IPC; you must ask the user to test interactive desktop flows, or run `npm run tauri dev` automatically if appropriate.
+  - No pure dev server for IPC; you must ask the user to test interactive desktop flows, or run `pnpm tauri dev` automatically when the task explicitly authorises a long-running dev server.
 
   - For E2E tests, utilize **Tauri MCP** tools (via `@hypothesi/tauri-mcp-server` configured in `.cursor/mcp.json`). **Never use Chrome DevTools MCP**, since this is exclusively a Tauri app.
 
   - **GSD + graphify workflow**:
     - GSD (local Codex runtime) is installed in `./.codex/` for this repo.
-    - Use GSD to manage planning/execution cadence: start with `$gsd-map-codebase`, then `$gsd-new-project`, then phase/plan/execute workflows as needed.
+    - Use GSD to manage planning/execution cadence: start with `$gsd-map-codebase`, then `$gsd-new-project`, then run the phase/plan/execute workflow that matches the current milestone.
     - Graphify outputs live in `graphify-out/`. Before answering architecture questions or planning significant refactors, read `graphify-out/GRAPH_REPORT.md` first.
     - Prefer `./scripts/graphify-sync.sh smart` after code changes to keep the code graph fresh with low overhead.
     - If docs/media changes should affect semantic understanding, run a full graph rebuild manually instead of relying on smart sync.
@@ -65,7 +88,7 @@ Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.)
 
   - **Tokens first**: Emulate shadcn/ui v4 behavior; use CSS variables (`--background`, `--primary`, `--accent`) over hardcoded hex values.
 
-  - **Selection states**: Apply appropriate focus-visible rings using Tailwind's `focus-visible:ring-*`.
+  - **Selection states**: Every interactive element must declare a `focus-visible:ring-*` Tailwind utility (e.g. `focus-visible:ring-2 focus-visible:ring-ring`).
 
   - **Focus indicators**: Ensure keyboard navigation is accessible, especially for pause/resume queue buttons or dialog interactions.
 
@@ -80,10 +103,10 @@ Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.)
 
 - Key architectural patterns:
 
-  - **Concurrency Manager**: `manager.rs` holds the active Tokio semaphores and download tracking lock (`active_downloads`). You MUST avoid asynchronous deadlocks. Never `await` inside a synchronous `RwLock` guard without using Tokio's async RwLock properly or decoupling locks.
+  - **Concurrency Manager**: `manager.rs` holds the active Tokio semaphores and download tracking lock (`active_downloads`). You MUST avoid asynchronous deadlocks. Never `await` while holding a `std::sync::RwLock`/`Mutex` guard — switch to `tokio::sync::RwLock` or drop the guard before awaiting.
   - **Graceful Pausing**: When intercepting a cancel or pause signal, the backend `resume_downloader.rs` MUST synchronously `flush()` and `sync_all()` local `.part` buffers to the file system before exiting the task.
   - **Frontend State Delay**: The React UI should never destructively mutate `status: "paused"` on an explicit user action. Trigger `invoke()`, then rely on backend state synchronization (via `refreshTasks` or streaming Events) to determine truth, preventing sudden progress bar resets.
   - **Adding a Tauri plugin (v2)**: 
     1. Add to `Cargo.toml`.
     2. Register `builder.plugin(...)` in `src-tauri/src/lib.rs`.
-    3. Update `src-tauri/capabilities/default.json` for whitelist permissions.
+    3. Update `src-tauri/capabilities/migrated.json` (the active capability file in this repo) to whitelist any new commands the plugin exposes.
