@@ -111,7 +111,12 @@ describe('downloads api command seams', () => {
 
   it('wraps import preview and structured-file command seams used by import surfaces', async () => {
     vi.mocked(invoke)
-      .mockResolvedValueOnce({ headers: ['url'], rows: [], total_rows: 0, encoding: 'utf-8' } as never)
+      .mockResolvedValueOnce({
+        headers: ['url'],
+        rows: [],
+        total_rows: 0,
+        encoding: 'utf-8',
+      } as never)
       .mockResolvedValueOnce([{ record_url: 'https://example.com/video.mp4' }] as never)
       .mockResolvedValueOnce([{ record_url: 'https://example.com/video.mp4' }] as never)
       .mockResolvedValueOnce([{ record_url: 'https://example.com/video.mp4' }] as never);
@@ -183,14 +188,18 @@ describe('downloads api command seams', () => {
       .mockResolvedValueOnce(undefined as never);
     vi.mocked(open).mockResolvedValueOnce('/downloads' as never);
 
-    await expect(getVideoInfoCommand<{ title: string }>({ url: 'https://example.com/video' })).resolves.toEqual({
+    await expect(
+      getVideoInfoCommand<{ title: string }>({ url: 'https://example.com/video' })
+    ).resolves.toEqual({
       title: 'Example Video',
     });
     await expect(openDownloadFolderCommand()).resolves.toBeUndefined();
     await expect(
       selectOutputDirectoryCommand({ title: '选择下载目录', defaultPath: '/existing-downloads' })
     ).resolves.toBe('/downloads');
-    await expect(logFrontendEventCommand({ level: 'error', message: 'frontend_bootstrap' })).resolves.toBeUndefined();
+    await expect(
+      logFrontendEventCommand({ level: 'error', message: 'frontend_bootstrap' })
+    ).resolves.toBeUndefined();
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'get_video_info', {
       url: 'https://example.com/video',

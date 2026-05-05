@@ -27,7 +27,10 @@ export const prepareTaskCreationRequest = ({
 
 export const buildTaskCreationValidationPatch = (
   inputValidation: TaskCreationInputValidation
-): Pick<{ validationErrors: string[]; lastValidationTime: number }, 'validationErrors' | 'lastValidationTime'> => ({
+): Pick<
+  { validationErrors: string[]; lastValidationTime: number },
+  'validationErrors' | 'lastValidationTime'
+> => ({
   validationErrors: inputValidation.validationErrorMessages,
   lastValidationTime: Date.now(),
 });

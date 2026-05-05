@@ -65,7 +65,8 @@ export const prepareImportFromFileSuccess = ({
     successSummary,
     successMessage,
     warningSummary: buildImportValidationWarningSummary(importValidation),
-    validationErrors: importValidation.invalidCount > 0 ? importValidation.validationErrorMessages : [],
+    validationErrors:
+      importValidation.invalidCount > 0 ? importValidation.validationErrorMessages : [],
   };
 };
 
@@ -160,10 +161,7 @@ export const buildImportFromFileSuccessMessage = ({
   return `已导入 ${taskCount}/${rawCount} 个任务 - 已跳过 ${invalidCount} 条无效数据`;
 };
 
-export const buildImportFromFileFailurePatch = (
-  existingErrors: string[],
-  error: unknown
-) => ({
+export const buildImportFromFileFailurePatch = (existingErrors: string[], error: unknown) => ({
   isImporting: false,
   validationErrors: [
     ...existingErrors,

@@ -116,13 +116,13 @@ const TaskItem = React.memo<{
                 ? '下载中'
                 : task.status === 'committing'
                   ? '提交中'
-                : task.status === 'completed'
-                  ? '已完成'
-                  : task.status === 'failed'
-                    ? '失败'
-                    : task.status === 'paused'
-                      ? '暂停'
-                      : task.status}
+                  : task.status === 'completed'
+                    ? '已完成'
+                    : task.status === 'failed'
+                      ? '失败'
+                      : task.status === 'paused'
+                        ? '暂停'
+                        : task.status}
           </span>
         </div>
 

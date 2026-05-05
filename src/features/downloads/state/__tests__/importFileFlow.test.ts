@@ -90,9 +90,7 @@ describe('importFileFlow helpers', () => {
     });
     expect(summary.验证耗时).toBe('12.34ms');
 
-    expect(
-      buildImportValidationPatch(['第2行: 导入数据必须包含有效的视频URL'])
-    ).toEqual({
+    expect(buildImportValidationPatch(['第2行: 导入数据必须包含有效的视频URL'])).toEqual({
       validationErrors: ['第2行: 导入数据必须包含有效的视频URL'],
     });
 

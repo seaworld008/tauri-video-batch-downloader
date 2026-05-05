@@ -3,16 +3,8 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import toast from 'react-hot-toast';
 import { handleError } from '../utils/errorHandler';
 import { validateState, syncStates, shouldValidate } from '../utils/stateValidator';
-import {
-  normalizeTaskData,
-  createValidationStats,
-} from '../utils/dataValidator';
-import type {
-  VideoTask,
-  TaskStatus,
-  DownloadConfig,
-  DownloadStats,
-} from '../schemas';
+import { normalizeTaskData, createValidationStats } from '../utils/dataValidator';
+import type { VideoTask, TaskStatus, DownloadConfig, DownloadStats } from '../schemas';
 import {
   createDefaultDownloadStats,
   ensureDownloadStats,
@@ -177,7 +169,10 @@ interface DownloadState {
   pauseAllDownloads: () => Promise<void>;
 
   retryFailedTasks: () => Promise<void>;
-  applyOutputDirectoryOverride: (taskIds: string[], overrideOutputDirectory: string) => Promise<void>;
+  applyOutputDirectoryOverride: (
+    taskIds: string[],
+    overrideOutputDirectory: string
+  ) => Promise<void>;
 
   // Actions - 文件导入
   importFromFile: (filePath: string) => Promise<void>;
@@ -294,7 +289,11 @@ export const useDownloadStore = create<DownloadState>()(
     syncRuntimeState: async reason => {
       try {
         if (reason) {
-          reportFrontendDiagnosticIfEnabled('info', '[syncRuntimeState] syncing runtime state', reason);
+          reportFrontendDiagnosticIfEnabled(
+            'info',
+            '[syncRuntimeState] syncing runtime state',
+            reason
+          );
         }
 
         await syncRuntimeStateWith(get().refreshTasks, get().refreshStats);

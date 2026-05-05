@@ -6,10 +6,7 @@ import {
   refreshStatsAfterTaskCreation,
   scheduleTaskCreationValidation,
 } from './taskCreationEffects';
-import {
-  buildTaskCreationFailurePatch,
-  logTaskCreationFailureContext,
-} from './taskCreationError';
+import { buildTaskCreationFailurePatch, logTaskCreationFailureContext } from './taskCreationError';
 import { warnTaskIntegrityIssues } from './taskCreationState';
 import { reportFrontendDiagnosticIfEnabled } from '../../../utils/frontendLogging';
 
@@ -24,8 +21,20 @@ export interface ExecuteTaskCreationStoreActionParams {
   getValidationStats: () => unknown;
   getValidationErrors: () => string[];
   applyValidationPatch: (patch: { validationErrors: string[]; lastValidationTime: number }) => void;
-  applyStateUpdate: (patch: { isLoading: boolean; tasks: VideoTask[]; validationErrors: string[]; lastValidationTime: number }, summary: unknown) => void;
-  applyFailurePatch: (patch: { isLoading: false; validationErrors: string[]; lastValidationTime: number }) => void;
+  applyStateUpdate: (
+    patch: {
+      isLoading: boolean;
+      tasks: VideoTask[];
+      validationErrors: string[];
+      lastValidationTime: number;
+    },
+    summary: unknown
+  ) => void;
+  applyFailurePatch: (patch: {
+    isLoading: false;
+    validationErrors: string[];
+    lastValidationTime: number;
+  }) => void;
   recordRecentImport: (taskIds: string[], snapshot: VideoTask[]) => void;
   refreshStats: () => Promise<unknown>;
   validateAndSync: () => Promise<boolean>;
@@ -84,7 +93,11 @@ export const executeTaskCreationStoreAction = async ({
       applyValidationPatch(validationPatch);
     }
 
-    reportFrontendDiagnosticIfEnabled('info', 'task_creation_store_action:input_validated', inputSummary);
+    reportFrontendDiagnosticIfEnabled(
+      'info',
+      'task_creation_store_action:input_validated',
+      inputSummary
+    );
     reportFrontendDiagnosticIfEnabled(
       'info',
       'task_creation_store_action:backend_request_preview',

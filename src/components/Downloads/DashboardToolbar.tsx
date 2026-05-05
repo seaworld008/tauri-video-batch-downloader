@@ -13,9 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import type { TaskStatus } from '../../types';
 import { ensureDownloadStats } from '../../utils/downloadStats';
-import {
-  buildTaskOutputPathPreview,
-} from '../../features/downloads/model/outputPathOverride';
+import { buildTaskOutputPathPreview } from '../../features/downloads/model/outputPathOverride';
 import {
   openDownloadFolderCommand,
   selectOutputDirectoryCommand,
@@ -29,7 +27,10 @@ interface DashboardToolbarProps {
   onOpenSettings?: () => void;
 }
 
-export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh, onOpenSettings }) => {
+export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
+  onRefresh,
+  onOpenSettings,
+}) => {
   const tasks = useDownloadStore(state => state.tasks);
   const selectedTasks = useDownloadStore(state => state.selectedTasks);
   const startAllDownloads = useDownloadStore(state => state.startAllDownloads);
@@ -39,7 +40,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh, o
   const setSelectedTasks = useDownloadStore(state => state.setSelectedTasks);
   const startDownload = useDownloadStore(state => state.startDownload);
   const pauseDownload = useDownloadStore(state => state.pauseDownload);
-  const applyOutputDirectoryOverride = useDownloadStore(state => state.applyOutputDirectoryOverride);
+  const applyOutputDirectoryOverride = useDownloadStore(
+    state => state.applyOutputDirectoryOverride
+  );
   const filterStatus = useDownloadStore(state => state.filterStatus);
   const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
   const searchQuery = useDownloadStore(state => state.searchQuery);
@@ -110,13 +113,13 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({ onRefresh, o
 
   const canBulkSelectFiltered = filteredTaskIds.length > 0;
   const canDeleteFilteredWithoutSelection =
-    !hasSelection && canBulkSelectFiltered && (filterStatus !== 'all' || searchQuery.trim().length > 0);
+    !hasSelection &&
+    canBulkSelectFiltered &&
+    (filterStatus !== 'all' || searchQuery.trim().length > 0);
   const inactiveTaskIds = useMemo(
     () =>
       tasks
-        .filter(task =>
-          ['completed', 'failed', 'paused', 'cancelled'].includes(task.status)
-        )
+        .filter(task => ['completed', 'failed', 'paused', 'cancelled'].includes(task.status))
         .map(task => task.id),
     [tasks]
   );

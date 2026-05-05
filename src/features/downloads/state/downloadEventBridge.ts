@@ -74,7 +74,8 @@ export const initializeDownloadEventBridge = async () => {
         const last = lastProgressUpdate.get(taskId) ?? 0;
         const warmupCount = warmupProgressEventsByTask.get(taskId) ?? 0;
         const isWarmupEvent = warmupCount < 2;
-        const shouldEmit = last === 0 || isWarmupEvent || now - last >= PROGRESS_UI_UPDATE_INTERVAL_MS;
+        const shouldEmit =
+          last === 0 || isWarmupEvent || now - last >= PROGRESS_UI_UPDATE_INTERVAL_MS;
 
         if (shouldEmit) {
           lastProgressUpdate.set(taskId, now);
@@ -83,7 +84,6 @@ export const initializeDownloadEventBridge = async () => {
 
         return shouldEmit;
       };
-
 
       const unlistenDownloadEvents = await listen<any>('download.events', event => {
         const parsed = parseDownloadEventEnvelope(event.payload);
@@ -182,9 +182,9 @@ export const initializeDownloadEventBridge = async () => {
 
       if (!hasActiveDownloads && !hasPendingTasks) return;
 
-      state.syncRuntimeState('downloadEventBridge:polling').catch(err =>
-        reportFrontendDiagnosticIfEnabled('warn', '[sync] runtime sync failed', err)
-      );
+      state
+        .syncRuntimeState('downloadEventBridge:polling')
+        .catch(err => reportFrontendDiagnosticIfEnabled('warn', '[sync] runtime sync failed', err));
     }, 1500);
   }
 };

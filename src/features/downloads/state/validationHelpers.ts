@@ -35,10 +35,7 @@ export const buildForceSyncPatch = <TTask>({
   stats,
 });
 
-export const buildForceSyncSummary = <TTask>({
-  tasks,
-  stats,
-}: ForceSyncResult<TTask>) => ({
+export const buildForceSyncSummary = <TTask>({ tasks, stats }: ForceSyncResult<TTask>) => ({
   totalTasks: tasks.length,
   stats,
 });

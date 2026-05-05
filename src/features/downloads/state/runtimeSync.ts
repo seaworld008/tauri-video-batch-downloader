@@ -13,7 +13,8 @@ export const fetchRuntimeStats = async (
   queryStats: () => Promise<DownloadStats>
 ): Promise<DownloadStats> => queryStats();
 
-export const fetchRuntimeTasksCommand = (): Promise<any[]> => fetchRuntimeTasks(getDownloadTasksCommand);
+export const fetchRuntimeTasksCommand = (): Promise<any[]> =>
+  fetchRuntimeTasks(getDownloadTasksCommand);
 
 export const fetchRuntimeStatsCommand = (): Promise<DownloadStats> =>
   fetchRuntimeStats(getDownloadStatsCommand);

@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  resolveCreatedTasksFromBackend,
-  validateTaskCreationInput,
-} from '../taskCreationFlow';
+import { resolveCreatedTasksFromBackend, validateTaskCreationInput } from '../taskCreationFlow';
 
 const frontendLoggingMocks = vi.hoisted(() => ({
   reportFrontendDiagnosticIfEnabled: vi.fn(),

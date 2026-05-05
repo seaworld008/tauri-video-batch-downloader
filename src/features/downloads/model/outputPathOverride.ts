@@ -40,7 +40,10 @@ const getLeafSegment = (value: string) => {
 };
 
 const sanitizeFilename = (value: string) =>
-  value.replace(/[<>:"|?*\\/]/g, '_').replace(/\s+/g, ' ').trim();
+  value
+    .replace(/[<>:"|?*\\/]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const getUrlExtension = (url: string) => {
   const normalizedUrl = url.trim().split('?')[0].split('#')[0];

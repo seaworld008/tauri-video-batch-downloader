@@ -15,14 +15,8 @@ vi.mock('../../../../utils/frontendLogging', () => frontendLoggingMocks);
 describe('taskCreationState helpers', () => {
   it('merges created tasks by replacing existing ids and appending new ids', () => {
     const merged = mergeCreatedTasks(
-      [
-        { id: 'task-1', title: 'old' } as any,
-        { id: 'task-2', title: 'keep' } as any,
-      ],
-      [
-        { id: 'task-1', title: 'new' } as any,
-        { id: 'task-3', title: 'added' } as any,
-      ]
+      [{ id: 'task-1', title: 'old' } as any, { id: 'task-2', title: 'keep' } as any],
+      [{ id: 'task-1', title: 'new' } as any, { id: 'task-3', title: 'added' } as any]
     );
 
     expect(merged).toEqual([

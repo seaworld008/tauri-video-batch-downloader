@@ -1100,7 +1100,7 @@ impl DownloadManager {
             .as_ref()
             .ok_or_else(|| {
                 AppError::Download(
-                    "event_sender not initialised — call set_event_sender before start_download"
+                    "event_sender not initialised: call set_event_sender before start_download"
                         .to_string(),
                 )
             })?
@@ -1944,7 +1944,7 @@ impl DownloadManager {
                 }
             })
             .collect();
-        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.sort_by_key(|(_, created_at)| *created_at);
         entries.into_iter().map(|(task_id, _)| task_id).collect()
     }
 

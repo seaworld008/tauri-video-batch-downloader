@@ -37,4 +37,5 @@ export const selectOutputDirectoryCommand = async (
 export const logFrontendEventCommand = async ({
   level,
   message,
-}: LogFrontendEventOptions): Promise<void> => invokeTauri<void>('log_frontend_event', { level, message });
+}: LogFrontendEventOptions): Promise<void> =>
+  invokeTauri<void>('log_frontend_event', { level, message });

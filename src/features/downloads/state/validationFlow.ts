@@ -5,10 +5,7 @@ import { executeValidationSync, isValidationConsistent } from './validationResul
 type NormalizeTask<TTask> = (task: VideoTask) => TTask;
 type EnsureStats<TStats> = (stats: DownloadStats) => TStats;
 type SetState<T> = (partial: Partial<T> | ((state: T) => Partial<T>)) => void;
-type ValidateStateFn = (
-  tasks: VideoTask[],
-  stats: DownloadStats
-) => Promise<StateValidationResult>;
+type ValidateStateFn = (tasks: VideoTask[], stats: DownloadStats) => Promise<StateValidationResult>;
 type SyncStatesFn<TState, TTask, TStats> = (
   validationResult: StateValidationResult,
   storeUpdater: ReturnType<typeof createValidationStoreUpdater<TState, TTask, TStats>>
@@ -56,12 +53,10 @@ export const runValidationAndSync = async <TState, TTask, TStats>({
     return true;
   }
 
-  return executeValidationSync(
-    validationResult,
-    (issues, syncSuggestion) =>
-      syncStatesFn(
-        { ...validationResult, issues, syncSuggestion },
-        createValidationStoreUpdater(set, normalizeTask, ensureStatsFn)
-      )
+  return executeValidationSync(validationResult, (issues, syncSuggestion) =>
+    syncStatesFn(
+      { ...validationResult, issues, syncSuggestion },
+      createValidationStoreUpdater(set, normalizeTask, ensureStatsFn)
+    )
   );
 };

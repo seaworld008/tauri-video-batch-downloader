@@ -28,7 +28,9 @@ export const validateImportedRows = (
   });
 
   if (importValidation.validItems.length === 0) {
-    const errorDetails = formatImportValidationMessages(importValidation.invalidItems, 5).join('; ');
+    const errorDetails = formatImportValidationMessages(importValidation.invalidItems, 5).join(
+      '; '
+    );
     throw new Error(`所有导入数据均无效。错误详情: ${errorDetails}`);
   }
 

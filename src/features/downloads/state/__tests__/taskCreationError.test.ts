@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  buildTaskCreationFailurePatch,
-  logTaskCreationFailureContext,
-} from '../taskCreationError';
+import { buildTaskCreationFailurePatch, logTaskCreationFailureContext } from '../taskCreationError';
 
 const frontendLoggingMocks = vi.hoisted(() => ({
   reportFrontendDiagnostic: vi.fn(),

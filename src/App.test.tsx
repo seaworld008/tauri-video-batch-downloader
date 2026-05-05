@@ -26,8 +26,9 @@ vi.mock('./features/downloads/state/downloadEventBridge', () => ({
 }));
 
 vi.mock('./stores/downloadStore', () => ({
-  useDownloadStore: (selector: (state: { initializeStore: typeof appMocks.initializeStore }) => unknown) =>
-    selector({ initializeStore: appMocks.initializeStore }),
+  useDownloadStore: (
+    selector: (state: { initializeStore: typeof appMocks.initializeStore }) => unknown
+  ) => selector({ initializeStore: appMocks.initializeStore }),
 }));
 
 vi.mock('./stores/configStore', () => ({

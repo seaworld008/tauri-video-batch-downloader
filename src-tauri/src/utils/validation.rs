@@ -27,12 +27,11 @@ pub fn is_valid_video_url(url: &str) -> bool {
 /// `ftp://`, and any other scheme even if upstream validators were
 /// bypassed or removed.
 pub fn assert_http_url(url: &str) -> AppResult<()> {
-    let parsed = Url::parse(url)
-        .map_err(|e| AppError::System(format!("invalid URL: {}", e)))?;
+    let parsed = Url::parse(url).map_err(|e| AppError::System(format!("invalid URL: {}", e)))?;
     match parsed.scheme() {
         "http" | "https" => Ok(()),
         other => Err(AppError::System(format!(
-            "unsupported URL scheme `{}` — only http/https are allowed",
+            "unsupported URL scheme `{}`: only http/https are allowed",
             other
         ))),
     }

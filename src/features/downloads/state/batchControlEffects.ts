@@ -98,10 +98,8 @@ export const syncRuntimeAfterBatchControl = (
 
 export const buildNoStartableTasksMessage = (): string => '没有可开始的下载任务';
 
-export const buildStartAllSuccessMessage = (
-  requestedCount: number,
-  startedCount: number
-): string => `已提交 ${requestedCount} 个任务（已尝试处理 ${startedCount} 个）`;
+export const buildStartAllSuccessMessage = (requestedCount: number, startedCount: number): string =>
+  `已提交 ${requestedCount} 个任务（已尝试处理 ${startedCount} 个）`;
 
 export const buildPauseAllSuccessMessage = (pausedCount: number): string =>
   `已暂停 ${pausedCount} 个下载任务`;
