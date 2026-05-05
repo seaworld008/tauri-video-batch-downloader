@@ -1,11 +1,7 @@
 import type { DownloadStats, VideoTask } from '../../../schemas';
 import type { StateValidationResult } from '../../../utils/stateValidator';
 
-import {
-  buildForceSyncPatch,
-  buildForceSyncSummary,
-  forceSyncWith,
-} from './validationHelpers';
+import { buildForceSyncPatch, buildForceSyncSummary, forceSyncWith } from './validationHelpers';
 import { runValidationAndSync } from './validationFlow';
 import {
   reportFrontendDiagnostic,
@@ -15,10 +11,7 @@ import {
 type NormalizeTask<TTask> = (task: VideoTask) => TTask;
 type EnsureStats<TStats> = (stats: DownloadStats) => TStats;
 type SetState<TState> = (partial: Partial<TState> | ((state: TState) => Partial<TState>)) => void;
-type ValidateStateFn = (
-  tasks: VideoTask[],
-  stats: DownloadStats
-) => Promise<StateValidationResult>;
+type ValidateStateFn = (tasks: VideoTask[], stats: DownloadStats) => Promise<StateValidationResult>;
 type SyncStatesFn<TState, TTask, TStats> = Parameters<
   typeof runValidationAndSync<TState, TTask, TStats>
 >[0]['syncStatesFn'];

@@ -30,9 +30,9 @@ describe('taskOutputPathStoreAction', () => {
   });
 
   it('applies normalized backend updates to current tasks', async () => {
-    const updateTaskOutputPaths = vi.fn().mockResolvedValue([
-      buildTask('task-1', 'D:/Video/video.mp4'),
-    ]);
+    const updateTaskOutputPaths = vi
+      .fn()
+      .mockResolvedValue([buildTask('task-1', 'D:/Video/video.mp4')]);
     const applyPatch = vi.fn();
 
     await executeOutputPathOverrideStoreAction({

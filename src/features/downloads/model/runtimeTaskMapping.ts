@@ -81,7 +81,8 @@ export const normalizeBackendTask = (task: any): VideoTask => {
     normalizedVideoInfo && Object.values(normalizedVideoInfo).some(value => value !== undefined);
 
   const fileSize = typeof task?.file_size === 'number' ? task.file_size : undefined;
-  const displaySpeed = typeof task?.display_speed_bps === 'number' ? task.display_speed_bps : undefined;
+  const displaySpeed =
+    typeof task?.display_speed_bps === 'number' ? task.display_speed_bps : undefined;
 
   return {
     ...task,

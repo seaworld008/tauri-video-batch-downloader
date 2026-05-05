@@ -6,7 +6,11 @@ export const warnTaskIntegrityIssues = (tasks: VideoTask[]): void => {
   const integrityCheck = checkDataIntegrity(tasks);
 
   if (integrityCheck.duplicates.length > 0 || integrityCheck.corrupted.length > 0) {
-    reportFrontendDiagnosticIfEnabled('warn', 'task_creation_state:integrity_issues_detected', integrityCheck);
+    reportFrontendDiagnosticIfEnabled(
+      'warn',
+      'task_creation_state:integrity_issues_detected',
+      integrityCheck
+    );
   }
 };
 
@@ -44,8 +48,7 @@ export const buildTaskCreationStatePatch = ({
   tasks: mergeCreatedTasks(currentTasks, incomingTasks),
   isLoading: false,
   lastValidationTime: Date.now(),
-  validationErrors:
-    invalidCount > 0 ? [`部分任务验证失败 (${invalidCount}/${totalItems})`] : [],
+  validationErrors: invalidCount > 0 ? [`部分任务验证失败 (${invalidCount}/${totalItems})`] : [],
 });
 
 export const buildTaskCreationSuccessMessage = ({

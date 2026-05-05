@@ -5,8 +5,15 @@
 import { handleError } from './errorHandler';
 import type { VideoTask, DownloadStats } from '../types';
 import { ensureDownloadStats } from './downloadStats';
-import { getDownloadStatsCommand, getDownloadTasksCommand } from '../features/downloads/api/runtimeQueries';
-import { reportFrontendDiagnostic, reportFrontendDiagnosticIfEnabled, reportFrontendIssue } from './frontendLogging';
+import {
+  getDownloadStatsCommand,
+  getDownloadTasksCommand,
+} from '../features/downloads/api/runtimeQueries';
+import {
+  reportFrontendDiagnostic,
+  reportFrontendDiagnosticIfEnabled,
+  reportFrontendIssue,
+} from './frontendLogging';
 
 export interface StateValidationResult {
   isConsistent: boolean;

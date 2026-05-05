@@ -1,6 +1,8 @@
 # Video Downloader Pro
 
-一个基于 **Tauri v2 + Rust + React** 的跨平台桌面批量视频下载器，当前重点不是“从零搭建”，而是让既有下载主链在 **批量导入、任务编排、断点续传、状态同步、架构收敛** 上持续稳定演进。
+一个基于 **Tauri v2 + Rust + React**
+的跨平台桌面批量视频下载器，当前重点不是“从零搭建”，而是让既有下载主链在
+**批量导入、任务编排、断点续传、状态同步、架构收敛** 上持续稳定演进。
 
 > 当前仓库已经具备前后端主代码、导入与下载链路、测试资产、graphify 图谱分析以及 GSD 规划上下文。现在最重要的工作不是推倒重写，而是把现有能力收敛成更稳定的一套正式架构与开发流程。
 
@@ -24,7 +26,8 @@
 
 ## 1. 项目简介
 
-**Video Downloader Pro** 是一个桌面端批量视频下载器，核心关注点不是“单次下载”，而是：
+**Video Downloader Pro**
+是一个桌面端批量视频下载器，核心关注点不是“单次下载”，而是：
 
 1. **任务编排能力**：同时管理多个下载任务及其状态流转
 2. **复杂下载链路可靠性**：支持断点续传、M3U8 分片、失败重试、批量操作
@@ -44,12 +47,14 @@
 这个仓库当前属于 **brownfield 持续收敛阶段**：
 
 ### 已经具备
+
 - 后端下载主链已存在
 - 前端主 UI 路径已存在
 - 导入、下载、基础配置、测试资产已存在
 - graphify 图谱与 GSD 规划上下文已接入
 
 ### 仍需收敛
+
 - 多入口/历史入口尚未完全清理
 - 后端写路径尚未完全统一
 - 前端同步仍存在 event + refresh + polling 三轨并存
@@ -57,6 +62,7 @@
 - 文档与实现还需要进一步对齐
 
 如果要看更详细的“当前真实状态”，请先读：
+
 - `docs/current-state.md`
 
 ---
@@ -64,6 +70,7 @@
 ## 3. 核心能力
 
 ### 3.1 下载能力
+
 - HTTP/HTTPS 常规资源下载
 - M3U8/HLS 分片下载与合并
 - YouTube 信息获取、格式查询、播放列表解析相关能力
@@ -71,17 +78,20 @@
 - 速率限制与下载统计
 
 ### 3.2 任务管理能力
+
 - 新增/删除任务
 - 单任务：开始、暂停、恢复、取消
 - 批量：全部开始、全部暂停、全部恢复、全部取消、失败重试
 - 已完成任务清理
 
 ### 3.3 导入能力
+
 - CSV / Excel 导入
 - 导入预览、字段映射、编码检测
 - 导入后直接转为下载任务
 
 ### 3.4 规划与分析能力
+
 - graphify 图谱分析
 - GSD 规划上下文与 phase 路线图
 - 可持续的架构分析与阶段推进工作流
@@ -91,6 +101,7 @@
 ## 4. 当前架构主链
 
 ### Frontend 主链
+
 ```text
 App.tsx
   -> UnifiedView
@@ -103,6 +114,7 @@ App.tsx
 ```
 
 ### Backend 主链
+
 ```text
 commands/download.rs
   -> TaskEngine
@@ -115,9 +127,11 @@ commands/download.rs
 ```
 
 ### 当前主要问题
+
 当前不是“没有架构”，而是“架构迁移进行中，但还没完全收尾”。
 
 如果你要深入理解当前链路，建议阅读：
+
 - `docs/plans/2026-04-15-download-core-call-chain-analysis.md`
 - `docs/plans/2026-04-15-backend-write-path-boundary-map.md`
 - `graphify-out/GRAPH_REPORT.md`
@@ -151,29 +165,35 @@ commands/download.rs
 ```
 
 ### 注意
-仓库里曾存在多套历史入口/调试入口文件；simple / minimal 以及旧的 backend main 变体现在已从当前仓库主表面移除，不应再被视为当前正式主链。
+
+仓库里曾存在多套历史入口/调试入口文件；simple / minimal 以及旧的 backend
+main 变体现在已从当前仓库主表面移除，不应再被视为当前正式主链。
 
 ---
 
 ## 6. 快速开始（本地开发）
 
 ### 6.1 环境要求
+
 - Node.js >= 18（当前环境已可运行更高版本）
 - pnpm >= 8
 - Rust stable
 - Windows 需安装 WebView2 Runtime
 
 ### 6.2 安装依赖
+
 ```bash
 pnpm install
 ```
 
 ### 6.3 启动开发模式（Tauri 桌面）
+
 ```bash
 pnpm dev
 ```
 
 ### 6.4 构建应用
+
 ```bash
 pnpm build
 ```
@@ -189,11 +209,14 @@ pnpm build
 - **graphify**：维护代码图谱上下文与架构理解
 
 当前推荐的技能分层是：
+
 - `hermes-graphify-gsd-nonintrusive-workflow`：全局非侵入集成与升级策略
 - `hermes-graphify-gsd-project-integration`：仓库级接线与工作流落地
-- `gsd-graphify-brownfield-bootstrap`：当 `.planning/` 需要真实建立/重建时的 brownfield bootstrap
+- `gsd-graphify-brownfield-bootstrap`：当 `.planning/`
+  需要真实建立/重建时的 brownfield bootstrap
 
 ### 推荐入口命令
+
 ```bash
 ./scripts/ai-workflow.sh doctor
 ./scripts/ai-workflow.sh context
@@ -203,10 +226,13 @@ pnpm build
 ```
 
 ### GSD 相关上下文
+
 - 本地 Codex runtime：`./.codex/`
-- 规划上下文：`./.planning/`（注意：它是独立的 brownfield planning 基线，不由普通 repo 接入步骤隐式生成）
+- 规划上下文：`./.planning/`（注意：它是独立的 brownfield
+  planning 基线，不由普通 repo 接入步骤隐式生成）
 
 ### 推荐迭代节奏
+
 1. `./scripts/ai-workflow.sh doctor`
 2. `./scripts/ai-workflow.sh context`
 3. 阅读 `graphify-out/GRAPH_REPORT.md`
@@ -215,6 +241,7 @@ pnpm build
 6. 改完代码后再次 `./scripts/ai-workflow.sh sync`
 
 详细说明见：
+
 - `docs/gsd-graphify-workflow.md`
 - `docs/non-invasive-ai-workflow.md`
 - `docs/plans/2026-04-15-hermes-graphify-gsd-skills-finalization-summary.md`
@@ -257,6 +284,7 @@ pnpm test:all
 - 后端：cargo test（核心模块、状态机、集成测试）
 
 当前更关键的不是“有没有测试”，而是：
+
 - 测试边界要与真实架构边界对齐
 - 后续重构要优先补：
   - 下载生命周期状态流转
@@ -264,6 +292,7 @@ pnpm test:all
   - 前端事件驱动状态同步
 
 对下载核心改动（尤其 `manager.rs`、`resume_downloader.rs`）建议优先补：
+
 - Downloading -> Paused -> Resumed -> Completed
 - Downloading -> Failed -> Retry -> Completed
 - 批量操作与并发限制一致性
@@ -282,6 +311,7 @@ pnpm test:all
 - `docs/plans/2026-04-15-download-core-call-chain-analysis.md`
 
 如果是做架构收敛或 brownfield 迭代，建议同时阅读：
+
 - `.planning/PROJECT.md`
 - `.planning/REQUIREMENTS.md`
 - `.planning/ROADMAP.md`
@@ -291,7 +321,8 @@ pnpm test:all
 
 ## 11. 当前优先事项
 
-当前阶段最重要的不是加新功能，而是进入 **Phase 3 / Frontend State and Event Convergence**：
+当前阶段最重要的不是加新功能，而是进入 **Phase 3 / Frontend State and Event
+Convergence**：
 
 - 抽离前端 download event bridge 与 reducer 接线层
 - 继续收敛 `downloadStore.ts` 的职责
@@ -299,5 +330,6 @@ pnpm test:all
 - 把前端同步模型从 event + refresh + polling 三轨并存继续压缩成更单一的主链
 
 当前系统优化路线见：
+
 - `docs/plans/2026-04-15-system-architecture-optimization-plan.md`
 - `docs/plans/2026-04-15-backend-write-path-boundary-map.md`

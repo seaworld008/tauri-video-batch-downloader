@@ -2,10 +2,8 @@ import type { VideoTask } from '../../../schemas';
 
 import { buildTaskOutputPathUpdates, type TaskOutputPathUpdate } from '../model/outputPathOverride';
 
-export const selectTasksForOutputOverride = (
-  taskIds: string[],
-  tasks: VideoTask[]
-): VideoTask[] => tasks.filter(task => taskIds.includes(task.id));
+export const selectTasksForOutputOverride = (taskIds: string[], tasks: VideoTask[]): VideoTask[] =>
+  tasks.filter(task => taskIds.includes(task.id));
 
 export const prepareOutputPathOverrideRequest = ({
   taskIds,
@@ -23,11 +21,7 @@ export const prepareOutputPathOverrideRequest = ({
     return [];
   }
 
-  return buildTaskOutputPathUpdates(
-    targetTasks,
-    defaultOutputDirectory,
-    overrideOutputDirectory
-  );
+  return buildTaskOutputPathUpdates(targetTasks, defaultOutputDirectory, overrideOutputDirectory);
 };
 
 export const buildOutputPathOverridePatch = (
@@ -35,10 +29,12 @@ export const buildOutputPathOverridePatch = (
   updatedTasks: unknown[],
   normalizeTask: (task: unknown) => VideoTask
 ): { tasks: VideoTask[] } => {
-  const updatedTaskMap = new Map(updatedTasks.map(task => {
-    const normalized = normalizeTask(task);
-    return [normalized.id, normalized] as const;
-  }));
+  const updatedTaskMap = new Map(
+    updatedTasks.map(task => {
+      const normalized = normalizeTask(task);
+      return [normalized.id, normalized] as const;
+    })
+  );
 
   return {
     tasks: currentTasks.map(task => updatedTaskMap.get(task.id) ?? task),

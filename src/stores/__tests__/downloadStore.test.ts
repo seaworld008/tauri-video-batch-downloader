@@ -143,7 +143,9 @@ describe('downloadStore', () => {
       });
 
       const startDownload = vi.fn().mockResolvedValue('started');
-      useDownloadStore.setState({ startDownload } as Partial<ReturnType<typeof useDownloadStore.getState>>);
+      useDownloadStore.setState({ startDownload } as Partial<
+        ReturnType<typeof useDownloadStore.getState>
+      >);
 
       act(() => {
         result.current.enqueueDownloads(['task-1', 'missing-task']);
@@ -357,7 +359,11 @@ describe('downloadStore', () => {
       const taskIds = ['task1', 'task2'];
 
       useDownloadStore.setState({
-        tasks: [buildTask('task1', 'pending'), buildTask('task2', 'completed'), buildTask('task3', 'failed')],
+        tasks: [
+          buildTask('task1', 'pending'),
+          buildTask('task2', 'completed'),
+          buildTask('task3', 'failed'),
+        ],
         selectedTasks: ['task1', 'task2'],
       });
 
@@ -522,9 +528,7 @@ describe('downloadStore', () => {
       const mockTasks = [];
       const mockStats = { total_tasks: 0 };
 
-      vi.mocked(invoke)
-        .mockResolvedValueOnce(mockTasks)
-        .mockResolvedValueOnce(mockStats);
+      vi.mocked(invoke).mockResolvedValueOnce(mockTasks).mockResolvedValueOnce(mockStats);
 
       await act(async () => {
         await result.current.initializeStore();
@@ -775,7 +779,9 @@ describe('downloadStore', () => {
       });
 
       const startDownload = vi.fn().mockResolvedValue('started');
-      useDownloadStore.setState({ startDownload } as Partial<ReturnType<typeof useDownloadStore.getState>>);
+      useDownloadStore.setState({ startDownload } as Partial<
+        ReturnType<typeof useDownloadStore.getState>
+      >);
 
       const { result } = renderHook(() => useDownloadStore());
 
@@ -794,7 +800,9 @@ describe('downloadStore', () => {
       });
 
       const startDownload = vi.fn().mockResolvedValue('started');
-      useDownloadStore.setState({ startDownload } as Partial<ReturnType<typeof useDownloadStore.getState>>);
+      useDownloadStore.setState({ startDownload } as Partial<
+        ReturnType<typeof useDownloadStore.getState>
+      >);
 
       const { result } = renderHook(() => useDownloadStore());
 
@@ -851,7 +859,9 @@ describe('downloadStore', () => {
       });
 
       const startDownload = vi.fn().mockResolvedValue('started');
-      useDownloadStore.setState({ startDownload } as Partial<ReturnType<typeof useDownloadStore.getState>>);
+      useDownloadStore.setState({ startDownload } as Partial<
+        ReturnType<typeof useDownloadStore.getState>
+      >);
 
       const { result } = renderHook(() => useDownloadStore());
 

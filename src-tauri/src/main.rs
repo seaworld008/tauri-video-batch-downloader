@@ -394,6 +394,20 @@ mod windows_webview {
     }
 
     fn attempt_loader_version_check() -> Result<bool, String> {
+        // SAFETY: Win32 FFI block. Invariants:
+        //   - to_wide(...) returns a NUL-terminated UTF-16 buffer that
+        //     outlives the LoadLibraryW call (it is owned for the full
+        //     duration of this scope).
+        //   - LoadLibraryW returns a valid HMODULE or null; we null-check
+        //     before any further use and call FreeLibrary on every exit
+        //     path that succeeded the load.
+        //   - GetProcAddress returns null or a valid FARPROC; we null-check
+        //     before transmuting.
+        //   - mem::transmute matches the documented signature
+        //     `HRESULT (LPCWSTR, LPWSTR*)` of
+        //     GetAvailableCoreWebView2BrowserVersionString.
+        //   - version_ptr is initialised to null; we only call
+        //     CoTaskMemFree on a non-null pointer that came from the API.
         unsafe {
             let loader = LoadLibraryW(to_wide("WebView2Loader.dll").as_ptr());
             if loader.is_null() {
@@ -507,6 +521,9 @@ mod windows_webview {
     }
 
     fn prompt_yes_no(message: &str) -> bool {
+        // SAFETY: MessageBoxW FFI. Both wide-string buffers are owned by
+        // this scope and outlive the call; the HWND is null (no parent
+        // window); the flag bits are valid MB_* constants OR-ed together.
         unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),
@@ -518,6 +535,8 @@ mod windows_webview {
     }
 
     fn show_info(message: &str) {
+        // SAFETY: same invariants as prompt_yes_no — null parent HWND, owned
+        // wide-string buffers, valid MB_* flag composition.
         unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),
@@ -529,6 +548,8 @@ mod windows_webview {
     }
 
     fn show_error(message: &str) {
+        // SAFETY: same invariants as prompt_yes_no — null parent HWND, owned
+        // wide-string buffers, valid MB_* flag composition.
         unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),

@@ -34,6 +34,8 @@ pub(crate) async fn get_youtube_info_internal(url: &str) -> AppResult<YoutubeVid
 // Helper functions using yt-dlp
 
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
+    crate::utils::validation::assert_http_url(url).map_err(|e| AppError::Youtube(e.to_string()))?;
+
     let output = tokio::process::Command::new("yt-dlp")
         .args(["--dump-json", "--no-warnings", "--no-playlist", url])
         .output()

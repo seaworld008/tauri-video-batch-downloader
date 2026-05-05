@@ -3,6 +3,14 @@
 //! This library provides the core functionality for the video downloader application,
 //! including download management, file parsing, and system utilities.
 
+// TODO(R-03 / docs/reviews/CODE_REVIEW.md): roll out crate-wide
+// #![warn(clippy::unwrap_used, clippy::expect_used)] once each pre-existing
+// call site has been audited (~150 unwraps across core/*). Doing it crate-wide
+// today would be denied by `cargo clippy -- -D warnings` in CI. Until that
+// audit lands, *new* modules in safety-critical paths should opt in locally
+// via `#![deny(clippy::unwrap_used, clippy::expect_used)]` at the top of the
+// file, and tests within those modules should `#[allow(...)]` the same lint.
+
 pub mod commands;
 pub mod core;
 pub mod engine;

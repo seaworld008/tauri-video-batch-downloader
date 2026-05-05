@@ -1,4 +1,8 @@
-import type { StateValidationResult, SyncStrategy, StateIssue } from '../../../utils/stateValidator';
+import type {
+  StateValidationResult,
+  SyncStrategy,
+  StateIssue,
+} from '../../../utils/stateValidator';
 
 export const isValidationConsistent = (validationResult: StateValidationResult): boolean =>
   validationResult.isConsistent;

@@ -10,7 +10,9 @@ import { reportFrontendDiagnosticIfEnabled } from '../../../utils/frontendLoggin
 const formatTaskValidationMessages = (
   invalidItems: BatchValidationResult<VideoTask>['invalidItems']
 ): string[] =>
-  invalidItems.map(item => `任务[${item.index}]: ${item.errors.map(error => error.message).join(', ')}`);
+  invalidItems.map(
+    item => `任务[${item.index}]: ${item.errors.map(error => error.message).join(', ')}`
+  );
 
 export const validateTaskCreationInput = (
   newTasks: unknown[]
@@ -57,7 +59,8 @@ export const resolveCreatedTasksFromBackend = ({
   } else {
     const responseValidation = validateApiResponse(backendResponse, TaskListSchema);
     if (!responseValidation.success) {
-      const errorDetails = responseValidation.errors?.map(error => error.message).join(', ') ?? 'unknown error';
+      const errorDetails =
+        responseValidation.errors?.map(error => error.message).join(', ') ?? 'unknown error';
       throw new Error(`Backend response format invalid: ${errorDetails}`);
     }
 

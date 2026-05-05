@@ -371,7 +371,6 @@ export const DownloadStatsSchema = z
 // YouTube 相关 Schemas
 // ====================================================
 
-
 // 文件和导入 Schemas
 // ====================================================
 
@@ -602,7 +601,6 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 export type NetworkSpeed = z.infer<typeof NetworkSpeedSchema>;
 export type SystemInfo = z.infer<typeof SystemInfoSchema>;
 export type DownloadStats = z.infer<typeof DownloadStatsSchema>;
-
 
 export type EncodingDetection = z.infer<typeof EncodingDetectionSchema>;
 export type ImportPreview = z.infer<typeof ImportPreviewSchema>;

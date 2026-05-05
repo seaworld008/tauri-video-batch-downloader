@@ -77,7 +77,10 @@ describe('taskCreationStoreAction', () => {
         最终任务数: 2,
       })
     );
-    expect(recordRecentImport).toHaveBeenCalledWith(['task-1'], [expect.objectContaining({ id: 'task-1' })]);
+    expect(recordRecentImport).toHaveBeenCalledWith(
+      ['task-1'],
+      [expect.objectContaining({ id: 'task-1' })]
+    );
     expect(refreshStats).toHaveBeenCalledTimes(1);
     expect(toastApi.success).toHaveBeenCalledWith(expect.stringContaining('已添加 1/2 个任务'));
 

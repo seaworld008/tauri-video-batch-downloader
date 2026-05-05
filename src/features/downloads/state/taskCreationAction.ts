@@ -21,13 +21,19 @@ export interface ExecuteTaskCreationResult {
   processedTasks: VideoTask[];
   backendTasksPayload: unknown[];
   inputSummary: ReturnType<typeof prepareTaskCreationValidatedInput>['inputSummary'];
-  backendRequestPreview: ReturnType<typeof prepareTaskCreationValidatedInput>['backendRequestPreview'];
-  validationWarningSummary: ReturnType<typeof prepareTaskCreationValidatedInput>['validationWarningSummary'];
+  backendRequestPreview: ReturnType<
+    typeof prepareTaskCreationValidatedInput
+  >['backendRequestPreview'];
+  validationWarningSummary: ReturnType<
+    typeof prepareTaskCreationValidatedInput
+  >['validationWarningSummary'];
   validationPatch: ReturnType<typeof prepareTaskCreationValidatedInput>['validationPatch'] | null;
   validatedBackendTasks: VideoTask[];
   backendResponsePreview: ReturnType<typeof buildTaskCreationBackendResponsePreview>;
   stateUpdate: ReturnType<typeof prepareTaskCreationSuccessArtifacts>['stateUpdate'];
-  completionArtifacts: ReturnType<typeof prepareTaskCreationSuccessArtifacts>['completionArtifacts'];
+  completionArtifacts: ReturnType<
+    typeof prepareTaskCreationSuccessArtifacts
+  >['completionArtifacts'];
 }
 
 export const executeTaskCreation = async ({

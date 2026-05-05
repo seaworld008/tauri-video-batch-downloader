@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createValidationStoreUpdater, runValidationAndSync, shouldRunValidation } from '../validationFlow';
+import {
+  createValidationStoreUpdater,
+  runValidationAndSync,
+  shouldRunValidation,
+} from '../validationFlow';
 
 describe('validationFlow helpers', () => {
   it('delegates validation gate decision to the supplied predicate', () => {

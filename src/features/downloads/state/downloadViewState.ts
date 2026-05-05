@@ -41,15 +41,18 @@ export const createDownloadViewStateActions = <T extends SliceState>(
   },
 
   toggleTaskSelection: taskId => {
-    set(state => ({
-      selectedTasks: state.selectedTasks.includes(taskId)
-        ? state.selectedTasks.filter(id => id !== taskId)
-        : [...state.selectedTasks, taskId],
-    } as Partial<T>));
+    set(
+      state =>
+        ({
+          selectedTasks: state.selectedTasks.includes(taskId)
+            ? state.selectedTasks.filter(id => id !== taskId)
+            : [...state.selectedTasks, taskId],
+        }) as Partial<T>
+    );
   },
 
   selectAllTasks: () => {
-    set(state => ({ selectedTasks: state.tasks.map(task => task.id) } as Partial<T>));
+    set(state => ({ selectedTasks: state.tasks.map(task => task.id) }) as Partial<T>);
   },
 
   clearSelection: () => {
@@ -67,11 +70,8 @@ export const createDownloadViewStateActions = <T extends SliceState>(
   setSortBy: (field, direction) => {
     set(state => {
       const isSameField = state.sortBy === field;
-      const nextDirection = direction ?? (isSameField
-        ? state.sortDirection === 'asc'
-          ? 'desc'
-          : 'asc'
-        : 'asc');
+      const nextDirection =
+        direction ?? (isSameField ? (state.sortDirection === 'asc' ? 'desc' : 'asc') : 'asc');
 
       return {
         sortBy: field,

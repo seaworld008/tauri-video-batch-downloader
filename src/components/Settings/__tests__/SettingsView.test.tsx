@@ -120,7 +120,9 @@ describe('SettingsView', () => {
 
   it('reports directory selection failures through the shared frontend logging seam', async () => {
     const user = userEvent.setup();
-    systemCommandMocks.selectOutputDirectoryCommand.mockRejectedValueOnce(new Error('dialog unavailable'));
+    systemCommandMocks.selectOutputDirectoryCommand.mockRejectedValueOnce(
+      new Error('dialog unavailable')
+    );
 
     render(<SettingsView />);
 

@@ -85,7 +85,7 @@ describe('initializeStoreBootstrap helpers', () => {
           ...((task as Record<string, unknown>) ?? {}),
         }) as any,
       mergeConfig: config => config as any,
-      ensureStats: stats => ({ ...stats, normalized: true } as any),
+      ensureStats: stats => ({ ...stats, normalized: true }) as any,
     });
 
     expect(result.validatedTasks).toMatchObject([
@@ -118,7 +118,7 @@ describe('initializeStoreBootstrap helpers', () => {
       config: { output_directory: '/downloads' } as any,
       stats: { total_tasks: 1 } as any,
       validationErrors: [],
-      ensureStats: stats => ({ ...stats, normalized: true } as any),
+      ensureStats: stats => ({ ...stats, normalized: true }) as any,
     });
 
     expect(patch.tasks).toEqual([{ id: 'task-1' }]);

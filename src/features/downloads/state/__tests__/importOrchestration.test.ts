@@ -30,10 +30,10 @@ describe('importOrchestration helpers', () => {
 
   it('filters ids down to tasks that still exist in store state', () => {
     expect(
-      filterExistingTaskIds(['task-1', 'missing', 'task-2'], [
-        { id: 'task-1' } as any,
-        { id: 'task-2' } as any,
-      ])
+      filterExistingTaskIds(
+        ['task-1', 'missing', 'task-2'],
+        [{ id: 'task-1' } as any, { id: 'task-2' } as any]
+      )
     ).toEqual(['task-1', 'task-2']);
   });
 

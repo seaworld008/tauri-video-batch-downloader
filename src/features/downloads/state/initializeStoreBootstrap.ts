@@ -13,10 +13,7 @@ export const fetchInitialRuntimeSnapshot = async (
   queryTasks: <TTask>() => Promise<TTask[]>,
   queryStats: () => Promise<unknown>
 ): Promise<{ rawTasks: unknown[]; rawStats: unknown }> => {
-  const [rawTasks, rawStats] = await Promise.all([
-    queryTasks<unknown>(),
-    queryStats(),
-  ]);
+  const [rawTasks, rawStats] = await Promise.all([queryTasks<unknown>(), queryStats()]);
 
   return {
     rawTasks: Array.isArray(rawTasks) ? rawTasks : [],
@@ -47,17 +44,29 @@ export const validateInitialRuntimeSnapshot = ({
 
   if (!validations.results.tasks.success) {
     validationErrors.push('后端任务数据格式无效');
-    reportFrontendDiagnostic('error', 'initialize_store_bootstrap:tasks_invalid', validations.results.tasks.errors);
+    reportFrontendDiagnostic(
+      'error',
+      'initialize_store_bootstrap:tasks_invalid',
+      validations.results.tasks.errors
+    );
   }
 
   if (!validations.results.config.success) {
     validationErrors.push('后端配置数据格式无效');
-    reportFrontendDiagnostic('error', 'initialize_store_bootstrap:config_invalid', validations.results.config.errors);
+    reportFrontendDiagnostic(
+      'error',
+      'initialize_store_bootstrap:config_invalid',
+      validations.results.config.errors
+    );
   }
 
   if (!validations.results.stats.success) {
     validationErrors.push('后端统计数据格式无效');
-    reportFrontendDiagnostic('error', 'initialize_store_bootstrap:stats_invalid', validations.results.stats.errors);
+    reportFrontendDiagnostic(
+      'error',
+      'initialize_store_bootstrap:stats_invalid',
+      validations.results.stats.errors
+    );
   }
 
   return {
@@ -66,7 +75,9 @@ export const validateInitialRuntimeSnapshot = ({
     validatedConfig: validations.results.config.success
       ? validations.results.config.data
       : fallbackConfig,
-    validatedStats: validations.results.stats.success ? validations.results.stats.data : fallbackStats,
+    validatedStats: validations.results.stats.success
+      ? validations.results.stats.data
+      : fallbackStats,
     validationErrors,
   };
 };
@@ -151,10 +162,7 @@ export const buildInitializeStoreSuccessSummary = ({
   数据质量: validations.success ? '100%' : '部分无效',
 });
 
-export const buildInitializeStoreFailurePatch = (
-  existingErrors: string[],
-  error: unknown
-) => ({
+export const buildInitializeStoreFailurePatch = (existingErrors: string[], error: unknown) => ({
   isLoading: false,
   validationErrors: [
     ...existingErrors,

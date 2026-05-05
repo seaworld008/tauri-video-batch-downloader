@@ -6,10 +6,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ErrorBoundary } from './components/Common/ErrorBoundary';
-import {
-  reportFrontendEventIfEnabled,
-  safeStringify,
-} from './utils/frontendLogging';
+import { reportFrontendEventIfEnabled, safeStringify } from './utils/frontendLogging';
 import './i18n'; // Initialize i18n system
 import './styles/index.css';
 

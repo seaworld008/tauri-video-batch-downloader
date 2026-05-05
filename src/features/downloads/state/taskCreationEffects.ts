@@ -18,7 +18,11 @@ export const refreshStatsAfterTaskCreation = async (
     await refreshStats();
     reportFrontendDiagnosticIfEnabled('info', 'task_creation_effects:refresh_stats:success');
   } catch (statsError) {
-    reportFrontendDiagnosticIfEnabled('warn', 'task_creation_effects:refresh_stats:failed', statsError);
+    reportFrontendDiagnosticIfEnabled(
+      'warn',
+      'task_creation_effects:refresh_stats:failed',
+      statsError
+    );
   }
 };
 
