@@ -198,6 +198,8 @@ fn is_youtube_url(url: &str) -> bool {
 }
 
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<serde_json::Value> {
+    crate::utils::validation::assert_http_url(url)?;
+
     let output = tokio::process::Command::new("yt-dlp")
         .args(["--dump-json", "--no-download", url])
         .output()
@@ -217,6 +219,8 @@ async fn get_video_info_with_ytdlp(url: &str) -> AppResult<serde_json::Value> {
 }
 
 async fn get_video_info_with_youtubedl(url: &str) -> AppResult<serde_json::Value> {
+    crate::utils::validation::assert_http_url(url)?;
+
     let output = tokio::process::Command::new("youtube-dl")
         .args(["--dump-json", "--no-download", url])
         .output()
