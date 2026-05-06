@@ -1,5 +1,9 @@
 import type { VideoTask } from '../../../schemas';
-import { buildTaskCreationStatePatch, buildTaskCreationSuccessMessage } from './taskCreationState';
+import {
+  buildTaskCreationStatePatch,
+  buildTaskCreationSuccessMessage,
+  summarizeTaskCreationReconciliation,
+} from './taskCreationState';
 import { validateTaskCreationInput } from './taskCreationFlow';
 
 type TaskCreationInputValidation = ReturnType<typeof validateTaskCreationInput>;
@@ -137,6 +141,7 @@ export const prepareTaskCreationStateUpdate = ({
   invalidCount: number;
   totalItems: number;
 }) => {
+  const reconciliation = summarizeTaskCreationReconciliation(currentTasks, incomingTasks);
   const patch = buildTaskCreationStatePatch({
     currentTasks,
     incomingTasks,
@@ -148,24 +153,46 @@ export const prepareTaskCreationStateUpdate = ({
     patch,
     summary: {
       原有任务数: currentTasks.length,
-      新增任务数: incomingTasks.length,
+      新增任务数: reconciliation.createdCount,
+      已有任务数: reconciliation.existingCount,
+      已完成: reconciliation.completedCount,
+      可续传: reconciliation.resumableCount,
+      等待中: reconciliation.pendingCount,
+      下载中: reconciliation.activeCount,
+      失败: reconciliation.failedCount,
       最终任务数: patch.tasks.length,
     },
+    reconciliation,
   };
 };
 
 export const buildTaskCreationCompletionSummary = ({
   createdCount,
+  existingCount = 0,
+  completedCount = 0,
+  resumableCount = 0,
+  pendingCount = 0,
+  failedCount = 0,
   inputCount,
   durationMs,
   totalTaskCount,
 }: {
   createdCount: number;
+  existingCount?: number;
+  completedCount?: number;
+  resumableCount?: number;
+  pendingCount?: number;
+  failedCount?: number;
   inputCount: number;
   durationMs: number;
   totalTaskCount: number;
 }) => ({
-  成功添加: createdCount,
+  新增任务: createdCount,
+  已有任务: existingCount,
+  已完成: completedCount,
+  可续传: resumableCount,
+  等待中: pendingCount,
+  失败: failedCount,
   原始输入: inputCount,
   验证耗时: `${durationMs.toFixed(2)}ms`,
   当前总数: totalTaskCount,
@@ -173,12 +200,22 @@ export const buildTaskCreationCompletionSummary = ({
 
 export const prepareTaskCreationCompletionArtifacts = ({
   createdCount,
+  existingCount = 0,
+  completedCount = 0,
+  resumableCount = 0,
+  pendingCount = 0,
+  failedCount = 0,
   inputCount,
   invalidCount,
   durationMs,
   totalTaskCount,
 }: {
   createdCount: number;
+  existingCount?: number;
+  completedCount?: number;
+  resumableCount?: number;
+  pendingCount?: number;
+  failedCount?: number;
   inputCount: number;
   invalidCount: number;
   durationMs: number;
@@ -189,12 +226,22 @@ export const prepareTaskCreationCompletionArtifacts = ({
 } => ({
   summary: buildTaskCreationCompletionSummary({
     createdCount,
+    existingCount,
+    completedCount,
+    resumableCount,
+    pendingCount,
+    failedCount,
     inputCount,
     durationMs,
     totalTaskCount,
   }),
   successMessage: buildTaskCreationSuccessMessage({
     createdCount,
+    existingCount,
+    completedCount,
+    resumableCount,
+    pendingCount,
+    failedCount,
     inputCount,
     invalidCount,
   }),
@@ -228,7 +275,12 @@ export const prepareTaskCreationSuccessArtifacts = ({
   return {
     stateUpdate,
     completionArtifacts: prepareTaskCreationCompletionArtifacts({
-      createdCount: incomingTasks.length,
+      createdCount: stateUpdate.reconciliation.createdCount,
+      existingCount: stateUpdate.reconciliation.existingCount,
+      completedCount: stateUpdate.reconciliation.completedCount,
+      resumableCount: stateUpdate.reconciliation.resumableCount,
+      pendingCount: stateUpdate.reconciliation.pendingCount,
+      failedCount: stateUpdate.reconciliation.failedCount,
       inputCount,
       invalidCount,
       durationMs,

@@ -28,7 +28,7 @@ describe('downloadEventBridge', () => {
     vi.useRealTimers();
   });
 
-  it('registers only the canonical download.events listener', async () => {
+  it('registers only the canonical download-events listener', async () => {
     vi.resetModules();
 
     const unlisten = (() => {}) as () => void;
@@ -39,7 +39,7 @@ describe('downloadEventBridge', () => {
     await initializeDownloadEventBridge();
 
     expect(listen).toHaveBeenCalledTimes(1);
-    expect(listen).toHaveBeenCalledWith('download.events', expect.any(Function));
+    expect(listen).toHaveBeenCalledWith('download-events', expect.any(Function));
   });
 
   it('derives task stats locally from task.status_changed events', async () => {
@@ -47,7 +47,7 @@ describe('downloadEventBridge', () => {
 
     let downloadEventsHandler: ((event: { payload: unknown }) => void) | undefined;
     vi.mocked(listen).mockImplementation(async (eventName: string, handler: any) => {
-      if (eventName === 'download.events') {
+      if (eventName === 'download-events') {
         downloadEventsHandler = handler;
       }
       return (() => {}) as () => void;

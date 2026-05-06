@@ -56,6 +56,9 @@ describe('FileImportPanel', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    downloadStoreState.tasks = [];
+    downloadStoreState.addTasks.mockImplementation(async (tasks: any[]) => tasks);
+    downloadStoreState.refreshTasks.mockResolvedValue(undefined);
     ({ FileImportPanel } = await import('../FileImportPanel'));
   });
 
@@ -88,5 +91,57 @@ describe('FileImportPanel', () => {
       defaultPath: '/downloads',
       title: '选择下载目录',
     });
+  });
+
+  it('reports duplicate import reconciliation instead of claiming new tasks were created', async () => {
+    const user = userEvent.setup();
+    const existingTask = {
+      id: 'existing-task',
+      url: 'https://example.com/video.mp4',
+      title: 'Existing Video',
+      output_path: '/downloads',
+      status: 'completed',
+      progress: 100,
+      downloaded_size: 100,
+      speed: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    downloadStoreState.tasks = [existingTask];
+    downloadStoreState.addTasks.mockResolvedValue([existingTask]);
+    importCommandMocks.selectImportFileCommand.mockResolvedValue('/tmp/import.csv');
+    importCommandMocks.previewImportDataCommand.mockResolvedValue({
+      headers: ['视频链接'],
+      rows: [['https://example.com/video.mp4']],
+      total_rows: 1,
+      encoding: 'UTF-8',
+      field_mapping: { 视频链接: 'record_url' },
+    });
+    importCommandMocks.importStructuredFileCommand.mockResolvedValue([
+      {
+        record_url: 'https://example.com/video.mp4',
+        kc_name: 'Existing Video',
+      },
+    ]);
+
+    render(<FileImportPanel />);
+
+    const selectPanel = screen.getByText('点击选择 CSV 或 Excel 文件').parentElement;
+
+    if (!selectPanel) {
+      throw new Error('select panel not found');
+    }
+
+    selectPanel.click();
+    await user.click(await screen.findByRole('button', { name: '确认导入 1 个任务' }));
+
+    expect(uiStoreMocks.notify.info).toHaveBeenCalledWith(
+      '未创建新任务',
+      '已识别 1 个已有任务（已完成 1）'
+    );
+    expect(uiStoreMocks.notify.success).not.toHaveBeenCalledWith(
+      expect.stringContaining('成功导入')
+    );
   });
 });

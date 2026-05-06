@@ -3,7 +3,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
-pub const DOWNLOAD_EVENT_CHANNEL: &str = "download.events";
+pub const DOWNLOAD_EVENT_CHANNEL: &str = "download-events";
 pub const EVENT_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,6 +59,6 @@ mod tests {
 
     #[test]
     fn event_channels_are_stable() {
-        assert_eq!(DOWNLOAD_EVENT_CHANNEL, "download.events");
+        assert_eq!(DOWNLOAD_EVENT_CHANNEL, "download-events");
     }
 }

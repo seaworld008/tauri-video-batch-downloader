@@ -3,6 +3,7 @@ import {
   buildTaskCreationStatePatch,
   buildTaskCreationSuccessMessage,
   mergeCreatedTasks,
+  summarizeTaskCreationReconciliation,
   warnTaskIntegrityIssues,
 } from '../taskCreationState';
 
@@ -46,6 +47,52 @@ describe('taskCreationState helpers', () => {
     expect(
       buildTaskCreationSuccessMessage({ createdCount: 3, inputCount: 5, invalidCount: 2 })
     ).toBe('已添加 3/5 个任务 - 已跳过 2 个无效任务');
+  });
+
+  it('builds reconciliation messages for duplicate imports and resumable tasks', () => {
+    expect(
+      buildTaskCreationSuccessMessage({
+        createdCount: 0,
+        existingCount: 3,
+        completedCount: 1,
+        resumableCount: 1,
+        pendingCount: 1,
+        inputCount: 3,
+        invalidCount: 0,
+      })
+    ).toBe('未创建新任务：已识别 3 个已有任务（已完成 1、可续传 1、等待 1）');
+
+    expect(
+      buildTaskCreationSuccessMessage({
+        createdCount: 2,
+        existingCount: 1,
+        failedCount: 1,
+        inputCount: 4,
+        invalidCount: 1,
+      })
+    ).toBe('新增 2 个任务，识别已有 1 个（失败 1），已跳过 1 个无效任务');
+  });
+
+  it('summarizes created, existing, completed, and resumable task buckets', () => {
+    const summary = summarizeTaskCreationReconciliation(
+      [{ id: 'task-completed' } as any, { id: 'task-resume' } as any],
+      [
+        { id: 'task-completed', status: 'completed', downloaded_size: 100 } as any,
+        { id: 'task-resume', status: 'paused', downloaded_size: 40 } as any,
+        { id: 'task-new', status: 'pending', downloaded_size: 0 } as any,
+      ]
+    );
+
+    expect(summary).toEqual({
+      createdCount: 1,
+      existingCount: 2,
+      completedCount: 1,
+      resumableCount: 1,
+      pendingCount: 1,
+      activeCount: 0,
+      failedCount: 0,
+      cancelledCount: 0,
+    });
   });
 
   it('warns when integrity check finds duplicate or corrupted tasks', () => {

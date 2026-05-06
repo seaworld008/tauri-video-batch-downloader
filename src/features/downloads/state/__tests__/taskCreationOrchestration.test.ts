@@ -83,19 +83,25 @@ describe('taskCreationOrchestration helpers', () => {
   it('returns state patch plus summary for created tasks', () => {
     const result = prepareTaskCreationStateUpdate({
       currentTasks: [{ id: 'task-1', title: 'old' } as any],
-      incomingTasks: [{ id: 'task-2', title: 'new' } as any],
+      incomingTasks: [{ id: 'task-2', title: 'new', status: 'pending', downloaded_size: 0 } as any],
       invalidCount: 1,
       totalItems: 3,
     });
 
     expect(result.patch.tasks).toEqual([
       { id: 'task-1', title: 'old' },
-      { id: 'task-2', title: 'new' },
+      { id: 'task-2', title: 'new', status: 'pending', downloaded_size: 0 },
     ]);
     expect(result.patch.validationErrors).toEqual(['部分任务验证失败 (1/3)']);
     expect(result.summary).toEqual({
       原有任务数: 1,
       新增任务数: 1,
+      已有任务数: 0,
+      已完成: 0,
+      可续传: 0,
+      等待中: 1,
+      下载中: 0,
+      失败: 0,
       最终任务数: 2,
     });
   });
@@ -103,7 +109,7 @@ describe('taskCreationOrchestration helpers', () => {
   it('prepares success artifacts from merged state update and completion feedback', () => {
     const result = prepareTaskCreationSuccessArtifacts({
       currentTasks: [{ id: 'task-1', title: 'old' } as any],
-      incomingTasks: [{ id: 'task-2', title: 'new' } as any],
+      incomingTasks: [{ id: 'task-2', title: 'new', status: 'pending', downloaded_size: 0 } as any],
       invalidCount: 1,
       totalItems: 3,
       inputCount: 3,
@@ -113,11 +119,22 @@ describe('taskCreationOrchestration helpers', () => {
     expect(result.stateUpdate.summary).toEqual({
       原有任务数: 1,
       新增任务数: 1,
+      已有任务数: 0,
+      已完成: 0,
+      可续传: 0,
+      等待中: 1,
+      下载中: 0,
+      失败: 0,
       最终任务数: 2,
     });
     expect(result.completionArtifacts).toEqual({
       summary: {
-        成功添加: 1,
+        新增任务: 1,
+        已有任务: 0,
+        已完成: 0,
+        可续传: 0,
+        等待中: 1,
+        失败: 0,
         原始输入: 3,
         验证耗时: '12.34ms',
         当前总数: 2,
@@ -163,12 +180,21 @@ describe('taskCreationOrchestration helpers', () => {
     expect(
       buildTaskCreationCompletionSummary({
         createdCount: 4,
+        existingCount: 1,
+        completedCount: 1,
+        resumableCount: 2,
+        pendingCount: 1,
         inputCount: 5,
         durationMs: 12.34,
         totalTaskCount: 9,
       })
     ).toEqual({
-      成功添加: 4,
+      新增任务: 4,
+      已有任务: 1,
+      已完成: 1,
+      可续传: 2,
+      等待中: 1,
+      失败: 0,
       原始输入: 5,
       验证耗时: '12.34ms',
       当前总数: 9,
@@ -177,6 +203,10 @@ describe('taskCreationOrchestration helpers', () => {
     expect(
       prepareTaskCreationCompletionArtifacts({
         createdCount: 4,
+        existingCount: 1,
+        completedCount: 1,
+        resumableCount: 2,
+        pendingCount: 1,
         inputCount: 5,
         invalidCount: 1,
         durationMs: 12.34,
@@ -184,12 +214,49 @@ describe('taskCreationOrchestration helpers', () => {
       })
     ).toEqual({
       summary: {
-        成功添加: 4,
+        新增任务: 4,
+        已有任务: 1,
+        已完成: 1,
+        可续传: 2,
+        等待中: 1,
+        失败: 0,
         原始输入: 5,
         验证耗时: '12.34ms',
         当前总数: 9,
       },
-      successMessage: '已添加 4/5 个任务 - 已跳过 1 个无效任务',
+      successMessage: '新增 4 个任务，识别已有 1 个（已完成 1、可续传 2、等待 1），已跳过 1 个无效任务',
     });
+  });
+
+  it('reports duplicate import reconciliation without inflating created count', () => {
+    const result = prepareTaskCreationSuccessArtifacts({
+      currentTasks: [
+        { id: 'task-1', status: 'completed', downloaded_size: 100 } as any,
+        { id: 'task-2', status: 'paused', downloaded_size: 50 } as any,
+      ],
+      incomingTasks: [
+        { id: 'task-1', status: 'completed', downloaded_size: 100 } as any,
+        { id: 'task-2', status: 'paused', downloaded_size: 50 } as any,
+      ],
+      invalidCount: 0,
+      totalItems: 2,
+      inputCount: 2,
+      durationMs: 1,
+    });
+
+    expect(result.stateUpdate.summary).toEqual({
+      原有任务数: 2,
+      新增任务数: 0,
+      已有任务数: 2,
+      已完成: 1,
+      可续传: 1,
+      等待中: 0,
+      下载中: 0,
+      失败: 0,
+      最终任务数: 2,
+    });
+    expect(result.completionArtifacts.successMessage).toBe(
+      '未创建新任务：已识别 2 个已有任务（已完成 1、可续传 1）'
+    );
   });
 });

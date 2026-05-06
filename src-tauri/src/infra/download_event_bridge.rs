@@ -35,7 +35,7 @@ pub fn spawn_download_event_bridge(
                     }
                     if let Err(e) = emit_download_event(&app_handle, "task.progressed", &progress) {
                         error!(
-                            "[EVENT_BRIDGE] Failed to emit download.events(task.progressed): {}",
+                            "[EVENT_BRIDGE] Failed to emit download-events(task.progressed): {}",
                             e
                         );
                     }
@@ -89,7 +89,7 @@ fn emit_status_change(
     if strict_logging {
         if let Err(e) = emit_download_event(app_handle, "task.status_changed", &payload) {
             error!(
-                "[EVENT_BRIDGE] Failed to emit download.events(task.status_changed): {}",
+                "[EVENT_BRIDGE] Failed to emit download-events(task.status_changed): {}",
                 e
             );
         }

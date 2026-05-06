@@ -7,7 +7,7 @@ import {
   SUPPORTED_DOWNLOAD_EVENT_SCHEMA,
 } from '../contracts';
 
-describe('download.events contracts', () => {
+describe('download-events contracts', () => {
   it('parses a valid envelope', () => {
     const result = parseDownloadEventEnvelope({
       schema_version: SUPPORTED_DOWNLOAD_EVENT_SCHEMA,

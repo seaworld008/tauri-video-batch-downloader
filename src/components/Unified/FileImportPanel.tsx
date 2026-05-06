@@ -22,6 +22,10 @@ import {
   previewImportDataCommand,
   selectImportFileCommand,
 } from '../../features/downloads/api/importCommands';
+import {
+  buildTaskCreationSuccessMessage,
+  summarizeTaskCreationReconciliation,
+} from '../../features/downloads/state/taskCreationState';
 import { selectOutputDirectoryCommand } from '../../features/downloads/api/systemCommands';
 import { reportFrontendIssue } from '../../utils/frontendLogging';
 
@@ -208,13 +212,22 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
         effectiveSnapshot
       );
 
-      const createdCount = newTaskIds.length;
-      if (createdCount === 0) {
-        notify.info('未创建新任务', '导入内容可能已经存在于下载列表中。');
-      } else if (createdCount < validRows.length) {
-        notify.success(`成功导入 ${createdCount}/${validRows.length} 个下载任务`);
+      const reconciliation = summarizeTaskCreationReconciliation(
+        tasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[0],
+        resolvedTasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[1]
+      );
+      const feedbackMessage = buildTaskCreationSuccessMessage({
+        ...reconciliation,
+        inputCount: importedData.length,
+        invalidCount: importedData.length - validRows.length,
+      });
+
+      if (reconciliation.createdCount === 0) {
+        notify.info('未创建新任务', feedbackMessage.replace('未创建新任务：', ''));
+      } else if (reconciliation.existingCount > 0) {
+        notify.success('导入完成', feedbackMessage);
       } else {
-        notify.success(`成功导入 ${createdCount} 个下载任务`);
+        notify.success(feedbackMessage);
       }
 
       // Reset UI

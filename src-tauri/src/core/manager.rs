@@ -428,8 +428,16 @@ impl DownloadManager {
             .map(|task| (task.id.clone(), task))
             .collect();
 
-        // Convert downloading -> pending on startup so it can be resumed
-        let mut queue = std::collections::BinaryHeap::new();
+        // Restore task records without implicitly starting network work.
+        // Users should decide whether a reopened app resumes pending/paused items.
+        let had_restorable_work = !state.queue.is_empty()
+            || self.tasks.values().any(|task| {
+                matches!(
+                    task.status,
+                    TaskStatus::Downloading | TaskStatus::Pending | TaskStatus::Paused
+                )
+            });
+
         for (_, task) in self.tasks.iter_mut() {
             if task.status == TaskStatus::Downloading {
                 // To avoid API storms on startup, do not downgrade to pending and auto-queue.
@@ -440,29 +448,7 @@ impl DownloadManager {
             }
         }
 
-        for item in state.queue.into_iter() {
-            if let Some(task) = self.tasks.get(&item.task_id) {
-                if task.status == TaskStatus::Pending {
-                    queue.push(item);
-                }
-            }
-        }
-
-        // Ensure all pending tasks are queued at least once
-        for task_id in self
-            .tasks
-            .iter()
-            .filter(|(_, task)| task.status == TaskStatus::Pending)
-            .map(|(id, _)| id.clone())
-        {
-            if !queue.iter().any(|item| item.task_id == task_id) {
-                queue.push(TaskPriority {
-                    task_id,
-                    priority: 5,
-                    created_at: chrono::Utc::now(),
-                });
-            }
-        }
+        let queue = std::collections::BinaryHeap::new();
         let queued_count = queue.len();
 
         if let Ok(mut queue_guard) = self.task_queue.try_lock() {
@@ -472,7 +458,7 @@ impl DownloadManager {
             *queue_guard = queue;
         }
 
-        self.queue_paused = state.queue_paused;
+        self.queue_paused = state.queue_paused || had_restorable_work;
         self.recompute_stats();
         info!(
             "Loaded persisted manager state from {:?}: total={}, pending={}, paused={}, failed={}, completed={}, queued={}, queue_paused={}",
@@ -3380,7 +3366,39 @@ mod tests {
         let queue = manager.task_queue.lock().await;
         let queued_ids: Vec<String> = queue.iter().map(|item| item.task_id.clone()).collect();
         assert!(!queued_ids.contains(&task_id_1));
-        assert!(queued_ids.contains(&task_id_2));
+        assert!(!queued_ids.contains(&task_id_2));
+        assert!(manager.queue_paused);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_persisted_pending_tasks_do_not_auto_queue_on_startup() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_path = temp_dir.path().join("download_state.json");
+        let config = DownloadConfig::default();
+
+        let mut manager = DownloadManager::new_with_state_path(config.clone(), state_path.clone())?;
+
+        let task_id = manager
+            .add_task(
+                "https://example.com/video4.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        drop(manager);
+
+        let manager = DownloadManager::new_with_state_path(config, state_path)?;
+
+        let task = manager.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, TaskStatus::Pending);
+        assert!(manager.queue_paused);
+
+        let queue = manager.task_queue.lock().await;
+        assert!(queue.is_empty());
 
         Ok(())
     }
