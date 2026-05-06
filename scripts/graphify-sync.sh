@@ -39,6 +39,26 @@ run_graphify_python() {
   "$GRAPHIFY_PY" "$@"
 }
 
+graphify_supports_update() {
+  command -v graphify >/dev/null 2>&1 || return 1
+  graphify --help 2>/dev/null | grep -Eq '(^|[[:space:]])update([[:space:]]|$)'
+}
+
+run_graphify_update_or_fallback() {
+  local reason="$1"
+  if graphify_supports_update; then
+    echo "[graphify-sync] $reason -> running graphify update ."
+    graphify update .
+    return 0
+  fi
+
+  echo "[graphify-sync] $reason, but this graphify CLI does not expose 'update'." >&2
+  echo "[graphify-sync] fallback: install/use a graph builder-capable graphify CLI, or rebuild graphify-out manually with the project workflow." >&2
+  echo "[graphify-sync] current CLI commands:" >&2
+  graphify --help 2>&1 | sed 's/^/[graphify-sync]   /' >&2 || true
+  return 0
+}
+
 code_changed_since_head() {
   git diff --name-only HEAD -- | grep -E '\.(rs|ts|tsx|js|jsx|mjs|cjs|json|toml|yaml|yml|css|scss|html)$' >/dev/null 2>&1
 }
@@ -80,8 +100,7 @@ status() {
 smart() {
   pick_python
   if [ ! -f "$GRAPH_JSON" ] || [ ! -f "$REPORT_MD" ] || [ ! -f "$MANIFEST" ]; then
-    echo "[graphify-sync] graph missing or incomplete -> running graphify update ."
-    graphify update .
+    run_graphify_update_or_fallback "graph missing or incomplete"
     return 0
   fi
 
@@ -107,8 +126,7 @@ PY
 
 force() {
   pick_python
-  echo "[graphify-sync] forcing graphify update ."
-  graphify update .
+  run_graphify_update_or_fallback "force requested"
 }
 
 serve() {

@@ -175,15 +175,16 @@ main 变体现在已从当前仓库主表面移除，不应再被视为当前正
 
 ### 6.1 环境要求
 
-- Node.js >= 18（当前环境已可运行更高版本）
-- pnpm >= 8
-- Rust stable
-- Windows 需安装 WebView2 Runtime
+- Node.js >= 20
+- pnpm >= 9（推荐 `corepack prepare pnpm@9.15.0 --activate`）
+- Rust stable >= 1.78
+- Tauri v2 所需平台 SDK：Windows WebView2、macOS Xcode Command Line Tools、Linux
+  GTK/WebKit
 
 ### 6.2 安装依赖
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 ### 6.3 启动开发模式（Tauri 桌面）
@@ -197,6 +198,8 @@ pnpm dev
 ```bash
 pnpm build
 ```
+
+更多贡献者命令见 `CONTRIBUTING.md`。
 
 ---
 
@@ -238,7 +241,10 @@ pnpm build
 3. 阅读 `graphify-out/GRAPH_REPORT.md`
 4. 如果 `.planning/` 已存在，阅读 `.planning/ROADMAP.md` 和 `.planning/STATE.md`
 5. 在 GSD 中推进 phase / plan / execute
-6. 改完代码后再次 `./scripts/ai-workflow.sh sync`
+6. 改完代码后运行 `./scripts/graphify-sync.sh smart`
+
+如果当前 `graphify` CLI 不支持图谱重建，`graphify-sync.sh`
+会明确提示 fallback，而不是继续调用过期的 `graphify update` 子命令。
 
 详细说明见：
 
@@ -269,6 +275,11 @@ pnpm test:coverage
 
 # 后端测试
 cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+# 安全检查
+pnpm audit --prod
+cargo audit --manifest-path src-tauri/Cargo.toml
 
 # 全量质量门禁
 pnpm test:all
@@ -282,6 +293,7 @@ pnpm test:all
 
 - 前端：Vitest（组件 / 集成）
 - 后端：cargo test（核心模块、状态机、集成测试）
+- CI：Node 20 + pnpm 9，Rust fmt/test/clippy，生产依赖 audit
 
 当前更关键的不是“有没有测试”，而是：
 
