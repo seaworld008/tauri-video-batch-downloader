@@ -9,11 +9,7 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 // Keep the inline test block aligned enough for editor/tooling discovery, but do not treat
 // this file as the source of truth for the project's test workflow.
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    tsconfigPaths()
-  ],
+  plugins: [react(), tailwindcss(), tsconfigPaths()],
 
   // Vite options tailored for Tauri development
   clearScreen: false,
@@ -34,6 +30,11 @@ export default defineConfig({
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     rollupOptions: {
       external: ['@tauri-apps/api'],
+      output: {
+        manualChunks(id) {
+          return id.includes('node_modules') ? 'vendor' : undefined;
+        },
+      },
     },
   },
 

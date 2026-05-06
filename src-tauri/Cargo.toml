@@ -22,7 +22,7 @@ futures = "0.3"
 async-trait = "0.1"
 
 # HTTP 客户端和下载
-reqwest = { version = "0.11", features = ["stream", "json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls", "blocking"] }
 bytes = "1.5"
 
 # 错误处理
@@ -69,7 +69,7 @@ hls_m3u8 = "0.4"
 m3u8-rs = "5.0"
 
 # YouTube 下载支持
-yt-dlp = { version = "1.3.4", features = ["tracing"] }
+yt-dlp = { version = "=1.3.4", features = ["tracing"] }
 
 # Futures 工具集
 futures-util = "0.3"
@@ -79,7 +79,6 @@ url = "2.4"
 regex = "1.10"
 
 # 配置管理
-config = "0.13"
 directories = "5.0"
 
 # 系统监控
@@ -90,9 +89,9 @@ parking_lot = "0.12"
 dashmap = "5.5"
 
 # 随机数生成
-rand = "0.8"
-tauri-plugin-fs = "2.4.5"
-tauri-plugin-dialog = "2.6.0"
+rand = "0.10"
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-dialog = "2.7.1"
 tauri-plugin-os = "2.3.2"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-process = "2.3.1"

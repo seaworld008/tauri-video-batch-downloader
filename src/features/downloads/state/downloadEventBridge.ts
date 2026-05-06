@@ -24,6 +24,7 @@ let listenersInitialized = false;
 let listenerSetupPromise: Promise<void> | null = null;
 let activeSyncTimer: number | null = null;
 const PROGRESS_UI_UPDATE_INTERVAL_MS = 1000;
+const DOWNLOAD_EVENT_CHANNEL = 'download-events';
 
 export const initializeDownloadEventBridge = async () => {
   if (listenersInitialized) return;
@@ -85,10 +86,10 @@ export const initializeDownloadEventBridge = async () => {
         return shouldEmit;
       };
 
-      const unlistenDownloadEvents = await listen<any>('download.events', event => {
+      const unlistenDownloadEvents = await listen<any>(DOWNLOAD_EVENT_CHANNEL, event => {
         const parsed = parseDownloadEventEnvelope(event.payload);
         if (parsed.success === false) {
-          reportFrontendDiagnosticIfEnabled('warn', '[download.events] 忽略无效事件', {
+          reportFrontendDiagnosticIfEnabled('warn', '[download-events] 忽略无效事件', {
             error: parsed.error,
             payload: event.payload,
           });
