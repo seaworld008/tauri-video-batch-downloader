@@ -1,5 +1,25 @@
 import type { ImportedData, VideoTask } from '../schemas';
 
+const TASK_STATUS_FROM_BACKEND = {
+  pending: 'pending',
+  downloading: 'downloading',
+  committing: 'committing',
+  paused: 'paused',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
+
+const normalizeTaskStatus = (status: unknown): VideoTask['status'] => {
+  if (typeof status !== 'string') {
+    return 'pending';
+  }
+
+  return TASK_STATUS_FROM_BACKEND[
+    status.toLowerCase() as keyof typeof TASK_STATUS_FROM_BACKEND
+  ] ?? 'pending';
+};
+
 export const normalizeImportedData = (data: any): ImportedData => {
   const normalizeString = (value: unknown): string | undefined => {
     if (typeof value !== 'string') return undefined;
@@ -39,7 +59,7 @@ export const normalizeTaskData = (data: any): Partial<VideoTask> => {
     title: data.title?.trim() || extractTitleFromUrl(data.url),
     output_path: data.output_path?.trim(),
     resolved_path: data.resolved_path?.trim(),
-    status: data.status || 'pending',
+    status: normalizeTaskStatus(data.status),
     progress: Number(data.progress) || 0,
     downloaded_size: Number(data.downloaded_size) || 0,
     speed: Number(data.speed) || 0,

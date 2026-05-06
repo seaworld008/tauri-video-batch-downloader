@@ -155,7 +155,7 @@ describe('DashboardToolbar', () => {
         id: 'pending-task',
         title: 'Pending task',
         url: 'https://example.com/pending.mp4',
-        output_path: '/downloads/pending.mp4',
+        output_path: '/downloads',
         status: 'pending',
         progress: 0,
         downloaded_size: 0,
@@ -176,6 +176,41 @@ describe('DashboardToolbar', () => {
       defaultPath: '/downloads',
       title: '选择本次保存位置',
     });
+  });
+
+  it('uses imported task output directory as the initial start confirmation location', async () => {
+    const user = userEvent.setup();
+
+    configState.config.download.output_directory = '/Users/seaxu/Downloads';
+    storeState.tasks = [
+      {
+        id: 'imported-task',
+        title: 'Imported task',
+        url: 'https://example.com/imported.mp4',
+        output_path: '/tmp/video-downloader-pro-real-test',
+        status: 'pending',
+        progress: 0,
+        downloaded_size: 0,
+        speed: 0,
+        display_speed_bps: 0,
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+      },
+    ];
+
+    render(<DashboardToolbar />);
+
+    await user.click(screen.getByRole('button', { name: '全部开始' }));
+
+    expect(screen.getAllByText('/Users/seaxu/Downloads').length).toBeGreaterThan(0);
+    expect(screen.getByText('/tmp/video-downloader-pro-real-test')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '开始下载' }));
+
+    await waitFor(() => {
+      expect(storeActions.startAllDownloads).toHaveBeenCalledTimes(1);
+    });
+    expect(storeActions.applyOutputDirectoryOverride).not.toHaveBeenCalled();
   });
 
   it('cleans inactive tasks through the confirm dialog instead of deleting immediately', async () => {

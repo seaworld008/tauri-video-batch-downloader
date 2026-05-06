@@ -16,6 +16,7 @@ import { useConfigStore } from '../../stores/configStore';
 import { notify } from '../../stores/uiStore';
 import {
   getVideoInfoCommand,
+  readClipboardTextCommand,
   selectOutputDirectoryCommand,
 } from '../../features/downloads/api/systemCommands';
 import type { VideoTask } from '../../types';
@@ -59,7 +60,7 @@ export const ManualInputPanel: React.FC = () => {
 
   const addFromClipboard = async () => {
     try {
-      const clipboardText = await navigator.clipboard.readText();
+      const clipboardText = await readClipboardTextCommand();
       const urls = clipboardText
         .split('\n')
         .map(line => line.trim())
@@ -80,7 +81,7 @@ export const ManualInputPanel: React.FC = () => {
       setManualUrls([...manualUrls, ...newEntries]);
       notify.success('添加成功', `从剪贴板添加了 ${urls.length} 个链接`);
     } catch (error) {
-      notify.error('读取剪贴板失败', '请确保浏览器允许访问剪贴板');
+      notify.error('读取剪贴板失败', '请检查系统剪贴板是否可用');
     }
   };
 

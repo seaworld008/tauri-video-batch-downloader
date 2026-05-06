@@ -250,6 +250,7 @@ fn main() {
             import_config,
             // 系统相关命令
             open_download_folder,
+            read_clipboard_text,
             get_video_info,
             log_frontend_event,
         ])

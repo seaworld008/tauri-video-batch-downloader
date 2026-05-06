@@ -5,6 +5,7 @@
 
 use std::path::Path;
 use tauri::{AppHandle, State};
+use tokio::process::Command;
 use tracing::{error, info};
 
 use crate::core::models::{AppError, AppResult};
@@ -35,6 +36,18 @@ pub async fn open_download_folder(
     }
 }
 
+/// Read text from the system clipboard.
+#[tauri::command]
+pub async fn read_clipboard_text() -> Result<String, String> {
+    match read_clipboard_text_impl().await {
+        Ok(text) => Ok(text),
+        Err(e) => {
+            error!("❌ Failed to read clipboard: {}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
 /// Get video information from URL
 #[tauri::command]
 pub async fn get_video_info(url: String) -> Result<serde_json::Value, String> {
@@ -53,6 +66,74 @@ pub async fn get_video_info(url: String) -> Result<serde_json::Value, String> {
 }
 
 // Implementation functions
+
+async fn run_clipboard_command(program: &str, args: &[&str]) -> AppResult<String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| AppError::System(format!("Failed to run {}: {}", program, e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::System(format!(
+            "{} exited with status {}{}",
+            program,
+            output.status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr)
+            }
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn read_clipboard_text_impl() -> AppResult<String> {
+    #[cfg(target_os = "macos")]
+    {
+        return run_clipboard_command("pbpaste", &[]).await;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return run_clipboard_command(
+            "powershell.exe",
+            &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+        )
+        .await;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let candidates: &[(&str, &[&str])] = &[
+            ("wl-paste", &["--no-newline"]),
+            ("xclip", &["-selection", "clipboard", "-out"]),
+            ("xsel", &["--clipboard", "--output"]),
+        ];
+        let mut last_error = None;
+
+        for (program, args) in candidates {
+            match run_clipboard_command(program, args).await {
+                Ok(text) => return Ok(text),
+                Err(error) => last_error = Some(error),
+            }
+        }
+
+        return Err(last_error.unwrap_or_else(|| {
+            AppError::System("No supported clipboard reader found".to_string())
+        }));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Err(AppError::System(
+            "Clipboard reading is not supported on this platform".to_string(),
+        ))
+    }
+}
 
 async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     // Create directory if it doesn't exist

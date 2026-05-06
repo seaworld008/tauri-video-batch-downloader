@@ -16,6 +16,9 @@ export const getVideoInfoCommand = async <T>({ url }: GetVideoInfoOptions): Prom
 export const openDownloadFolderCommand = async (): Promise<void> =>
   invokeTauri<void>('open_download_folder');
 
+export const readClipboardTextCommand = async (): Promise<string> =>
+  invokeTauri<string>('read_clipboard_text');
+
 export interface SelectOutputDirectoryOptions {
   defaultPath?: string;
   title?: string;

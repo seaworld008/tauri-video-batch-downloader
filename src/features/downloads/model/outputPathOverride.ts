@@ -112,6 +112,13 @@ export const rebaseTaskOutputPath = (
   }
 
   if (
+    normalizedCurrent === normalizedOverride ||
+    normalizedCurrent.startsWith(`${normalizedOverride}/`)
+  ) {
+    return normalizedCurrent;
+  }
+
+  if (
     normalizedDefault &&
     (normalizedCurrent === normalizedDefault ||
       normalizedCurrent.startsWith(`${normalizedDefault}/`))
@@ -137,6 +144,25 @@ export const buildTaskOutputPathUpdates = (
       overrideOutputDirectory
     ),
   }));
+
+export const resolveStartConfirmDirectory = (
+  tasks: VideoTask[],
+  defaultOutputDirectory: string
+) => {
+  const normalizedDefault = trimTrailingSeparators(
+    normalizeSeparators(defaultOutputDirectory.trim())
+  );
+  const taskOutputDirectories = tasks
+    .map(task => trimTrailingSeparators(normalizeSeparators(task.output_path.trim())))
+    .filter(Boolean);
+  const uniqueTaskOutputDirectories = new Set(taskOutputDirectories);
+
+  if (uniqueTaskOutputDirectories.size === 1) {
+    return taskOutputDirectories[0] ?? normalizedDefault;
+  }
+
+  return normalizedDefault;
+};
 
 export const buildTaskOutputPathPreview = (
   task: VideoTask | undefined,
