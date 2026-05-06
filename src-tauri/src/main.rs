@@ -22,7 +22,7 @@ mod utils;
 use commands::*;
 use core::{
     downloader::{DownloaderConfig, HttpDownloader},
-    models::AppError,
+    models::{AppError, DownloadConfig},
     queue_scheduler::spawn_queue_scheduler,
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
     AppConfig, DownloadManager,
@@ -54,8 +54,13 @@ impl AppState {
             }
             Err(e) => {
                 error!("❌ Failed to create AppState: {}, using fallback", e);
-                // 创建最小化的fallback状态
-                Self::create_fallback()
+                match Self::create_fallback() {
+                    Ok(state) => state,
+                    Err(fallback_error) => {
+                        error!("❌ Failed to create fallback AppState: {}", fallback_error);
+                        std::process::exit(1);
+                    }
+                }
             }
         }
     }
@@ -138,16 +143,31 @@ impl AppState {
         }
     }
 
-    fn create_fallback() -> Self {
+    fn create_fallback() -> Result<Self, String> {
         // 创建最基本的状态，即使某些组件失败也能工作
-        let config = Self::load_initial_config();
+        let mut config = Self::load_initial_config();
 
         // 如果DownloadManager创建失败，使用更简单的配置
-        let download_manager = DownloadManager::new(config.download.clone()).unwrap_or_else(|_| {
-            info!("Creating DownloadManager with minimal config");
-            // 这里应该有一个更简单的构造函数，先假设能处理
-            DownloadManager::new(config.download.clone()).expect("Minimal config should work")
-        });
+        let download_manager = match DownloadManager::new(config.download.clone()) {
+            Ok(manager) => manager,
+            Err(error) => {
+                warn!(
+                    "Failed to create fallback DownloadManager from loaded config: {}",
+                    error
+                );
+                let fallback_download_config = DownloadConfig::default();
+                let manager = DownloadManager::new(fallback_download_config.clone()).map_err(
+                    |fallback_error| {
+                        format!(
+                            "Failed to create DownloadManager from default config: {}",
+                            fallback_error
+                        )
+                    },
+                )?;
+                config.download = fallback_download_config;
+                manager
+            }
+        };
         let download_manager = Arc::new(RwLock::new(download_manager));
         let (download_runtime, router_rx) =
             create_download_runtime_handle(download_manager.clone());
@@ -163,18 +183,17 @@ impl AppState {
             resume_enabled: false,
         };
 
-        let http_downloader = HttpDownloader::new(downloader_config).unwrap_or_else(|_| {
-            panic!("Cannot create even fallback HttpDownloader");
-        });
+        let http_downloader = HttpDownloader::new(downloader_config)
+            .map_err(|error| format!("Cannot create fallback HttpDownloader: {}", error))?;
 
-        Self {
+        Ok(Self {
             download_manager,
             http_downloader: Arc::new(RwLock::new(http_downloader)),
             config: Arc::new(RwLock::new(config)),
             download_runtime,
             task_engine,
             router_rx: std::sync::Mutex::new(Some(router_rx)),
-        }
+        })
     }
 
     /// Take the router receiver for spawning in Tauri runtime
@@ -335,7 +354,10 @@ fn main() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|error| {
+            error!("❌ Error while running Tauri application: {}", error);
+            std::process::exit(1);
+        });
 }
 
 #[cfg(target_os = "windows")]

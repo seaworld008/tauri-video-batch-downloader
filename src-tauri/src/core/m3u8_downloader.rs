@@ -512,7 +512,10 @@ impl M3U8Downloader {
             let global_pause = Arc::clone(&self.is_paused);
 
             let handle = tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("segment semaphore closed"))?;
 
                 if cancel_flag.load(Ordering::Relaxed)
                     || pause_flag.load(Ordering::Relaxed)
