@@ -129,7 +129,7 @@ Run these before spending GitHub Actions minutes:
 ```bash
 pnpm type-check
 pnpm lint
-pnpm exec prettier --check "src/**/*.{ts,tsx,css,json}" "*.html" ".github/workflows/*.yml" ".github/workflows/README.md" "README.md" "AGENTS.md" "docs/**/*.md"
+pnpm exec prettier --check "src/**/*.{ts,tsx,css,json}" "*.html" ".github/workflows/*.yml" ".github/workflows/README.md" "README.md" "docs/**/*.md"
 pnpm exec vitest run
 pnpm exec vitest run --config vitest.config.integration.ts
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check

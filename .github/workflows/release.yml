@@ -160,7 +160,6 @@ jobs:
           ".github/workflows/*.yml"
           ".github/workflows/README.md"
           "README.md"
-          "AGENTS.md"
           "docs/**/*.md"
 
       - name: Run frontend tests
