@@ -400,7 +400,7 @@ export const useDownloadStore = create<DownloadState>()(
           syncRuntimeState: get().syncRuntimeState,
           concurrencyError: {
             suppressToast: suppressConcurrencyToast,
-            queueMessage: '当前下载达到最大并发，其余任务已自动排队等待。',
+            queueMessage: '当前下载达到最大并发，任务已进入等待队列，下载槽空出后会自动继续。',
             queuedResult: 'queued' as const,
             toastFn: toast,
           },
@@ -432,7 +432,7 @@ export const useDownloadStore = create<DownloadState>()(
           source: 'resumeDownload',
           syncRuntimeState: get().syncRuntimeState,
           concurrencyError: {
-            queueMessage: '当前下载达到最大并发，任务已加入队列等待恢复。',
+            queueMessage: '当前下载达到最大并发，任务已进入恢复队列，下载槽空出后会自动继续。',
             queuedResult: undefined,
             toastFn: toast,
           },

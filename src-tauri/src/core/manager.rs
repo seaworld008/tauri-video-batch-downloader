@@ -6,6 +6,9 @@
 mod events;
 mod integrity;
 mod queue;
+#[cfg(test)]
+mod runtime_state_tests;
+mod state;
 mod stats;
 
 use sha2::{Digest, Sha256};
@@ -37,6 +40,13 @@ use crate::core::youtube_downloader::{
     YoutubeDownloaderConfig, YoutubeVideoInfo,
 };
 use crate::utils::file_utils::sanitize_filename;
+
+use self::state::{
+    decide_pause_transition, decide_queue_admission, decide_resume_transition,
+    decide_start_transition, mark_cancelled, mark_paused, mark_queued_start_side_effect,
+    mark_resumed_active, worker_action_for_activity, QueueAdmissionResult, TaskTransitionDecision,
+    WorkerLifecycleAction,
+};
 
 /// Events that can be emitted by the download manager
 #[allow(clippy::large_enum_variant)]
@@ -1584,7 +1594,7 @@ impl DownloadManager {
     ) -> AppResult<()> {
         let task = Self::runtime_hydrate_task_file_state(manager, task_id).await?;
 
-        let (hit_concurrency_limit, semaphore, task_for_start) = {
+        let (queue_admission, semaphore, task_for_start) = {
             let mut guard = manager.write().await;
 
             guard.settle_pending_semaphore_reduction();
@@ -1596,25 +1606,10 @@ impl DownloadManager {
                 .cloned()
                 .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
 
-            if matches!(
-                task_snapshot.status,
-                TaskStatus::Downloading | TaskStatus::Committing
-            ) {
-                return Err(AppError::Download(format!(
-                    "Task is already active: {}",
-                    task_id
-                )));
-            }
-
-            if task_snapshot.status == TaskStatus::Completed {
-                return Err(AppError::Download(format!(
-                    "Task already completed: {}",
-                    task_id
-                )));
-            }
-
-            if task_snapshot.status == TaskStatus::Cancelled {
-                return Err(AppError::Download(format!("Task cancelled: {}", task_id)));
+            if let TaskTransitionDecision::Reject(message) =
+                decide_start_transition(task_id, &task_snapshot.status)
+            {
+                return Err(AppError::Download(message));
             }
 
             if guard.active_downloads.contains_key(task_id) {
@@ -1625,22 +1620,21 @@ impl DownloadManager {
             }
 
             (
-                guard.active_downloads.len() >= guard.config.concurrent_downloads,
+                decide_queue_admission(
+                    guard.active_downloads.len(),
+                    guard.config.concurrent_downloads,
+                ),
                 Arc::clone(&guard.download_semaphore),
                 task,
             )
         };
 
-        if hit_concurrency_limit {
+        if queue_admission == QueueAdmissionResult::QueueForConcurrency {
             let _ = Self::runtime_enqueue_task(manager, task_id, 5).await;
             {
                 let mut guard = manager.write().await;
                 if let Some(task) = guard.tasks.get_mut(task_id) {
-                    if task.status == TaskStatus::Failed {
-                        task.status = TaskStatus::Pending;
-                        task.error_message = None;
-                        task.updated_at = chrono::Utc::now();
-                    }
+                    mark_queued_start_side_effect(task, chrono::Utc::now());
                 }
                 guard.recompute_stats();
             }
@@ -1661,11 +1655,7 @@ impl DownloadManager {
                 {
                     let mut guard = manager.write().await;
                     if let Some(task) = guard.tasks.get_mut(task_id) {
-                        if task.status == TaskStatus::Failed {
-                            task.status = TaskStatus::Pending;
-                            task.error_message = None;
-                            task.updated_at = chrono::Utc::now();
-                        }
+                        mark_queued_start_side_effect(task, chrono::Utc::now());
                     }
                     guard.recompute_stats();
                 }
@@ -1690,7 +1680,7 @@ impl DownloadManager {
         manager: &Arc<RwLock<Self>>,
         task_id: &str,
     ) -> AppResult<()> {
-        let (is_active, should_emit_paused_event) = {
+        let pause_worker_action = {
             let mut guard = manager.write().await;
             let task = guard
                 .tasks
@@ -1698,43 +1688,34 @@ impl DownloadManager {
                 .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?
                 .clone();
 
-            if matches!(
-                task.status,
-                TaskStatus::Completed | TaskStatus::Cancelled | TaskStatus::Committing
-            ) {
-                return Err(AppError::Download(format!(
-                    "Cannot pause task in status: {:?}",
-                    task.status
-                )));
+            if let TaskTransitionDecision::Reject(message) = decide_pause_transition(&task.status) {
+                return Err(AppError::Download(message));
             }
 
             let is_active = guard.active_downloads.contains_key(task_id);
             if let Some(task_mut) = guard.tasks.get_mut(task_id) {
-                task_mut.paused_at = Some(chrono::Utc::now());
-                task_mut.paused_from_active =
-                    is_active || task_mut.status == TaskStatus::Downloading;
-                if task_mut.status != TaskStatus::Paused {
-                    task_mut.status = TaskStatus::Paused;
-                    task_mut.updated_at = chrono::Utc::now();
-                }
+                mark_paused(task_mut, is_active, chrono::Utc::now());
             }
             guard.recompute_stats();
-            (is_active, !is_active)
+            worker_action_for_activity(is_active)
         };
 
         let _ = Self::runtime_remove_task_from_queue(manager, task_id).await;
 
-        if is_active {
-            let downloader = {
-                let guard = manager.read().await;
-                guard.http_downloader.clone()
-            };
-            let _ = downloader.pause_task(task_id).await;
+        match pause_worker_action {
+            WorkerLifecycleAction::SignalActiveWorker => {
+                let downloader = {
+                    let guard = manager.read().await;
+                    guard.http_downloader.clone()
+                };
+                let _ = downloader.pause_task(task_id).await;
+            }
+            WorkerLifecycleAction::EmitSyntheticEvent => {}
         }
 
         Self::runtime_persist_state_best_effort(manager, "runtime_pause_download").await;
 
-        if should_emit_paused_event {
+        if pause_worker_action == WorkerLifecycleAction::EmitSyntheticEvent {
             if let Some(sender) = Self::runtime_event_sender(manager).await {
                 let _ = sender.send(DownloadEvent::TaskPaused {
                     task_id: task_id.to_string(),
@@ -1772,14 +1753,10 @@ impl DownloadManager {
             }
             guard.reap_finished_active_downloads();
 
-            if hydrated_task.status == TaskStatus::Completed
-                || hydrated_task.status == TaskStatus::Cancelled
-                || hydrated_task.status == TaskStatus::Committing
+            if let TaskTransitionDecision::Reject(message) =
+                decide_resume_transition(&hydrated_task.status)
             {
-                return Err(AppError::Download(format!(
-                    "Cannot resume task in status: {:?}",
-                    hydrated_task.status
-                )));
+                return Err(AppError::Download(message));
             }
             guard.active_downloads.contains_key(task_id)
         };
@@ -1797,10 +1774,7 @@ impl DownloadManager {
             {
                 let mut guard = manager.write().await;
                 if let Some(task_mut) = guard.tasks.get_mut(task_id) {
-                    task_mut.status = TaskStatus::Downloading;
-                    task_mut.paused_at = None;
-                    task_mut.paused_from_active = false;
-                    task_mut.updated_at = chrono::Utc::now();
+                    mark_resumed_active(task_mut, chrono::Utc::now());
                 }
                 guard.recompute_stats();
             }
@@ -1842,8 +1816,7 @@ impl DownloadManager {
         {
             let mut guard = manager.write().await;
             if let Some(task_mut) = guard.tasks.get_mut(task_id) {
-                task_mut.status = TaskStatus::Cancelled;
-                task_mut.updated_at = chrono::Utc::now();
+                mark_cancelled(task_mut, chrono::Utc::now());
             }
             guard.recompute_stats();
         }
