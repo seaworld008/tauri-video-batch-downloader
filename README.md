@@ -95,6 +95,8 @@ Graphify 当前识别出的核心抽象包括
 | 本地开发、测试、贡献流程     | [贡献指南](CONTRIBUTING.md)                                              |
 | 构建 release 包              | [构建与发布](docs/build-release.md)                                      |
 | 真实 App 回归测试方案        | [App 回归测试方案](docs/app-regression-test-plan-2026-05-06.md)          |
+| 当前质量门禁和安全状态       | [Code Quality](docs/code-quality.md)                                     |
+| 后续优化路线                 | [Roadmap](docs/roadmap.md)                                               |
 | GSD + Graphify 工作流        | [GSD + Graphify 工作流](docs/gsd-graphify-workflow.md)                   |
 | 大型代码库接手分析           | [AI 接手分析报告](docs/large-codebase-ai-handoff-analysis-2026-05-06.md) |
 

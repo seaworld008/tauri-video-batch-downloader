@@ -1,39 +1,49 @@
 # 对接与数据导入（Integration）
 
+更新日期：2026-05-06
+
 ## 批量导入格式
 
-支持 CSV / Excel。字段可在导入预览中映射。
+支持 CSV / Excel。字段可以在导入预览中映射，只要能识别视频链接字段即可创建任务。
 
-推荐字段（新）：
+推荐字段：
 
 - `zl_id` / `zl_name`
 - `kc_id` / `kc_name`
-- `record_url`（视频链接）
+- `record_url`
 
-兼容字段（旧）：
+兼容字段：
 
 - `id` / `name`
 - `course_id` / `course_name`
 - `url`
 
-> 只要包含视频链接字段即可导入，其他字段为可选。
+## 重复导入行为
+
+导入同一份表格时，应用应识别：
+
+- 新增任务
+- 已存在任务
+- 已完成任务
+- 可续传任务
+- 等待或失败任务
+
+这样用户可以继续下载未完成内容，而不是重复创建一批无法区分的任务。
 
 ## 自动化对接建议
 
-- 外部系统生成 CSV/Excel 后导入
-- 可通过配置导出/导入机制进行批量配置迁移
+- 外部系统导出 CSV/Excel 后交给应用导入。
+- 保持链接字段稳定，业务字段可以作为任务标题、课程、分组等元信息。
+- 不建议直接改写应用内部状态文件；配置迁移请使用应用内导出/导入。
 
-## 配置文件
+## 开发命令边界
 
-配置文件为
-`config.json`，位于系统配置目录。不同平台路径略有差异，但均可通过应用内导出/导入完成迁移。
+前端通过 feature-local API wrappers 调用 Tauri commands，不建议组件直接散落
+`invoke(...)`。
 
-## Tauri 命令（开发对接）
+主要命令类别：
 
-前端/插件可通过 Tauri `invoke` 调用命令：
-
-- 下载：`add_download_tasks` / `start_download` / `pause_download` /
-  `resume_download`
-- 批量：`pause_all_downloads` / `start_all_downloads`
-- 导入：`import_file` / `preview_import_data`
-- 配置：`get_config` / `update_config` / `export_config` / `import_config`
+- 下载：`add_download_tasks`、`start_download`、`pause_download`、`resume_download`
+- 批量：`start_all_downloads`、`pause_all_downloads`、`retry_failed_tasks`
+- 导入：`import_file`、`preview_import_data`
+- 配置：`get_config`、`update_config`、`export_config`、`import_config`

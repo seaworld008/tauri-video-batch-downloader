@@ -1,78 +1,55 @@
-# GSD + graphify workflow
+# GSD + Graphify Workflow
 
-## Purpose
+更新日期：2026-05-06
 
-This repo uses:
-
-- **Hermes** for orchestration, skills, memory, and environment-level workflow control
-- **GSD** for planning, roadmap, phased execution, and review workflows
-- **graphify** for codebase graph context, architecture recall, and low-cost refresh after code changes
-
-Together they support continuous iterative development without losing big-picture context.
+本仓库使用 GSD 管理阶段化执行节奏，使用 Graphify/GitNexus 辅助大型代码库理解、影响分析和文档校准。
 
 ---
 
-## Installed locations
+## 1. 本地位置
 
-- GSD local runtime files: `./.codex/`
-- Graphify outputs: `./graphify-out/`
-- Graphify sync helper: `./scripts/graphify-sync.sh`
-- Unified repo workflow entrypoint: `./scripts/ai-workflow.sh`
-- Graphify git hooks: `.git/hooks/post-commit`, `.git/hooks/post-checkout` (verify in the primary checkout; worktree tests may not support direct hook install)
+- GSD local runtime：`./.codex/`
+- Graphify 输出：`./graphify-out/`
+- Graphify 报告：`./graphify-out/GRAPH_REPORT.md`
+- Graphify 同步脚本：`./scripts/graphify-sync.sh`
+- 统一工作流入口：`./scripts/ai-workflow.sh`
+
+`.planning/` 和 `graphify-out/` 默认是本地工作流产物，不随普通提交入库。
 
 ---
 
-## Recommended workflow
-
-### 1. Check environment and repo state first
+## 2. 推荐进入流程
 
 ```bash
+git status -sb
 ./scripts/ai-workflow.sh doctor
 ./scripts/ai-workflow.sh context
 ```
 
-Use this when:
-- entering the project after a gap
-- after global toolchain upgrades
-- before significant architectural changes
+接手架构或大范围变更前，先读：
 
-### 2. Rebuild or refresh codebase understanding
+1. `graphify-out/GRAPH_REPORT.md`
+2. `docs/current-state.md`
+3. `docs/architecture-functional-design.md`
+4. `docs/large-codebase-ai-handoff-analysis-2026-05-06.md`
 
-Run in Codex when needed:
+---
 
-```text
-$gsd-map-codebase
-```
+## 3. Graphify 使用
 
-### 3. Planning is a separate brownfield concern
-
-If `.planning/` already exists, reuse it.
-
-If `.planning/` does not exist and the repo needs a real brownfield planning baseline, use the dedicated bootstrap path instead of pretending the normal repo-integration flow creates it automatically.
-
-### 4. Keep graph context fresh after code changes
+代码变更后可用：
 
 ```bash
 ./scripts/graphify-sync.sh smart
 ```
 
-Behavior:
-- if code changed -> rebuild code graph cheaply
-- if only docs/media changed -> no automatic semantic refresh
-- if graph output missing -> run `graphify update .`
-
-### 4. Force a full graph refresh when needed
+文档或语义理解发生明显变化时，使用强制刷新：
 
 ```bash
 ./scripts/graphify-sync.sh force
 ```
 
-Use this when:
-- graph outputs are stale
-- semantic/doc changes matter
-- you want a full rebuild instead of code-only refresh
-
-### 5. Serve the graph for tool-based exploration
+服务本地图谱：
 
 ```bash
 ./scripts/graphify-sync.sh serve
@@ -80,36 +57,28 @@ Use this when:
 
 ---
 
-## Practical guidance
+## 4. GitNexus 使用
 
-### Use GSD for
-- phase planning
-- work breakdown
-- execution flow
-- review loops
-- milestone/roadmap management
+提交前建议分析 staged 影响面：
 
-### Use graphify for
-- understanding architecture
-- tracing core call chains
-- locating central hubs like `DownloadManager`
-- seeing which modules changed shape after refactors
+```text
+detect_changes(scope="staged")
+```
 
-### Best combined pattern
-1. `./scripts/ai-workflow.sh doctor`
-2. `./scripts/ai-workflow.sh context`
-3. `$gsd-map-codebase` when architecture understanding needs refresh
-4. if `.planning/` exists, use GSD phase planning commands; if it does not exist and is needed, bootstrap planning separately
-5. implement/refactor
-6. `./scripts/ai-workflow.sh sync`
-7. repeat
+重点关注：
+
+- 下载状态机
+- runtime command router
+- event bridge
+- 导入任务创建和重复识别
+- 持久化恢复
 
 ---
 
-## Notes
+## 5. GSD 使用原则
 
-- `.planning/` and `graphify-out/` are local workflow artifacts and are git-ignored by default.
-- `graphify-out/GRAPH_REPORT.md` is the fastest entry point for architecture recall.
-- `graphify-out/graph.json` and `graphify-out/GRAPH_REPORT.md` are the stable graph outputs to expect; do not require `manifest.json` by default.
-- For brownfield work, prefer graphify first, then let GSD plan on top of that refreshed codebase understanding.
-- If `graphify --help` warns about an older installed skill version after Hermes-side install is updated, check other installed platform targets (for example Claude) before treating it as a Hermes-specific failure.
+- 大功能先规划，再分阶段执行。
+- 新下载核心行为必须 test-first。
+- 每个阶段完成后，同步 README、`docs/index.md`、`docs/current-state.md` 和
+  `docs/roadmap.md`。
+- 历史计划执行完后不长期保留，结论合并进当前事实源。

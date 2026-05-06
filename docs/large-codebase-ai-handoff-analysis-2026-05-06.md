@@ -1,577 +1,673 @@
 # 大型项目代码库 AI 接手分析报告
 
-生成时间：2026-05-06
-分析范围：`/Volumes/soft/10-codex/006-tauri-video-batch-downloader`
-分析方式：GitNexus 索引刷新 + GitNexus MCP 查询 +
-graphify 结构图谱 + 本地源码扫描。
+- 更新日期：2026-05-06
+- 当前基线：`main` /
+  `822f387 docs: polish architecture and community onboarding`
+- 分析范围：`/Volumes/soft/10-codex/006-tauri-video-batch-downloader`
+- 分析方式：本地源码扫描、Graphify 图谱、GitNexus 索引与影响分析、README/文档/CI/GitHub 社区配置复核。
 
-## 1. 项目是做什么的
+> 本文档面向下一位接手该仓库的 AI
+> agent 或工程师。它描述当前 main 的真实状态、主要模块、核心流程、风险区域和建议接手顺序。若与历史设计文档冲突，优先相信
+> `README.md`、`docs/architecture-functional-design.md`、`docs/current-state.md`
+> 和当前源码。
 
-这是一个跨平台桌面端批量视频下载器，产品名为
-`Video Downloader Pro`。前端负责导入 URL/CSV/Excel、展示下载队列、批量控制任务和设置下载目录；后端通过 Tauri
-IPC 提供下载任务管理、配置管理、文件导入、视频信息探测、日志落盘等能力。
+---
 
-依据：
+## 1. 执行摘要
 
-- `package.json:2-4` 定义项目名 `video-downloader-pro` 与描述。
-- `src-tauri/Cargo.toml:1-8` 定义 Rust/Tauri 后端包名、版本、默认二进制。
-- `src-tauri/tauri.conf.json:30-34`
-  声明应用描述支持 YouTube、M3U8、HTTP 直链下载。
-- `src-tauri/src/main.rs:220-254` 注册所有 Tauri IPC 命令。
+Video Downloader Pro 是一个基于 **Tauri v2 + Rust + React 19 + TypeScript**
+的跨平台桌面批量视频下载工具。项目核心不是简单 URL 下载，而是：
 
-## 2. 技术栈
+- Excel/CSV 批量导入任务
+- 下载队列和并发调度
+- 暂停、恢复、失败重试、断点续传
+- M3U8/HLS、HTTP/HTTPS、YouTube 信息与格式相关能力
+- App 重启后的任务和断点状态恢复
+- 通过 Tauri 事件桥把后端真实状态同步到前端
 
-| 层       | 技术                                           | 依据                                                                                       |
-| -------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| 桌面壳   | Tauri v2                                       | `src-tauri/Cargo.toml:15`、`src-tauri/tauri.conf.json:1-7`                                 |
-| 后端     | Rust 2021、Tokio、Reqwest、Tracing             | `src-tauri/Cargo.toml:6`、`src-tauri/Cargo.toml:19-30`、`src-tauri/Cargo.toml:52-57`       |
-| 前端     | React 19、Vite 7、TypeScript、Tailwind CSS 4   | `package.json:48-49`、`package.json:59-84`                                                 |
-| 状态管理 | Zustand v5                                     | `package.json:56`、`src/stores/downloadStore.ts:1-2`                                       |
-| 数据校验 | Zod                                            | `package.json:55`、`src/schemas/*`                                                         |
-| 测试     | Vitest、Testing Library、cargo test/clippy/fmt | `package.json:17-23`、`.github/workflows/ci.yml:51-67`、`.github/workflows/ci.yml:109-125` |
-| 打包发布 | Tauri build、GitHub Actions                    | `package.json:11-13`、`.github/workflows/ci.yml:128-195`                                   |
+当前仓库已经完成多轮架构收敛和社区化整理：
 
-## 3. 目录结构
+- README 已改成面向社区的第一屏入口，包含 badges、功能表、架构图和文档跳转。
+- 新增完整架构文档 `docs/architecture-functional-design.md`。
+- GitHub 仓库已设置 description、homepage、topics、Issues、Discussions、Wiki、labels 和 issue/PR
+  templates。
+- 下载事件信道已从非法的 `download.events` 修正为 Tauri v2 合法信道
+  `download-events`。
+- 启动恢复策略已修正：重启后恢复任务和断点，但不自动偷跑下载。
+- 重复导入同一表格时，前端已用 reconciliation 摘要区分新增/已有/完成/可续传/等待/失败任务。
 
-| 目录/文件                       | 功能                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `src/main.tsx`                  | 前端 React 根入口，挂载 `ErrorBoundary`、React Query、ThemeProvider、App。见 `src/main.tsx:42-55` |
-| `src/App.tsx`                   | 前端应用启动协调，初始化事件桥、配置与下载 store。见 `src/App.tsx:16-36`                          |
-| `src/components/Unified/`       | 当前主视图与导入/手动输入/状态栏组件                                                              |
-| `src/components/Downloads/`     | 下载工具栏、批量控制、确认弹窗                                                                    |
-| `src/features/downloads/api/`   | 前端 feature-local Tauri IPC 封装                                                                 |
-| `src/features/downloads/state/` | 下载 feature 的 store 副作用、事件 reducer、runtime sync、批量操作等编排                          |
-| `src/stores/`                   | Zustand stores：下载、配置、UI 通知                                                               |
-| `src/schemas/`                  | 前端运行时 schema 与类型导出                                                                      |
-| `src-tauri/src/main.rs`         | Tauri 桌面应用真实运行入口                                                                        |
-| `src-tauri/src/lib.rs`          | Rust library 导出与测试入口，部分与 `main.rs` 的 AppState 存在重复                                |
-| `src-tauri/src/commands/`       | Tauri IPC 命令：download/import/config/system/youtube                                             |
-| `src-tauri/src/core/`           | 下载核心：manager、runtime、downloader、resume、M3U8、YouTube、解析、错误、完整性                 |
-| `src-tauri/src/engine/`         | `TaskEngine`，为 start/pause/resume/cancel 提供 request_id 去重与命令串行化                       |
-| `src-tauri/src/infra/`          | 事件总线、事件桥、命令错误、工具能力探测                                                          |
-| `.github/workflows/`            | CI、release、安全审计                                                                             |
-| `docs/`                         | 架构、计划、评审、交接文档                                                                        |
-| `graphify-out/`                 | 本地 graphify 图谱产物，默认不入库                                                                |
+---
 
-## 4. 每个模块的功能
+## 2. 当前最重要事实
 
-### 前端模块
+| 主题               | 当前事实                                                                        |
+| ------------------ | ------------------------------------------------------------------------------- |
+| 真实运行入口       | 前端 `src/main.tsx -> src/App.tsx -> UnifiedView`；后端 `src-tauri/src/main.rs` |
+| 下载核心           | `DownloadRuntimeHandle -> DownloadManager -> downloader/resume/m3u8/youtube`    |
+| 前端状态主链       | `UnifiedView -> useDownloadStore -> features/downloads/api/state -> Zustand`    |
+| 后端事件信道       | `download-events`，不是旧的 `download.events`                                   |
+| 任务恢复           | 重启后 `Downloading` 转 `Paused`，清空启动队列，`queue_paused = true`           |
+| 导入重复识别       | 前端 `TaskCreationReconciliation` 汇总新增与已有任务                            |
+| 当前社区入口       | README、architecture-functional-design、issue templates、PR template 已更新     |
+| 当前未跟踪本地文件 | `.claude/`、`CLAUDE.md`、`sqlResult_1.xls`，不要误提交                          |
 
-- `src/main.tsx`：注册全局 `error` 和 `unhandledrejection` 监听，创建 React
-  Query client，挂载应用。依据 `src/main.tsx:13-25`、`src/main.tsx:27-55`。
-- `src/App.tsx`：启动时调用
-  `initializeDownloadEventBridge()`、`loadConfig()`、`initializeStore()`，启动完成后渲染
-  `UnifiedView`、`NotificationCenter`、`Toaster`。依据 `src/App.tsx:16-62`。
-- `src/stores/downloadStore.ts`：核心前端状态容器，包含任务列表、下载配置、统计、导入状态、校验状态、筛选排序、任务控制动作。接口定义集中在
-  `src/stores/downloadStore.ts:108-246`，实现从
-  `src/stores/downloadStore.ts:248` 开始。
-- `src/features/downloads/api/*.ts`：前端 IPC facade，例如
-  `startDownloadCommand()` 调用 `start_download`，`pauseDownloadCommand()` 调用
-  `pause_download`。依据 `src/features/downloads/api/downloadCommands.ts:1-20`。
-- `src/features/downloads/state/downloadEventBridge.ts`：监听后端
-  `download.events`，解析 envelope 后更新 Zustand
-  store；进度事件按 1000ms 节流，并每 1500ms 主动同步 runtime 状态。依据
-  `src/features/downloads/state/downloadEventBridge.ts:28-190`。
+---
 
-### 后端模块
+## 3. 技术栈
 
-- `src-tauri/src/main.rs`：桌面应用真实入口，注册 Tauri 插件、IPC 命令、router
-  loop、event bridge、queue scheduler。依据 `src-tauri/src/main.rs:212-323`。
-- `src-tauri/src/commands/download.rs`：下载 IPC 命令面，包含 add/update/start/pause/resume/cancel/batch/stat/rate
-  limit。命令清单见 `src-tauri/src/commands/download.rs:28-358`。
-- `src-tauri/src/commands/import.rs`：CSV/Excel 导入命令，`import_csv_file()` 与
-  `import_excel_file()` 都委托到 `import_file()`，再进入 `FileParser`。依据
-  `src-tauri/src/commands/import.rs:71-190`、`src-tauri/src/commands/import.rs:220-260`。
-- `src-tauri/src/commands/config.rs`：配置读写、重置、导入导出；更新配置后通过
-  `download_runtime.update_config()` 同步下载管理器。依据
-  `src-tauri/src/commands/config.rs:17-88`、`src-tauri/src/commands/config.rs:109-153`。
-- `src-tauri/src/commands/system.rs`：打开下载目录、视频信息探测、前端日志落盘；视频信息优先 YouTube 内部逻辑，再尝试
-  `yt-dlp`、`youtube-dl`，最后基础 URL 标题提取。依据
-  `src-tauri/src/commands/system.rs:17-53`、`src-tauri/src/commands/system.rs:147-240`。
-- `src-tauri/src/core/runtime.rs`：下载 runtime router，使用 `mpsc` + `oneshot`
-  串行化命令，路由到 `DownloadManager::runtime_*`。依据
-  `src-tauri/src/core/runtime.rs:15-70`、`src-tauri/src/core/runtime.rs:72-197`、`src-tauri/src/core/runtime.rs:263-368`。
-- `src-tauri/src/engine/task_engine.rs`：对 start/pause/resume/cancel 提供
-  `request_id` 去重与 ACK 语义，再委托 `DownloadRuntimeHandle`。依据
-  `src-tauri/src/engine/task_engine.rs:31-164`。
-- `src-tauri/src/core/manager.rs`：下载业务核心，拥有
-  `tasks`、`active_downloads`、`download_semaphore`、`task_queue`、`rate_limit`、`retry_executor`、`integrity_checker`
-  等状态。依据 `src-tauri/src/core/manager.rs:199-260`。
-- `src-tauri/src/core/queue_scheduler.rs`：每 200ms 尝试获取 manager 写锁，调用
-  `scheduler_tick()` 填充空闲下载槽。依据
-  `src-tauri/src/core/queue_scheduler.rs:7-23`。
-- `src-tauri/src/infra/download_event_bridge.rs`：从 `DownloadManager` event
-  receiver 获取事件，先调用 runtime apply event 同步后端状态，再向 webview 发
-  `download.events`。依据 `src-tauri/src/infra/download_event_bridge.rs:9-73`。
-- `src-tauri/src/infra/event_bus.rs`：统一 event envelope，字段包含
-  `schema_version`、`event_id`、`event_type`、`ts`、`payload`。依据
-  `src-tauri/src/infra/event_bus.rs:10-36`。
+| 层            | 技术                                | 说明                                     |
+| ------------- | ----------------------------------- | ---------------------------------------- |
+| Desktop shell | Tauri v2                            | 跨平台窗口、IPC、插件和 bundle           |
+| Backend       | Rust 2021、Tokio、Reqwest、Tracing  | 下载调度、文件写入、持久化、日志         |
+| Frontend      | React 19、TypeScript、Vite 7        | UI、导入、队列控制、设置                 |
+| State         | Zustand v5                          | 前端下载任务与配置状态                   |
+| Validation    | Zod + TypeScript contracts          | 前端 schema、事件 envelope、payload 校验 |
+| Styling       | Tailwind CSS v4 + shadcn 风格约定   | 深色优先、焦点态和现代桌面 UI            |
+| Tests         | Vitest、Testing Library、cargo test | 前后端单元/集成测试                      |
+| CI/CD         | GitHub Actions                      | CI、Release、安全审计                    |
+| Analysis      | Graphify + GitNexus                 | 架构图谱、符号索引、影响面分析           |
 
-## 5. 启动入口
+---
 
-### 开发/构建入口
+## 4. 当前目录结构
 
-- `pnpm dev` 实际执行 `tauri dev`。依据 `package.json:6-8`。
-- `pnpm build` 执行 `tauri build`。依据 `package.json:11`。
-- Tauri 开发时先跑 `pnpm vite`，构建时先跑 `pnpm vite build`，dev URL 为
-  `http://localhost:1420`。依据 `src-tauri/tauri.conf.json:1-7`。
-
-### 前端入口
-
-`src/main.tsx` -> `App` -> `UnifiedView`。`App` 初始化顺序：
-
-1. `initializeDownloadEventBridge()`。
-2. `loadConfig()`。
-3. `initDownloadStore()`。
-4. 渲染主界面。
-
-依据：`src/App.tsx:16-36`、`src/App.tsx:50-62`。
-
-### 后端入口
-
-`src-tauri/src/main.rs:195` 的 `main()` 是真实桌面入口。启动流程：
-
-1. Windows 下检查/引导 WebView2。见 `src-tauri/src/main.rs:196-201`。
-2. 初始化 tracing。见 `src-tauri/src/main.rs:204-205`。
-3. 构造 `AppState`。见 `src-tauri/src/main.rs:209-210`。
-4. 注册 Tauri 插件。见 `src-tauri/src/main.rs:212-218`。
-5. 注册 IPC 命令。见 `src-tauri/src/main.rs:220-254`。
-6. `setup()` 中启动 router loop、event bridge、download manager、queue
-   scheduler。见 `src-tauri/src/main.rs:256-323`。
-
-## 6. 核心业务流程
-
-### 6.1 导入/手动创建任务
-
-```mermaid
-sequenceDiagram
-  participant UI as UnifiedView/FileImportPanel
-  participant Store as useDownloadStore
-  participant API as features/downloads/api
-  participant IPC as Tauri command
-  participant Runtime as DownloadRuntimeHandle
-  participant Manager as DownloadManager
-
-  UI->>Store: importFromFile/importFromUrls/addTasks
-  Store->>API: importRawFileCommand/addDownloadTasksCommand
-  API->>IPC: invoke("import_csv_file"/"add_download_tasks")
-  IPC->>Runtime: add_tasks(tasks)
-  Runtime->>Manager: runtime_add_tasks()
-  Manager-->>Runtime: Vec<VideoTask>
-  Runtime-->>Store: normalized tasks
-  Store->>Store: refreshStats/validateAndSync
+```text
+.
+├── README.md
+├── CONTRIBUTING.md
+├── AGENTS.md
+├── .github/
+│   ├── ISSUE_TEMPLATE/
+│   ├── pull_request_template.md
+│   ├── dependabot.yml
+│   └── workflows/
+├── docs/
+│   ├── architecture-functional-design.md
+│   ├── current-state.md
+│   ├── index.md
+│   ├── app-regression-test-plan-2026-05-06.md
+│   └── plans/
+├── src/
+│   ├── components/
+│   ├── features/downloads/
+│   ├── schemas/
+│   ├── stores/
+│   └── utils/
+├── src-tauri/
+│   ├── capabilities/
+│   ├── src/commands/
+│   ├── src/core/
+│   ├── src/engine/
+│   ├── src/infra/
+│   └── tauri.conf.json
+├── scripts/
+└── graphify-out/
 ```
 
-关键依据：
+关键说明：
 
-- 前端 store 的 `addTasks()` 使用 `executeTaskCreationStoreAction()`。见
-  `src/stores/downloadStore.ts:308-344`。
-- Rust `add_download_tasks()` 委托 `download_runtime.add_tasks()`。见
-  `src-tauri/src/commands/download.rs:28-36`。
-- Runtime `AddTasks` 路由到 `DownloadManager::runtime_add_tasks()`。见
-  `src-tauri/src/core/runtime.rs:276-280`。
+- `graphify-out/` 是本地图谱输出，通常不入库。
+- `.planning/` 如果存在，是本地 GSD 规划上下文，普通提交不要误加。
+- `.claude/`、`CLAUDE.md`、`sqlResult_1.xls`
+  当前是本地未跟踪文件，除非用户明确要求，否则不要提交。
 
-### 6.2 单任务启动/暂停/恢复/取消
+---
+
+## 5. 前端架构
+
+### 5.1 入口与 UI 主链
+
+```text
+src/main.tsx
+  -> App
+  -> UnifiedView
+  -> ManualInputPanel / FileImportPanel / DashboardToolbar
+  -> useDownloadStore / configStore
+  -> features/downloads/api
+  -> Tauri invoke
+```
+
+主要组件：
+
+| 模块                                     | 职责                            |
+| ---------------------------------------- | ------------------------------- |
+| `src/components/Unified/UnifiedView.tsx` | 当前正式主工作台                |
+| `ManualInputPanel.tsx`                   | 手动添加 URL                    |
+| `FileImportPanel.tsx`                    | Excel/CSV 导入、预览、确认      |
+| `StatusBar.tsx`                          | 状态展示                        |
+| `DashboardToolbar.tsx`                   | 批量开始/暂停、筛选、刷新、清理 |
+| `DownloadStartConfirmDialog.tsx`         | 下载前确认保存位置              |
+| `DeleteTasksConfirmDialog.tsx`           | 删除任务确认                    |
+
+### 5.2 Feature-local API
+
+前端生产代码不应到处直接 `invoke`，而应通过：
+
+- `src/features/downloads/api/downloadCommands.ts`
+- `src/features/downloads/api/importCommands.ts`
+- `src/features/downloads/api/configCommands.ts`
+- `src/features/downloads/api/runtimeQueries.ts`
+- `src/features/downloads/api/taskCreation.ts`
+- `src/features/downloads/api/taskMutations.ts`
+- `src/features/downloads/api/systemCommands.ts`
+
+这样可以把 Tauri command 名称、参数、返回值集中管理。
+
+### 5.3 状态与副作用
+
+核心状态容器：
+
+- `src/stores/downloadStore.ts`
+- `src/stores/configStore.ts`
+- `src/stores/uiStore.ts`
+
+下载 feature 编排层：
+
+- `taskCreationOrchestration.ts`
+- `taskCreationState.ts`
+- `downloadEventBridge.ts`
+- `eventReducers.ts`
+- `runtimeSync.ts`
+- `batchControlEffects.ts`
+- `commandControlEffects.ts`
+- `taskMutationEffects.ts`
+- `retryFailedEffects.ts`
+
+重要约束：
+
+- React 组件中不要 destructure Zustand store；使用 selector。
+- Tauri event listener 和 async callback 中优先使用
+  `useDownloadStore.getState()`。
+- 前端不要在用户点击暂停时抢先把任务写成 `paused`；应等待后端事件或 refresh。
+- 修改事件协议时必须同步 Rust emitter、TypeScript parser 和测试。
+
+---
+
+## 6. 后端架构
+
+### 6.1 后端入口
+
+真实桌面入口是：
+
+```text
+src-tauri/src/main.rs
+```
+
+启动职责：
+
+1. 初始化 tracing。
+2. 构造 `AppState`。
+3. 注册 Tauri 插件。
+4. 注册 IPC commands。
+5. 启动 runtime router。
+6. 启动 download event bridge。
+7. 启动 download manager 和 queue scheduler。
+
+### 6.2 IPC commands
+
+| 文件                   | 职责                                               |
+| ---------------------- | -------------------------------------------------- |
+| `commands/download.rs` | 下载任务增删改、开始、暂停、恢复、取消、统计、限速 |
+| `commands/import.rs`   | 文件导入、编码检测、预览、格式支持                 |
+| `commands/config.rs`   | 配置读写、重置、导入导出                           |
+| `commands/system.rs`   | 打开目录、视频信息探测、前端日志落盘               |
+| `commands/youtube.rs`  | YouTube 相关能力                                   |
+
+### 6.3 Runtime command router
+
+`src-tauri/src/core/runtime.rs` 提供 `DownloadRuntimeHandle`。它通过 Tokio
+`mpsc` + `oneshot` 串行化下载控制命令，避免多个 UI 操作同时直接改
+`DownloadManager`。
+
+主要命令：
+
+- `AddTasks`
+- `UpdateTaskOutputPaths`
+- `RemoveTasks`
+- `ClearCompleted`
+- `RetryFailed`
+- `UpdateConfig`
+- `SetRateLimit`
+- `Start` / `Pause` / `Resume` / `Cancel`
+- `StartAll` / `PauseAll`
+- `ApplyEvent`
+
+### 6.4 DownloadManager
+
+`DownloadManager` 仍是 Graphify 识别出的最大核心抽象。它负责：
+
+- `tasks`
+- `active_downloads`
+- `download_semaphore`
+- `task_queue`
+- `queue_paused`
+- `stats`
+- `rate_limit`
+- `progress_tracker`
+- `integrity_checker`
+- `retry_executor`
+- `task_lifecycle_timings`
+- `youtube_downloader`
+- `scheduler_handle`
+
+当前已经拆出的子模块：
+
+- `manager/state.rs`：状态流转规则
+- `manager/queue.rs`：队列入队、出队、补位和 semaphore 收敛
+- `manager/stats.rs`：统计聚合和生命周期指标
+- `manager/identity.rs`：任务身份、输出路径、重复识别、resume key
+- `manager/integrity.rs`：完整性校验
+- `manager/events.rs`：事件发送辅助
+
+后续继续拆 `DownloadManager` 时，应沿这些现有边界小步移动，不要重写主链。
+
+### 6.5 下载执行器
+
+| 模块                    | 职责                                        |
+| ----------------------- | ------------------------------------------- |
+| `downloader.rs`         | HTTP 下载、连接、重试、进度                 |
+| `resume_downloader.rs`  | Range/chunk 断点续传、resume metadata       |
+| `m3u8_downloader.rs`    | HLS playlist、segment、key/IV 解析          |
+| `youtube_downloader.rs` | YouTube URL、视频信息、格式选择             |
+| `part_file.rs`          | `.part` 文件预分配、范围写入、commit rename |
+| `integrity_checker.rs`  | hash 和完整性校验                           |
+| `progress_tracker.rs`   | 速度、ETA、统计窗口                         |
+
+---
+
+## 7. 核心业务流程
+
+### 7.1 导入与任务创建
 
 ```mermaid
 sequenceDiagram
+  participant User
+  participant UI as FileImportPanel
+  participant Api as import/task API
+  participant Parser as FileParser
+  participant Runtime as DownloadRuntimeHandle
+  participant Manager as DownloadManager
+  participant Store as Zustand
+
+  User->>UI: 选择 Excel/CSV
+  UI->>Api: preview / import
+  Api->>Parser: import_file
+  Parser-->>Api: records + mapping + warnings
+  UI->>Runtime: add_tasks
+  Runtime->>Manager: runtime_add_tasks
+  Manager-->>Runtime: created or existing tasks
+  Runtime-->>UI: Vec<VideoTask>
+  UI->>Store: merge + reconciliation
+```
+
+当前重复导入处理：
+
+- 新任务进入列表。
+- 已有任务不重复创建。
+- 前端消息会展示新增、已有、已完成、可续传、等待、失败数量。
+
+### 7.2 单任务下载控制
+
+```mermaid
+sequenceDiagram
+  participant UI as React UI
   participant Store as useDownloadStore
   participant Cmd as downloadCommands.ts
-  participant Tauri as start_download/pause_download
-  participant Engine as TaskEngineHandle
-  participant Runtime as DownloadRuntimeHandle
+  participant IPC as commands/download.rs
+  participant Engine as TaskEngine
+  participant Runtime as Runtime router
   participant Manager as DownloadManager
-  participant Worker as HttpDownloader worker
-  participant Bridge as download_event_bridge
+  participant Worker as Downloader worker
+  participant Bridge as Event bridge
 
-  Store->>Cmd: startDownload(taskId)
-  Cmd->>Tauri: invoke("start_download", { task_id })
-  Tauri->>Engine: start_task(task_id, request_id)
-  Engine->>Runtime: RuntimeCommand::Start
-  Runtime->>Manager: runtime_start_download()
-  Manager->>Worker: runtime_start_with_permit()
-  Worker-->>Bridge: DownloadEvent::TaskProgress/TaskCompleted
-  Bridge-->>Store: emit download.events
+  UI->>Store: start/pause/resume/cancel
+  Store->>Cmd: feature-local command
+  Cmd->>IPC: invoke(...)
+  IPC->>Engine: request_id dedupe
+  Engine->>Runtime: RuntimeCommand
+  Runtime->>Manager: runtime_* method
+  Manager->>Worker: start/pause/cancel worker
+  Worker-->>Bridge: DownloadEvent
+  Bridge-->>Runtime: apply_event
+  Bridge-->>Store: download-events
 ```
 
-关键依据：
-
-- `start_download()` 生成或接收 `request_id`，通过
-  `state.task_engine.start_task()` 执行。见
-  `src-tauri/src/commands/download.rs:57-94`。
-- `TaskEngine` 对重复 `request_id` 拒绝。见
-  `src-tauri/src/engine/task_engine.rs:116-164`。
-- `RuntimeCommand::Start` 路由到 `runtime_start_download()`。见
-  `src-tauri/src/core/runtime.rs:314-326`。
-- `runtime_start_download()`
-  会检查任务状态、并发上限、信号量，超限时入队并返回并发错误。见
-  `src-tauri/src/core/manager.rs:1580-1685`。
-
-### 6.3 队列调度与事件同步
+### 7.3 队列调度
 
 ```mermaid
 flowchart TD
-  A["Tauri setup"] --> B["spawn_queue_scheduler()"]
-  B --> C["每 200ms try_write manager"]
-  C --> D["scheduler_tick()"]
-  D --> E["reap_finished_active_downloads()"]
-  D --> F["process_task_queue()"]
-  F --> G["start_download_with_permit()"]
-  G --> H["DownloadEvent"]
-  H --> I["spawn_download_event_bridge()"]
-  I --> J["runtime.apply_event()"]
-  I --> K["emit download.events"]
-  K --> L["frontend downloadEventBridge"]
-  L --> M["Zustand tasks/stats"]
+  A["spawn_queue_scheduler"] --> B["200ms tick"]
+  B --> C["try_write DownloadManager"]
+  C --> D["scheduler_tick"]
+  D --> E["reap_finished_active_downloads"]
+  D --> F["process_task_queue"]
+  F --> G["settle_pending_semaphore_reduction"]
+  F --> H["start_download_with_permit"]
+  H --> I["DownloadEvent"]
 ```
 
-关键依据：
+并发策略：
 
-- `spawn_queue_scheduler()` 每 200ms tick。见
-  `src-tauri/src/core/queue_scheduler.rs:7-23`。
-- `scheduler_tick()` 调用 `reap_finished_active_downloads()` 与
-  `process_task_queue()`。见 `src-tauri/src/core/manager.rs:1952-1959`。
-- event bridge 先后端 apply event，再 emit 到前端。见
-  `src-tauri/src/infra/download_event_bridge.rs:18-67`。
-- 前端 `listen('download.events')` 后按 `event_type` 更新任务与统计。见
-  `src/features/downloads/state/downloadEventBridge.ts:88-133`。
+- 并发调高时，如果队列未暂停，后续 tick 会补位。
+- 并发调低时，不强杀正在跑的任务，而是延迟收敛 semaphore。
+- 队列暂停时不自动调度。
 
-## 7. API 接口和权限体系
+---
 
-该项目没有 HTTP REST API。外部调用面主要是 Tauri IPC 命令。
-
-### 7.1 IPC 命令清单
-
-| 分类 | 命令                                                                                                                                                                                                                                                                                                                                                |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 下载 | `add_download_tasks`、`update_task_output_paths`、`start_download`、`pause_download`、`resume_download`、`cancel_download`、`pause_all_downloads`、`start_all_downloads`、`remove_download`、`remove_download_tasks`、`get_download_tasks`、`get_download_stats`、`clear_completed_tasks`、`retry_failed_tasks`、`set_rate_limit`、`get_rate_limit` |
-| 导入 | `import_file`、`import_csv_file`、`import_excel_file`、`detect_file_encoding`、`preview_import_data`、`get_supported_formats`                                                                                                                                                                                                                       |
-| 配置 | `get_config`、`update_config`、`reset_config`、`export_config`、`import_config`                                                                                                                                                                                                                                                                     |
-| 系统 | `open_download_folder`、`get_video_info`、`log_frontend_event`                                                                                                                                                                                                                                                                                      |
-
-依据：`src-tauri/src/main.rs:220-254`、`src-tauri/src/commands/*.rs`。
-
-### 7.2 权限体系
-
-- 当前 Tauri capability 文件是 `src-tauri/capabilities/migrated.json`。
-- 该文件只声明 `core:default` 和 `dialog:default`。依据
-  `src-tauri/capabilities/migrated.json:8-10`。
-- 后端实际注册了 `dialog/fs/os/shell/process/mcp-bridge` 插件。依据
-  `src-tauri/src/main.rs:212-218`。
-- 前端生产代码目前确认使用 `@tauri-apps/plugin-dialog` 打开文件/目录选择。依据
-  `src/features/downloads/api/importCommands.ts:1`、`src/features/downloads/api/importCommands.ts:85`、`src/features/downloads/api/systemCommands.ts:1`、`src/features/downloads/api/systemCommands.ts:27`。
-- 未发现登录、账号、角色、JWT、RBAC 或多租户权限体系。结论：这是单机桌面应用，不是多用户服务端系统。
-
-风险提示：如果未来前端生产代码直接使用 fs/shell/os/process 插件命令，需要同步更新
-`src-tauri/capabilities/migrated.json`，否则 Tauri v2 权限可能阻断调用。
-
-## 8. 数据库表和实体关系
-
-未发现 SQL
-migration、ORM、数据库连接配置，也未发现 PostgreSQL/MySQL/SQLite 业务表定义。`Cargo.lock`
-中出现
-`rusqlite/libsqlite3-sys`，但这是依赖树里的间接依赖；没有在源码中发现业务数据库访问。
-
-当前持久化实体主要是本地 JSON：
-
-| 实体                    | 位置                                                           | 说明                                                                                                            |
-| ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `VideoTask`             | `src-tauri/src/core/models.rs`                                 | 下载任务，包含 `id/url/title/output_path/status/progress/file_size/downloaded_size/error_message/video_info` 等 |
-| `DownloadConfig`        | `src-tauri/src/core/models.rs`                                 | 下载并发、重试、超时、headers、输出目录、完整性校验配置                                                         |
-| `AppConfig`             | `src-tauri/src/core/config.rs`                                 | 应用配置总根，包含 download/ui/system/youtube/advanced                                                          |
-| `PersistedManagerState` | `src-tauri/src/core/manager.rs`                                | manager 本地状态，保存 tasks、queue、queue_paused                                                               |
-| `download_state.json`   | `AppConfig::get_data_dir()/download_state.json`                | `DownloadManager::default_state_path()` 生成，见 `src-tauri/src/core/manager.rs:390-393`                        |
-| `config.json`           | `ProjectDirs::from("com","videodownloader","pro")/config.json` | `AppConfig::get_config_path()` 生成                                                                             |
-
-实体关系可理解为：
+## 8. 任务状态机
 
 ```mermaid
-erDiagram
-  AppConfig ||--|| DownloadConfig : contains
-  AppConfig ||--o| UiConfig : contains
-  AppConfig ||--o| SystemConfig : contains
-  AppConfig ||--o| YoutubeConfig : contains
-  PersistedManagerState ||--o{ VideoTask : stores
-  PersistedManagerState ||--o{ TaskPriority : queues
-  VideoTask ||--o| VideoInfo : embeds
-  DownloadManager ||--o{ VideoTask : owns
-  DownloadManager ||--o{ TaskPriority : schedules
+stateDiagram-v2
+  [*] --> Pending
+  Pending --> Downloading: start
+  Pending --> Paused: pause queued
+  Downloading --> Paused: pause active
+  Paused --> Downloading: resume/start
+  Downloading --> Committing: transfer complete
+  Committing --> Completed: marker written
+  Downloading --> Failed: error
+  Committing --> Failed: commit error
+  Failed --> Pending: retry/start
+  Pending --> Cancelled: cancel
+  Downloading --> Cancelled: cancel active
+  Paused --> Cancelled: cancel
 ```
 
-## 9. Redis、MQ、Nacos、XXL-JOB、Elasticsearch 等中间件
+关键语义：
 
-未发现实际使用：
+- `Downloading` 和 `Committing` 是活跃状态，不能重复 start。
+- `Completed` 和 `Cancelled` 是终态。
+- `Failed` 可 retry。
+- `Committing` 保护文件最终落盘阶段。
+- 启动恢复时，遗留 `Downloading` 会转为 `Paused`。
 
-- Redis：未发现 `redis` 客户端或连接配置。
-- MQ/Kafka/RabbitMQ：未发现。
-- Nacos：未发现。
-- XXL-JOB：未发现。
-- Elasticsearch：未发现。
+---
 
-项目内部存在两类“消息/调度”机制，但都不是外部中间件：
+## 9. 持久化与恢复
 
-- Tokio `mpsc`/`oneshot`：runtime command router。见
-  `src-tauri/src/core/runtime.rs:15-70`。
-- Tauri event：`download.events` 从后端发到前端。见
-  `src-tauri/src/infra/event_bus.rs:30-36`。
+本地状态实体：
 
-## 10. Docker、Kubernetes、Nginx、Jenkins 等部署配置
+| 实体                    | 说明              |
+| ----------------------- | ----------------- |
+| `VideoTask`             | 下载任务          |
+| `DownloadConfig`        | 下载配置          |
+| `AppConfig`             | 应用配置总根      |
+| `PersistedManagerState` | manager 本地状态  |
+| `download_state.json`   | 任务与队列状态    |
+| `.part`                 | 未完成下载内容    |
+| resume snapshot         | 断点续传 metadata |
+| `.vdstate`              | 完成 marker       |
+| `config.json`           | 用户配置          |
 
-未发现 `Dockerfile`、`docker-compose.yml`、Kubernetes
-manifest、Nginx 配置或 Jenkinsfile。
+当前启动恢复策略：
 
-实际部署/发布体系是：
+1. 读取 persisted manager state。
+2. `Downloading -> Paused`。
+3. 启动时不恢复旧队列，也不把 pending 自动入队。
+4. 如果有可恢复任务，`queue_paused = true`。
+5. hydrate 本地文件状态和完成 marker。
+6. 用户明确点击开始后，才重新排队/恢复下载。
 
-- Tauri bundle：`src-tauri/tauri.conf.json:8-48`，Windows 目标为 `msi/nsis`。
-- CI：`.github/workflows/ci.yml`，包含前端 type-check/lint/test/audit、后端 fmt/test/clippy、跨平台 build
-  check。
-- Release：`.github/workflows/release.yml`，基于 tag 或 workflow_dispatch 构建多平台产物。
-- Security Audit：`.github/workflows/security.yml:22-24` 每周日 02:00
-  UTC 运行安全审计。
+这条策略已经通过 Rust 测试和真实 App 回归验证。
 
-`config/production.json` 中有 Prometheus/WebSocket dashboard/alert 等配置项（见
-`config/production.json:19-40`），但本轮源码扫描未确认有对应服务启动、指标 exporter 或 WebSocket
-server 实现，当前应标记为“配置草案/待确认”，不能视为已上线能力。
+---
 
-## 11. 定时任务和消息消费入口
+## 10. 事件与状态同步
 
-| 类型                 | 入口                                           | 说明                                                                                                                 |
-| -------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| 下载队列调度         | `spawn_queue_scheduler()`                      | 后端每 200ms 调度 pending 队列，见 `src-tauri/src/core/queue_scheduler.rs:7-23`                                      |
-| 前端 runtime polling | `initializeDownloadEventBridge()`              | 当前有活跃/待下载任务时每 1500ms 同步 runtime 状态，见 `src/features/downloads/state/downloadEventBridge.ts:175-188` |
-| GitHub 安全审计      | `.github/workflows/security.yml`               | 每周 cron，见 `.github/workflows/security.yml:22-24`                                                                 |
-| Hermes 自动续跑脚本  | `scripts/install-hermes-auto-continue-cron.sh` | 本地 AI 工作流辅助，不是产品运行时                                                                                   |
+### 10.1 后端事件
 
-未发现 MQ consumer、Kafka listener、Redis stream consumer、XXL-JOB
-handler 或 Nacos listener。
+事件统一通过：
 
-## 12. 日志、异常处理、监控
+```text
+src-tauri/src/infra/event_bus.rs
+```
 
-### 日志
+当前信道：
 
-- 后端使用 `tracing`，默认 filter 为 `video_downloader_pro=info,tauri=info`。见
-  `src-tauri/src/utils/logging.rs:43-84`。
-- `local-logging` feature 开启时，后端写 `log/backend.log`，前端日志写
-  `log/frontend.log`。见
-  `src-tauri/src/utils/logging.rs:6-40`、`src-tauri/src/utils/logging.rs:47-78`。
-- 前端启动时注册全局 error/unhandledrejection，并通过
-  `reportFrontendEventIfEnabled()` 上报。见 `src/main.tsx:13-25`。
-- 后端提供 `log_frontend_event` IPC，将前端日志追加到本地文件。见
-  `src-tauri/src/commands/system.rs:284-291`。
+```text
+download-events
+```
 
-### 异常与重试
+事件 envelope：
 
-- `DownloadError`
-  有 Network、Authentication、FileSystem、Protocol、ResourceExhaustion、Configuration、ExternalService、DataIntegrity、Parsing、System 等分类。见
-  `src-tauri/src/core/error_handling.rs:41-132`。
-- `RetryExecutor` 结合错误是否可重试、指数退避、jitter、熔断器。见
-  `src-tauri/src/core/error_handling.rs:481-715`。
-- `DownloadManager` 初始化 retry policy，并持有 `retry_executor`。见
-  `src-tauri/src/core/manager.rs:345-357`、`src-tauri/src/core/manager.rs:247-248`。
+| 字段             | 说明                                                             |
+| ---------------- | ---------------------------------------------------------------- |
+| `schema_version` | 当前为 `1`                                                       |
+| `event_id`       | UUID                                                             |
+| `event_type`     | `task.progressed` / `task.status_changed` / `task.stats_updated` |
+| `ts`             | RFC3339 时间                                                     |
+| `payload`        | 事件载荷                                                         |
 
-### 监控
+### 10.2 前端消费
 
-- 当前可确认的运行时观测主要是日志、下载统计、event envelope、CI coverage 上传。
-- `config/production.json` 提到 Prometheus/WebSocket
-  dashboard/alert，但源码未确认对应运行时实现，标记为待确认。
+前端事件桥：
 
-## 13. 代码质量问题
+```text
+src/features/downloads/state/downloadEventBridge.ts
+```
 
-1. `DownloadManager` 过大：`src-tauri/src/core/manager.rs`
-   约 4473 行，聚合任务状态、队列、下载 worker、持久化、完整性、重试、YouTube 等多个职责。graphify 也显示
-   `DownloadManager` 是最大 god node，117 条边。
-2. 后端入口存在重复 AppState：`src-tauri/src/main.rs` 和 `src-tauri/src/lib.rs`
-   都定义了 `AppState`，且启动模式不完全一致；真实运行入口在
-   `main.rs`，但库导出也维护一套 `spawn_download_runtime()` 路径。见
-   `src-tauri/src/main.rs:34-43`、`src-tauri/src/lib.rs:35-54`。
-3. 主入口里仍有 `#[allow(dead_code)]` 和
-   `#[allow(dead_code, unused_imports)]`。见
-   `src-tauri/src/main.rs:10-20`。这说明仍有历史能力/未接线能力残留。
-4. `main.rs` fallback 路径仍有 `expect()` 和
-   `panic!()`：`DownloadManager::new(...).expect("Minimal config should work")`、`panic!("Cannot create even fallback HttpDownloader")`。见
-   `src-tauri/src/main.rs:146-167`。
-5. 前端 `downloadStore.ts`
-   仍有 685 行，虽然已经抽出很多 helper，但仍是下载 feature 的高耦合运行时容器。
-6. `src-tauri/capabilities/migrated.json` 当前只允许
-   `core:default`、`dialog:default`，与后端注册的插件集合不完全对齐；目前生产前端只确认用到 dialog，但未来扩展容易漏权限。
-7. `config/production.json`
-   包含未确认实现的监控/安全/性能配置项，容易让新人误以为已具备 Prometheus、WebSocket
-   dashboard、alerting 等能力。
+职责：
 
-## 14. 潜在风险
+- `listen('download-events')`
+- 校验 envelope
+- 校验 payload
+- progress 事件节流
+- status 事件 reducer
+- stats 事件合并
+- runtime sync fallback
 
-| 风险                 | 影响                                                                                                                      | 依据/说明                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| 下载核心变更高风险   | `runtime_start_download` 影响 runtime、resume、队列、测试流程；GitNexus impact 标记 CRITICAL，直接影响 8 个流程、2 个模块 | GitNexus `impact(runtime_start_download)`                                        |
-| 并发/队列状态竞争    | manager 使用 `RwLock`、`Semaphore`、`active_downloads`、`task_queue` 共同维护状态，任何 await 边界都要小心                | `src-tauri/src/core/manager.rs:199-260`、`src-tauri/src/core/runtime.rs:274-368` |
-| 配置和实际能力不一致 | `config/production.json` 有监控配置但未确认实现                                                                           | `config/production.json:19-40`                                                   |
-| IPC 权限漏配         | 添加插件能力时可能忘记更新 capability                                                                                     | `src-tauri/src/main.rs:212-218`、`src-tauri/capabilities/migrated.json:8-10`     |
-| 工具依赖可用性       | `get_video_info` 依赖外部 `yt-dlp`/`youtube-dl` 可用性探测，不可用时只返回 basic info                                     | `src-tauri/src/commands/system.rs:163-192`                                       |
-| 代码体量导致回归面大 | `manager.rs`、`resume_downloader.rs`、`youtube_downloader.rs`、`m3u8_downloader.rs` 均超过 900 行                         | `wc -l` 扫描结果                                                                 |
+任何事件协议变更必须同步：
 
-## 15. GitNexus / graphify 分析发现
+- Rust `event_bus.rs`
+- Rust `download_event_bridge.rs`
+- TS `model/contracts.ts`
+- `downloadEventBridge.test.ts`
+- `contracts.test.ts`
+
+---
+
+## 11. Graphify / GitNexus 当前状态
 
 ### GitNexus
 
-- 工具状态：本机已安装 `gitnexus`。
-- 本轮已运行 `gitnexus analyze .` 刷新索引。
-- 刷新后索引：232 files、4633 symbols、8923 edges、142 clusters、300 flows。
-- GitNexus
-  clusters 前几名：`Commands`、`Manager`、`Scripts`、`Model`、`Engine`、`State`。
-- `runtime_start_download` 的 upstream
-  impact 为 CRITICAL：3 个受影响符号、8 个 affected processes、2 个 affected
-  modules。直接调用方包括 `core/runtime.rs::handle_command` 与
-  `manager.rs::runtime_resume_download`。
-- `spawn_download_event_bridge` 的 GitNexus context 显示由 `main()`
-  调用，向外调用
-  `emit_download_event()`、`emit_status_change()`、`DownloadRuntimeHandle.apply_event()`。
+`AGENTS.md` 当前记录：
 
-备注：GitNexus CLI `query` 在本地出现过只读数据库 FTS warning，MCP
-`context`/`impact` 与资源读取可用；最终结论以刷新后的 MCP
-context/impact、源码扫描和 graphify 结果交叉验证。
-
-### graphify
-
-- 工具状态：本机已安装 `graphify`，当前 CLI 暴露
-  `query/save-result/benchmark/install/hook`
-  等命令；未暴露完整 build/update 命令。
-- 本轮使用 graphify Python API 做结构抽取，并生成本地
-  `graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/manifest.json`。
-- graphify manifest：276 files、145172 words、208 code files extracted、1451
-  nodes、2662 edges、60 communities。
-- graphify god nodes：
-  1. `DownloadManager`，117 edges
-  2. `YoutubeDownloader`，41 edges
-  3. `HttpDownloader`，29 edges
-  4. `FileParser`，26 edges
-  5. `ResumeDownloader`，24 edges
-  6. `M3U8Downloader`，21 edges
-  7. `DownloadRuntimeHandle`，17 edges
-  8. `AppConfig`，16 edges
-
-## 16. Mermaid 架构图
-
-```mermaid
-flowchart LR
-  subgraph Frontend["React Frontend"]
-    UI["UnifiedView / Toolbar / Settings"]
-    Store["Zustand stores"]
-    Api["features/downloads/api"]
-    EventClient["downloadEventBridge"]
-  end
-
-  subgraph Tauri["Tauri IPC Boundary"]
-    Commands["commands/*.rs"]
-    EventBus["infra/event_bus.rs"]
-  end
-
-  subgraph Backend["Rust Core"]
-    AppState["AppState"]
-    Engine["TaskEngine"]
-    Runtime["DownloadRuntimeHandle + router_loop"]
-    Manager["DownloadManager"]
-    Scheduler["queue_scheduler"]
-    Http["HttpDownloader"]
-    Resume["ResumeDownloader"]
-    M3U8["M3U8Downloader"]
-    YT["YoutubeDownloader / yt-dlp"]
-    Parser["FileParser CSV/Excel"]
-    Config["AppConfig JSON"]
-  end
-
-  UI --> Store
-  Store --> Api
-  Api --> Commands
-  Commands --> Engine
-  Commands --> Runtime
-  Commands --> Parser
-  Commands --> Config
-  Engine --> Runtime
-  Runtime --> Manager
-  Scheduler --> Manager
-  Manager --> Http
-  Manager --> Resume
-  Manager --> M3U8
-  Manager --> YT
-  Manager --> EventBus
-  EventBus --> EventClient
-  EventClient --> Store
+```text
+4795 symbols / 9139 relationships / 300 execution flows
 ```
 
-## 17. Mermaid 核心调用链图
+GitNexus staged 文档变更分析在最近一次文档更新中为 low
+risk，未发现受影响执行流。
 
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant UI as React UI
-  participant S as useDownloadStore
-  participant API as downloadCommands.ts
-  participant C as commands/download.rs
-  participant E as TaskEngine
-  participant R as runtime.rs
-  participant M as DownloadManager
-  participant D as HttpDownloader
-  participant B as EventBridge
-  participant EV as Tauri download.events
+需要重点使用 GitNexus impact 的区域：
 
-  U->>UI: 点击开始下载
-  UI->>S: startDownload(taskId)
-  S->>API: startDownloadCommand()
-  API->>C: invoke("start_download")
-  C->>E: start_task(taskId, requestId)
-  E->>R: RuntimeCommand::Start
-  R->>M: runtime_start_download()
-  M->>D: start worker with permit
-  D-->>M: progress/completed/failed
-  M-->>B: DownloadEvent
-  B->>R: apply_event()
-  B->>EV: emit("download.events")
-  EV-->>S: reduce status/progress/stats
+- `DownloadManager`
+- `load_persisted_state`
+- `runtime_start_download`
+- `spawn_download_event_bridge`
+- `DownloadRuntimeHandle`
+- `manager/identity.rs`
+- `FileImportPanel`
+- `taskCreationState.ts`
+
+### Graphify
+
+当前 `graphify-out/GRAPH_REPORT.md` 记录：
+
+```text
+1520 nodes / 2743 edges / 67 communities
 ```
 
-## 18. 新人 7 天接手计划
+God nodes：
 
-| 天数  | 目标           | 建议动作                                                                                                                                         |
-| ----- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Day 1 | 跑通环境与入口 | `pnpm install --frozen-lockfile`，阅读 `README.md`、`docs/index.md`、本报告；确认 `pnpm type-check`、`pnpm lint` 可跑                            |
-| Day 2 | 理解前端主链   | 阅读 `src/App.tsx`、`src/stores/downloadStore.ts`、`src/features/downloads/api/*`、`src/features/downloads/state/*`；画出 UI -> Store -> IPC     |
-| Day 3 | 理解后端主链   | 阅读 `src-tauri/src/main.rs`、`commands/download.rs`、`core/runtime.rs`、`engine/task_engine.rs`、`core/manager.rs` 的 runtime 方法              |
-| Day 4 | 下载状态机专项 | 聚焦 `TaskStatus`、`runtime_start_download`、pause/resume/cancel、queue scheduler、event bridge；补读相关测试                                    |
-| Day 5 | 导入与配置专项 | 阅读 `commands/import.rs`、`core/file_parser.rs`、`commands/config.rs`、`core/config.rs`、前端 import orchestration                              |
-| Day 6 | 风险和质量门   | 跑 `pnpm exec vitest run`、`cargo test --manifest-path src-tauri/Cargo.toml`、`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` |
-| Day 7 | 做一个小闭环   | 选一个低风险问题，例如文档修正、UI 文案或单个 helper 测试；提交前跑 GitNexus `detect_changes` 和必要测试                                         |
+1. `DownloadManager`
+2. `YoutubeDownloader`
+3. `HttpDownloader`
+4. `PerformanceBenchmark`
+5. `FileParser`
+6. `ResumeDownloader`
+7. `M3U8Downloader`
+8. `DeploymentVerifier`
+9. `EncodingDetector`
+10. `DownloadRuntimeHandle`
 
-## 19. 后续优化建议
+工具限制：
 
-1. 继续拆分 `DownloadManager`：优先拆
-   `state_store`、`download_worker_launcher`、`persistence`、`queue_policy`、`youtube_adapter`，每次只移动一类职责并保持测试不变。
-2. 统一 `main.rs` 与 `lib.rs`
-   的 AppState/启动路径：明确真实入口，减少两套 runtime 初始化模型。
-3. 为
-   `runtime_start_download`、`runtime_pause_download`、`runtime_resume_download`
-   建立更明确的状态机测试矩阵，尤其覆盖并发上限、队列、失败重试、暂停恢复、完成提交边界。
-4. 清理或实现 `config/production.json`
-   中未落地的监控项；若暂不实现，文档中明确它只是目标配置模板。
-5. 建立 Tauri
-   capability 审计清单：每新增前端插件调用，必须同步 capability 与测试。
-6. 将 graphify/GitNexus 分析纳入架构变更流程：核心下载链变更前必须先跑 impact，变更后跑 detect_changes，并在 PR 描述中记录受影响流程。
-7. 对 `yt-dlp`/`youtube-dl`
-   外部工具探测补充用户可见诊断：区分未安装、执行失败、输出 JSON 解析失败、站点限流。
-8. 增加“本地持久化状态 schema 版本”：`download_state.json`
-   当前看不到显式版本字段，后续结构变动容易破坏旧用户状态。
-9. 减少 `allow(dead_code)`
-   覆盖范围，逐个模块判断是未接线能力、历史遗留还是测试专用。
-10. 把前端 `downloadStore.ts`
-    继续瘦身为 facade：保留状态和 action 组合，把复杂分支继续迁到
-    `features/downloads/state/*`。
+- 当前本机 `graphify` CLI 暴露 `query/save-result/benchmark/install/hook`
+  等命令。
+- 当前 CLI 不暴露完整 semantic rebuild/update 命令。
+- `./scripts/graphify-sync.sh smart` 可做 code graph
+  rebuild 或提示文档/媒体变化需要完整刷新。
 
-## 20. 结论
+---
 
-这个仓库的真实复杂度集中在“桌面 IPC + 下载状态机 + 并发队列 + 本地持久化 + 事件同步”，不是传统 Web 服务。新人接手时应先稳住三条主线：
+## 12. 中间件、数据库与部署
 
-1. 前端：`UnifiedView -> useDownloadStore -> features/downloads/api`。
-2. 后端：`commands/download.rs -> TaskEngine -> runtime.rs -> DownloadManager`。
-3. 事件：`DownloadManager -> download_event_bridge -> download.events -> downloadEventBridge.ts -> Zustand`。
+### 数据库
 
-最需要谨慎修改的是 `DownloadManager` 与 `runtime_start_download` 周边；GitNexus
-impact 已显示其影响面为 CRITICAL。任何下载核心改动都应先写/补测试，再小步提交。
+未发现业务数据库、ORM、migration 或 SQL
+schema。当前持久化是本地 JSON + 文件系统 marker。
+
+### 外部中间件
+
+未使用 Redis、Kafka、RabbitMQ、Nacos、XXL-JOB、Elasticsearch。
+
+内部消息机制：
+
+- Tokio `mpsc` / `oneshot`：download runtime command router。
+- Tauri event：后端向前端发送 `download-events`。
+
+### 部署
+
+不是 Web 服务部署模型；主要发布方式是 Tauri desktop bundle：
+
+- macOS `.app` / `.dmg`
+- Windows `msi/nsis`
+- Linux 根据 Tauri bundle 配置
+- GitHub Actions `release.yml`
+
+---
+
+## 13. 当前质量门禁
+
+推荐提交前至少跑：
+
+```bash
+pnpm type-check
+pnpm lint
+pnpm exec vitest run
+cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm build
+```
+
+下载核心变更还应跑真实 App 回归，尤其：
+
+- 导入 `sqlResult_1.xls`
+- 重复导入同表
+- 修改并发
+- 开始少量任务
+- 暂停/恢复
+- 关闭重开
+- 验证重开后不自动下载
+
+完整回归方案见：
+
+```text
+docs/app-regression-test-plan-2026-05-06.md
+```
+
+---
+
+## 14. 当前风险和债务
+
+| 风险                                  | 当前判断                                                   |
+| ------------------------------------- | ---------------------------------------------------------- |
+| `DownloadManager` 仍偏大              | 已拆出若干子模块，但仍是最大核心抽象，修改需谨慎           |
+| `downloadStore.ts` 仍是前端运行时容器 | 已有 feature-local state/action 拆分，仍需继续瘦身         |
+| 事件 + refresh + polling 并存         | 当前是稳妥同步策略，后续可继续收敛                         |
+| Tauri capability 扩展易漏配           | 新增 plugin command 时必须同步 capability                  |
+| 外部工具能力不确定                    | `yt-dlp`/`ffmpeg` 等应经 capability service 探测           |
+| `cargo audit` 上游 warning            | 主要来自 Tauri/wry Linux GTK3 依赖链，不是业务代码直接漏洞 |
+| 完成识别仍依赖 marker                 | 后续可引入可选 ETag/hash/Content-Length 校验               |
+
+---
+
+## 15. GitHub 社区化状态
+
+当前已经完成：
+
+- README badges、功能表、架构图、文档入口。
+- GitHub description 和 homepage。
+- Topics：`tauri`、`rust`、`react`、`typescript`、`video-downloader`、`batch-download`、`download-manager`、`desktop-app`、`m3u8`、`hls`、`resumable-downloads`、`excel-import`。
+- Issues / Discussions / Wiki 已开启。
+- Labels：`needs-triage`、`protocol`、`download-core`、`import`、`documentation`
+  等。
+- Issue templates：bug、feature、site/protocol support。
+- PR template：质量门禁和下载专项 checklist。
+
+后续社区优化建议：
+
+- 补 license。
+- 增加截图或短视频 demo。
+- 增加 release notes 模板。
+- 补充 Windows/Linux 实机截图和安装说明。
+- 加一个 `good first issue` 路线图。
+
+---
+
+## 16. 新人 7 天接手计划
+
+| 天数  | 目标               | 建议动作                                                                                                  |
+| ----- | ------------------ | --------------------------------------------------------------------------------------------------------- |
+| Day 1 | 跑通环境与文档入口 | 阅读 `README.md`、`docs/index.md`、`docs/architecture-functional-design.md`、本报告；跑 `pnpm type-check` |
+| Day 2 | 理解前端主链       | 阅读 `UnifiedView`、`FileImportPanel`、`DashboardToolbar`、`downloadStore.ts`、`features/downloads/api/*` |
+| Day 3 | 理解后端主链       | 阅读 `main.rs`、`commands/download.rs`、`core/runtime.rs`、`core/manager.rs` 和 manager 子模块            |
+| Day 4 | 下载状态机专项     | 聚焦 `TaskStatus`、start/pause/resume/cancel、queue scheduler、event bridge、持久化恢复测试               |
+| Day 5 | 导入与身份专项     | 阅读 `commands/import.rs`、`file_parser.rs`、`manager/identity.rs`、`taskCreationState.ts`                |
+| Day 6 | 真实回归           | 用 `sqlResult_1.xls` 做导入、重复导入、并发、暂停、关闭重开测试                                           |
+| Day 7 | 小闭环贡献         | 选文档、测试、UI 文案或低风险 helper，提交前跑 GitNexus detect_changes 和对应测试                         |
+
+---
+
+## 17. 后续优化建议
+
+1. 继续拆 `DownloadManager`，优先拆 persistence、worker launcher、queue
+   policy、provider adapters。
+2. 继续瘦身 `downloadStore.ts`，让它更像 facade。
+3. 为无 Range、HTTP 429、断网、磁盘权限、文件损坏补更系统的测试。
+4. 给 `download_state.json` 增加 schema version，为未来状态迁移做准备。
+5. 对 `yt-dlp`、`ffmpeg` 做 sidecar/capability 统一治理。
+6. 把完成识别从 `.vdstate` 扩展到可选 ETag/hash/Content-Length。
+7. 对 Windows/Linux 做完整 release smoke test。
+8. 增加社区 demo 资产和 license。
+
+---
+
+## 18. 接手结论
+
+这个仓库的真实复杂度集中在：
+
+1. **下载状态机**
+2. **并发队列**
+3. **本地持久化与断点续传**
+4. **Tauri IPC 与事件同步**
+5. **批量导入与任务身份**
+
+修改优先级建议：
+
+- 只改文档/README/模板：风险低，跑格式检查和 GitNexus staged 即可。
+- 改前端导入/状态：跑 Vitest 相关测试和真实导入。
+- 改事件协议：同步 Rust/TS contracts，并跑事件桥测试。
+- 改下载核心：先写 Rust 测试，再跑 full gate 和真实 App。
+
+下一位接手者应先守住这三条主线：
+
+```text
+Frontend: UnifiedView -> useDownloadStore -> features/downloads/api/state
+Backend: commands/download.rs -> TaskEngine -> runtime.rs -> DownloadManager
+Events: DownloadManager -> download_event_bridge -> download-events -> downloadEventBridge.ts -> Zustand
+```
+
+只要这三条线稳定，项目就可以继续小步扩展协议、平台和社区体验。

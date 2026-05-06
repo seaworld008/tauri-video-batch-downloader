@@ -553,7 +553,7 @@ pnpm build
 
 ### P3：社区工程
 
-- 增加 issue templates 和 PR template。
+- 持续维护 issue templates、PR template、labels、Discussions 和 Wiki。
 - 补充演示截图或短视频。
 - 明确 license。
 - 定期更新 Graphify/GitNexus 分析摘要。
