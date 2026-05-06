@@ -10,10 +10,12 @@
 
 1. `README.md` — 项目总览、真实结构、当前开发方式
 2. `current-state.md` — 当前真实状态、正式入口、主链收敛结果
-3. `entrypoints.md` — 正式入口与历史入口清单
-4. `gsd-graphify-workflow.md` — 持续迭代开发工作流（GSD + graphify）
-5. `.planning/ROADMAP.md` — 当前阶段路线图与 closeout / hardening 进度
-6. `../graphify-out/GRAPH_REPORT.md` — 本地代码图谱摘要
+3. `large-codebase-ai-handoff-analysis-2026-05-06.md` —
+   AI/新人接手大型代码库分析报告
+4. `entrypoints.md` — 正式入口与历史入口清单
+5. `gsd-graphify-workflow.md` — 持续迭代开发工作流（GSD + graphify）
+6. `.planning/ROADMAP.md` — 当前阶段路线图与 closeout / hardening 进度
+7. `../graphify-out/GRAPH_REPORT.md` — 本地代码图谱摘要
 
 ---
 
@@ -22,6 +24,7 @@
 - `overview.md`：项目介绍与适用场景
 - `features.md`：功能说明（偏使用者视角）
 - `architecture.md`：基础架构说明
+- `large-codebase-ai-handoff-analysis-2026-05-06.md`：大型项目代码库 AI 接手分析报告
 - `development.md`：本地开发与测试
 - `build-release.md`：构建、打包与发布
 - `integration.md`：导入/对接相关说明
@@ -37,22 +40,31 @@
 - `architecture-v2-delivery-plan-2026-04-10.md`：下载系统重构基线方案
 - `architecture-v2-execution-backlog.md`：架构 V2 执行任务拆解（需结合当前实现判断完成度）
 - `plans/2026-04-15-system-architecture-optimization-plan.md`：当前系统优化计划
-- `plans/2026-04-15-mainline-only-cleanup-plan.md`：mainline-only cleanup 策略说明
+- `plans/2026-04-15-mainline-only-cleanup-plan.md`：mainline-only
+  cleanup 策略说明
 - `plans/2026-04-15-download-core-call-chain-analysis.md`：后端核心链路 + 前端交互链分析
-- `plans/2026-04-15-backend-write-path-boundary-map.md`：Phase 2 写路径边界与统一入口基线
+- `plans/2026-04-15-backend-write-path-boundary-map.md`：Phase
+  2 写路径边界与统一入口基线
 - `plans/2026-04-16-phase3-closeout-checklist.md`：Phase 3 收尾检查表
-- `plans/2026-04-16-phase3-phase4-stepwise-execution-plan.md`：Phase 3 → Phase 4 顺序化执行计划
-- `plans/2026-04-16-phase4-provider-observability-audit.md`：Phase 4 audit-first 基线
+- `plans/2026-04-16-phase3-phase4-stepwise-execution-plan.md`：Phase 3 → Phase
+  4 顺序化执行计划
+- `plans/2026-04-16-phase4-provider-observability-audit.md`：Phase 4
+  audit-first 基线
+- `plans/2026-05-06-system-optimization-execution.md`：系统全面优化第一轮执行记录
 
 ### 当前主链代码/边界文档要点
 
 - `src-tauri/src/infra/download_event_bridge.rs`：Rust 下载事件桥 seam
 - `src-tauri/src/infra/capability_service.rs`：正式能力探测入口；已与历史 providers 命名空间解耦
-- `src-tauri/src/core/queue_scheduler.rs`：从 `DownloadManager` 抽出的队列调度 seam
-- `src/features/downloads/api/*.ts`：前端 feature-local API seams（download/config/import/system/runtimeQueries）
-- `src/features/downloads/state/*.ts`：前端 state/orchestration seams（runtimeSync、validation、taskCreation、taskMutation、batch/retry 等）
+- `src-tauri/src/core/queue_scheduler.rs`：从 `DownloadManager`
+  抽出的队列调度 seam
+- `src/features/downloads/api/*.ts`：前端 feature-local API
+  seams（download/config/import/system/runtimeQueries）
+- `src/features/downloads/state/*.ts`：前端 state/orchestration
+  seams（runtimeSync、validation、taskCreation、taskMutation、batch/retry 等）
 - `src/utils/frontendLogging.ts`：共享 frontend logging seam
-- `src/stores/downloadStore.ts`：当前前端运行时容器，已进入 thin orchestrator 区间
+- `src/stores/downloadStore.ts`：当前前端运行时容器，已进入 thin
+  orchestrator 区间
 - `src/stores/configStore.ts`：当前前端配置真源
 - `src/stores/uiStore.ts`：当前已收敛为 notifications-only store
 
@@ -60,13 +72,25 @@
 
 - 正式前端主视图已收敛到 `UnifiedView`
 - 旧 `DownloadsView` / `OptimizedDownloadsView` / `TaskList` / `TaskItem` 已删除
-- 现行前端主链 consumer audit 又确认 `ImportSuccessGuide.tsx` / `WorkflowTips.tsx` / `EmptyState.tsx` 已无生产消费者并已删除
-- 本轮继续确认旧 `ImportView.tsx` / `useImportGuide.ts` 已无生产消费者并已删除，正式导入 UI 继续收敛为 `UnifiedView -> FileImportPanel`
-- 本轮又继续把正式导入 command surface 的假契约删掉：由于当前 UI 并无 Excel sheet 选择能力，`importCommands.ts` 与 Rust `commands/import.rs` 中伪存在的 `sheetName/sheet_name` 参数已被移除，避免主链继续暴露未实现的导入能力
+- 现行前端主链 consumer audit 又确认 `ImportSuccessGuide.tsx` /
+  `WorkflowTips.tsx` / `EmptyState.tsx` 已无生产消费者并已删除
+- 本轮继续确认旧 `ImportView.tsx` / `useImportGuide.ts`
+  已无生产消费者并已删除，正式导入 UI 继续收敛为
+  `UnifiedView -> FileImportPanel`
+- 本轮又继续把正式导入 command surface 的假契约删掉：由于当前 UI 并无 Excel
+  sheet 选择能力，`importCommands.ts` 与 Rust `commands/import.rs` 中伪存在的
+  `sheetName/sheet_name` 参数已被移除，避免主链继续暴露未实现的导入能力
 - 前端生产代码里的零散 `invoke(...)` 已收口到 feature-local API seam
-- Rust 侧 `resume_all_downloads` / `start_all_pending` / `cancel_all_downloads` 的 command/runtime/manager dead paths 已删除
-- Rust monitoring observability compile surface 已完成进一步 mainline-only cleanup：在确认 `core/monitoring.rs` / `monitoring_integration_tests.rs` 只剩历史债务意义后，这整块 monitoring 模块与测试已从源码树删除，manager 中仅服务该模块的 cfg 挂件也已一并摘除
-- 最新一轮又把 Rust 侧剩余旧测试分区整体清退：`src-tauri/src/core/` 下 7 个仅服务旧分区的测试文件、`core/mod.rs` 中对应模块接线、`file_parser.rs` 中仅供旧测试使用的 helper seam，以及 `Cargo.toml` 中对应的旧测试 feature 都已删除。仓库当前已不再保留独立 legacy test partition。
+- Rust 侧 `resume_all_downloads` / `start_all_pending` / `cancel_all_downloads`
+  的 command/runtime/manager dead paths 已删除
+- Rust monitoring observability compile surface 已完成进一步 mainline-only
+  cleanup：在确认 `core/monitoring.rs` / `monitoring_integration_tests.rs`
+  只剩历史债务意义后，这整块 monitoring 模块与测试已从源码树删除，manager 中仅服务该模块的 cfg 挂件也已一并摘除
+- 最新一轮又把 Rust 侧剩余旧测试分区整体清退：`src-tauri/src/core/`
+  下 7 个仅服务旧分区的测试文件、`core/mod.rs` 中对应模块接线、`file_parser.rs`
+  中仅供旧测试使用的 helper seam，以及 `Cargo.toml`
+  中对应的旧测试 feature 都已删除。仓库当前已不再保留独立 legacy test
+  partition。
 - fresh 验证已跑通：
   - `~/.cargo/bin/cargo check --manifest-path src-tauri/Cargo.toml`
   - `~/.cargo/bin/cargo check --manifest-path src-tauri/Cargo.toml --tests`
@@ -78,14 +102,19 @@
   - `~/.hermes/node/bin/corepack pnpm exec vitest run`
   - `bash ./scripts/graphify-sync.sh smart`
   - `~/.hermes/node/bin/corepack pnpm exec vitest run --config vitest.config.integration.ts`
-- 这说明 Rust 侧当前完成的已经不只是 integration-only compile-surface 收口，而是历史测试分区本身也已从仓库结构删除；与此同时，前后端主质量门现在也已在当前环境跑通，仓库级 `pnpm test:all` 已能作为真实 completion gate 使用。当前剩余未闭合项只剩 auto-continue 语义下的 clean worktree + completion sentinel。
+- 这说明 Rust 侧当前完成的已经不只是 integration-only
+  compile-surface 收口，而是历史测试分区本身也已从仓库结构删除；与此同时，前后端主质量门现在也已在当前环境跑通，仓库级
+  `pnpm test:all` 已能作为真实 completion
+  gate 使用。当前剩余未闭合项只剩 auto-continue 语义下的 clean worktree +
+  completion sentinel。
 
 ---
 
 ## 4. 工作流文档
 
 - `gsd-graphify-workflow.md`：本项目推荐的 GSD + graphify 联合工作流
-- `auto-continue-workflow.md`：仓库自动续跑说明，包含 `auto-progress`、handoff、writer lease 与 completion sentinel
+- `auto-continue-workflow.md`：仓库自动续跑说明，包含
+  `auto-progress`、handoff、writer lease 与 completion sentinel
 - `plans/2026-04-16-ai-auto-dev-best-practices-survey.md`：AI 自动开发工作流最佳实践调研
 - `plans/2026-04-16-hermes-graphify-gsd-autonomous-workflow-implementation-plan.md`：将调研结论转成可执行实施方案
 - `.planning/STATE.md`：当前轮次执行状态与 blocker

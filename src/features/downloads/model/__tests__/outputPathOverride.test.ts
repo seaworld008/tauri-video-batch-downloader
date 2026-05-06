@@ -4,6 +4,7 @@ import {
   buildTaskOutputPathPreview,
   buildTaskOutputPathUpdates,
   rebaseTaskOutputPath,
+  resolveStartConfirmDirectory,
 } from '../outputPathOverride';
 
 const createTask = (id: string, output_path: string): VideoTask => ({
@@ -39,6 +40,16 @@ describe('outputPathOverride', () => {
     );
   });
 
+  it('keeps paths that are already under the override root', () => {
+    expect(
+      rebaseTaskOutputPath(
+        '/tmp/video-downloader-pro-real-test',
+        '/Users/seaxu/Downloads',
+        '/tmp/video-downloader-pro-real-test'
+      )
+    ).toBe('/tmp/video-downloader-pro-real-test');
+  });
+
   it('builds batch task output path updates', () => {
     const updates = buildTaskOutputPathUpdates(
       [createTask('task-1', '/downloads/course-a'), createTask('task-2', '/downloads/course-b')],
@@ -50,6 +61,27 @@ describe('outputPathOverride', () => {
       { task_id: 'task-1', output_path: 'D:/Video/course-a' },
       { task_id: 'task-2', output_path: 'D:/Video/course-b' },
     ]);
+  });
+
+  it('uses the shared imported output directory as the start confirmation directory', () => {
+    expect(
+      resolveStartConfirmDirectory(
+        [
+          createTask('task-1', '/tmp/video-downloader-pro-real-test'),
+          createTask('task-2', '/tmp/video-downloader-pro-real-test/'),
+        ],
+        '/Users/seaxu/Downloads'
+      )
+    ).toBe('/tmp/video-downloader-pro-real-test');
+  });
+
+  it('falls back to the configured default when startable tasks use mixed directories', () => {
+    expect(
+      resolveStartConfirmDirectory(
+        [createTask('task-1', '/downloads/course-a'), createTask('task-2', '/downloads/course-b')],
+        '/downloads'
+      )
+    ).toBe('/downloads');
   });
 
   it('builds a preview path for the sample task', () => {

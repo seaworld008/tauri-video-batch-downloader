@@ -3,7 +3,10 @@ import { useDownloadStore } from '../../stores/downloadStore';
 import { useConfigStore } from '../../stores/configStore';
 import toast from 'react-hot-toast';
 import { ensureDownloadStats } from '../../utils/downloadStats';
-import { buildTaskOutputPathPreview } from '../../features/downloads/model/outputPathOverride';
+import {
+  buildTaskOutputPathPreview,
+  resolveStartConfirmDirectory,
+} from '../../features/downloads/model/outputPathOverride';
 import {
   openDownloadFolderCommand,
   selectOutputDirectoryCommand,
@@ -48,6 +51,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   const [startConfirmWorking, setStartConfirmWorking] = React.useState(false);
   const [startConfirmTaskIds, setStartConfirmTaskIds] = React.useState<string[]>([]);
   const [startConfirmDirectory, setStartConfirmDirectory] = React.useState(
+    config.download.output_directory
+  );
+  const [startConfirmInitialDirectory, setStartConfirmInitialDirectory] = React.useState(
     config.download.output_directory
   );
   const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
@@ -148,6 +154,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
     setStartConfirmWorking(false);
     setStartConfirmTaskIds([]);
     setStartConfirmDirectory(config.download.output_directory);
+    setStartConfirmInitialDirectory(config.download.output_directory);
     pendingStartActionRef.current = null;
   }, [config.download.output_directory]);
 
@@ -167,12 +174,19 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
         return;
       }
 
+      const taskIdSet = new Set(taskIds);
+      const initialDirectory = resolveStartConfirmDirectory(
+        tasks.filter(task => taskIdSet.has(task.id)),
+        config.download.output_directory
+      );
+
       pendingStartActionRef.current = startAction;
       setStartConfirmTaskIds(taskIds);
-      setStartConfirmDirectory(config.download.output_directory);
+      setStartConfirmDirectory(initialDirectory);
+      setStartConfirmInitialDirectory(initialDirectory);
       setStartConfirmOpen(true);
     },
-    [config.download.output_directory]
+    [config.download.output_directory, tasks]
   );
 
   const openDeleteConfirm = React.useCallback(
@@ -201,7 +215,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       if (
         startConfirmTaskIds.length > 0 &&
         startConfirmDirectory &&
-        startConfirmDirectory !== config.download.output_directory
+        startConfirmDirectory !== startConfirmInitialDirectory
       ) {
         await applyOutputDirectoryOverride(startConfirmTaskIds, startConfirmDirectory);
       }
@@ -213,8 +227,8 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   }, [
     applyOutputDirectoryOverride,
     closeStartConfirm,
-    config.download.output_directory,
     startConfirmDirectory,
+    startConfirmInitialDirectory,
     startConfirmTaskIds,
   ]);
 

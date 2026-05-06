@@ -1,29 +1,8 @@
 import { reportFrontendDiagnosticIfEnabled } from '../../../utils/frontendLogging';
-
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object' && 'message' in error) {
-    return String((error as any).message);
-  }
-  return String(error ?? '');
-};
-
-const getErrorCode = (error: unknown): string | undefined => {
-  if (error && typeof error === 'object' && 'code' in error) {
-    return String((error as any).code);
-  }
-
-  return undefined;
-};
+import { toDownloadDiagnostic } from '../model/downloadDiagnostics';
 
 export const isConcurrencyError = (error: unknown) => {
-  const code = getErrorCode(error);
-  if (code === 'MAX_CONCURRENCY_REACHED') {
-    return true;
-  }
-
-  return getErrorMessage(error).toLowerCase().includes('maximum concurrent downloads');
+  return toDownloadDiagnostic(error).code === 'max_concurrency_reached';
 };
 
 const CONCURRENCY_NOTICE_INTERVAL = 4000;
@@ -75,14 +54,17 @@ export const handleQueuedConcurrency = ({
     return false;
   }
 
+  const diagnostic = toDownloadDiagnostic(error);
+
   if (!suppressToast) {
     const now = Date.now();
     if (now - lastConcurrencyNotice > CONCURRENCY_NOTICE_INTERVAL) {
-      toastFn(queueMessage);
+      toastFn(queueMessage || diagnostic.message);
       lastConcurrencyNotice = now;
     }
   }
 
+  reportFrontendDiagnosticIfEnabled('info', `[${source}] download control queued`, diagnostic);
   syncRuntimeAfterControl(syncRuntimeState, source);
   return true;
 };

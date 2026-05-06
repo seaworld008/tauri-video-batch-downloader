@@ -108,9 +108,66 @@ smart() {
     echo "[graphify-sync] code changes detected -> running code-only rebuild"
     run_graphify_python - <<'PY'
 from pathlib import Path
-from graphify.watch import _rebuild_code
-_rebuild_code(Path('.'))
-print('[graphify-sync] code graph rebuilt')
+import json
+
+from graphify.analyze import god_nodes, surprising_connections, suggest_questions
+from graphify.build import build_from_json
+from graphify.cluster import cluster, score_all
+from graphify.detect import detect
+from graphify.export import to_json
+from graphify.extract import extract
+from graphify.report import generate
+
+root = Path('.')
+detected = detect(root)
+code_files = [Path(f) for f in detected.get('files', {}).get('code', [])]
+
+if not code_files:
+    print('[graphify-sync] no code files found - nothing to rebuild')
+    raise SystemExit(0)
+
+result = extract(code_files)
+graph = build_from_json(result)
+communities = cluster(graph)
+cohesion = score_all(graph, communities)
+gods = god_nodes(graph)
+surprises = surprising_connections(graph, communities)
+labels = {cid: f'Community {cid}' for cid in communities}
+questions = suggest_questions(graph, communities, labels)
+
+out = root / 'graphify-out'
+out.mkdir(exist_ok=True)
+detection = {
+    'files': {'code': [str(f) for f in code_files], 'document': [], 'paper': [], 'image': []},
+    'total_files': len(code_files),
+    'total_words': detected.get('total_words', 0),
+}
+report = generate(
+    graph,
+    communities,
+    cohesion,
+    labels,
+    gods,
+    surprises,
+    detection,
+    {'input': 0, 'output': 0},
+    str(root),
+    suggested_questions=questions,
+)
+
+(out / 'ast.json').write_text(json.dumps(result, indent=2))
+(out / 'GRAPH_REPORT.md').write_text(report)
+to_json(graph, communities, str(out / 'graph.json'))
+
+flag = out / 'needs_update'
+if flag.exists():
+    flag.unlink()
+
+print(
+    f'[graphify-sync] code graph rebuilt: '
+    f'{graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges, '
+    f'{len(communities)} communities'
+)
 PY
     return 0
   fi

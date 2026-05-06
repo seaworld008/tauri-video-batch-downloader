@@ -5,6 +5,7 @@ import { ManualInputPanel } from '../ManualInputPanel';
 
 const systemCommandMocks = vi.hoisted(() => ({
   getVideoInfoCommand: vi.fn(),
+  readClipboardTextCommand: vi.fn(),
   selectOutputDirectoryCommand: vi.fn(),
 }));
 
@@ -66,5 +67,24 @@ describe('ManualInputPanel', () => {
     });
 
     expect(screen.getByDisplayValue('/picked-downloads')).toBeInTheDocument();
+  });
+
+  it('reads clipboard text through the native system command seam', async () => {
+    const user = userEvent.setup();
+    systemCommandMocks.readClipboardTextCommand.mockResolvedValue(
+      'not-a-url\nhttps://example.com/video.mp4'
+    );
+
+    render(<ManualInputPanel />);
+
+    await user.click(screen.getByTitle('从剪贴板粘贴'));
+
+    expect(systemCommandMocks.readClipboardTextCommand).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('待添加列表 (1)')).toBeInTheDocument();
+    expect(screen.getByText('https://example.com/video.mp4')).toBeInTheDocument();
+    expect(notifyMocks.notify.success).toHaveBeenCalledWith(
+      '添加成功',
+      '从剪贴板添加了 1 个链接'
+    );
   });
 });
