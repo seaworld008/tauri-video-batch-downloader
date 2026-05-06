@@ -10,10 +10,11 @@
 
 1. `README.md` — 项目总览、真实结构、当前开发方式
 2. `current-state.md` — 当前真实状态、正式入口、主链收敛结果
-3. `entrypoints.md` — 正式入口与历史入口清单
-4. `gsd-graphify-workflow.md` — 持续迭代开发工作流（GSD + graphify）
-5. `.planning/ROADMAP.md` — 当前阶段路线图与 closeout / hardening 进度
-6. `../graphify-out/GRAPH_REPORT.md` — 本地代码图谱摘要
+3. `large-codebase-ai-handoff-analysis-2026-05-06.md` — AI/新人接手大型代码库分析报告
+4. `entrypoints.md` — 正式入口与历史入口清单
+5. `gsd-graphify-workflow.md` — 持续迭代开发工作流（GSD + graphify）
+6. `.planning/ROADMAP.md` — 当前阶段路线图与 closeout / hardening 进度
+7. `../graphify-out/GRAPH_REPORT.md` — 本地代码图谱摘要
 
 ---
 
@@ -22,6 +23,7 @@
 - `overview.md`：项目介绍与适用场景
 - `features.md`：功能说明（偏使用者视角）
 - `architecture.md`：基础架构说明
+- `large-codebase-ai-handoff-analysis-2026-05-06.md`：大型项目代码库 AI 接手分析报告
 - `development.md`：本地开发与测试
 - `build-release.md`：构建、打包与发布
 - `integration.md`：导入/对接相关说明
