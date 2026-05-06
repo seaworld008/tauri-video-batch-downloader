@@ -41,7 +41,11 @@ export {
 } from './dataValidationCore';
 export { normalizeImportedData, normalizeTaskData } from './dataNormalization';
 export { checkDataIntegrity, createValidationStats } from './dataIntegrity';
-import { DataValidator, type BatchValidationResult, type ValidationResult } from './dataValidationCore';
+import {
+  DataValidator,
+  type BatchValidationResult,
+  type ValidationResult,
+} from './dataValidationCore';
 import { normalizeImportedData, normalizeTaskData } from './dataNormalization';
 import { checkDataIntegrity, createValidationStats } from './dataIntegrity';
 
