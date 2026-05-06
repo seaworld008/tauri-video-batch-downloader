@@ -40,22 +40,21 @@ run_graphify_python() {
 }
 
 graphify_supports_update() {
-  command -v graphify >/dev/null 2>&1 || return 1
-  graphify --help 2>/dev/null | grep -Eq '(^|[[:space:]])update([[:space:]]|$)'
+  run_graphify_python -m graphify --help 2>/dev/null | grep -Eq '(^|[[:space:]])update([[:space:]]|$)'
 }
 
 run_graphify_update_or_fallback() {
   local reason="$1"
   if graphify_supports_update; then
     echo "[graphify-sync] $reason -> running graphify update ."
-    graphify update .
+    run_graphify_python -m graphify update .
     return 0
   fi
 
   echo "[graphify-sync] $reason, but this graphify CLI does not expose 'update'." >&2
-  echo "[graphify-sync] fallback: install/use a graph builder-capable graphify CLI, or rebuild graphify-out manually with the project workflow." >&2
+  echo "[graphify-sync] fallback: upgrade the official package with '$GRAPHIFY_PY -m pip install --upgrade graphifyy' or rebuild graphify-out manually with the project workflow." >&2
   echo "[graphify-sync] current CLI commands:" >&2
-  graphify --help 2>&1 | sed 's/^/[graphify-sync]   /' >&2 || true
+  run_graphify_python -m graphify --help 2>&1 | sed 's/^/[graphify-sync]   /' >&2 || true
   return 0
 }
 

@@ -1,17 +1,18 @@
 # [AGENTS.md](AGENTS.md)
 
-Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini, etc.).
+Shared instructions for all AI agents (Claude, Codex, Antigravity, Gemini,
+etc.).
 
 ## Prerequisites
 
-| Tool | Required version | Notes |
-|------|------------------|-------|
-| Node.js | ≥ 20.x | LTS line; declared in `package.json#engines` |
-| pnpm | ≥ 9.x | Install via `corepack enable` |
-| Rust | stable (≥ 1.78) | `rustup toolchain install stable` |
-| Tauri CLI | v2 (`@tauri-apps/cli ^2.1`) | Already a dev dependency — invoke with `pnpm tauri ...` |
-| Platform SDK | Windows: WebView2 runtime; macOS: Xcode Command Line Tools; Linux: `webkit2gtk` + `libgtk-3` (see `tauri.conf.json#bundle.linux.deb.depends`) | |
-| Optional | `cargo-audit` for dependency CVE scans | `cargo install cargo-audit` |
+| Tool         | Required version                                                                                                                              | Notes                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Node.js      | ≥ 20.x                                                                                                                                        | LTS line; declared in `package.json#engines`            |
+| pnpm         | ≥ 9.x                                                                                                                                         | Install via `corepack enable`                           |
+| Rust         | stable (≥ 1.78)                                                                                                                               | `rustup toolchain install stable`                       |
+| Tauri CLI    | v2 (`@tauri-apps/cli ^2.1`)                                                                                                                   | Already a dev dependency — invoke with `pnpm tauri ...` |
+| Platform SDK | Windows: WebView2 runtime; macOS: Xcode Command Line Tools; Linux: `webkit2gtk` + `libgtk-3` (see `tauri.conf.json#bundle.linux.deb.depends`) |                                                         |
+| Optional     | `cargo-audit` for dependency CVE scans                                                                                                        | `cargo install cargo-audit`                             |
 
 Quick verification:
 
@@ -27,48 +28,72 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 - You are an AI assistant working on the **Video Downloader Pro** project.
 
-- Use Chinese unless another language is explicitly requested by the user, as the primary audience/comments are predominantly in Chinese.
+- Use Chinese unless another language is explicitly requested by the user, as
+  the primary audience/comments are predominantly in Chinese.
 
 - Follow the working agreement:
-
   - Run `git status -sb` at session start when managing Git workflows.
 
-  - Read every file the current task names or imports before editing. Do not overwrite blindly.
+  - Read every file the current task names or imports before editing. Do not
+    overwrite blindly.
 
   - Keep diffs focused; avoid drive-by refactors unless asked.
 
   - Do not commit unless explicitly requested.
 
-  - Keep code files under ~300 lines. Proactively split UI components or complex Rust modules logic if they grow too large.
+  - Keep code files under ~300 lines. Proactively split UI components or complex
+    Rust modules logic if they grow too large.
 
-  - Do not destructure Zustand stores in React components; always use selectors or shallow mapping to prevent unnecessary re-renders.
+  - Do not destructure Zustand stores in React components; always use selectors
+    or shallow mapping to prevent unnecessary re-renders.
 
-  - Prefer `useDownloadStore.getState()` inside callbacks and async handlers (e.g. Tauri event listeners) rather than closing over reactive hooks.
+  - Prefer `useDownloadStore.getState()` inside callbacks and async handlers
+    (e.g. Tauri event listeners) rather than closing over reactive hooks.
 
-  - Keep features local; avoid cross-feature imports unless truly shared. Co-locate tests.
+  - Keep features local; avoid cross-feature imports unless truly shared.
+    Co-locate tests.
 
-  - **Research before building**: For new features (e.g., adding aria2 support, specific M3U8 decryptors), search for industry best practices, established conventions, and documented APIs (Tauri v2 docs, Rust ecosystem, shadcn/ui). Don't invent when a well-tested pattern exists.
+  - **Research before building**: For new features (e.g., adding aria2 support,
+    specific M3U8 decryptors), search for industry best practices, established
+    conventions, and documented APIs (Tauri v2 docs, Rust ecosystem, shadcn/ui).
+    Don't invent when a well-tested pattern exists.
 
-  - **Edge cases are not optional**: Brainstorm as many edge cases as possible for downloading — network failures, HTTP 429 Rate Limits, permissions denied to the download folder, corrupted local `.part` files, empty video titles, concurrent queue overflows. Provide fallback UI and retry states.
+  - **Edge cases are not optional**: Brainstorm as many edge cases as possible
+    for downloading — network failures, HTTP 429 Rate Limits, permissions denied
+    to the download folder, corrupted local `.part` files, empty video titles,
+    concurrent queue overflows. Provide fallback UI and retry states.
 
-  - **Test-first is mandatory** for new core behavior (especially in Rust `manager.rs`, `resume_downloader.rs`):
-    - Write a failing test (RED), implement minimally (GREEN), refactor (REFACTOR).
-    - Ensure robust unit coverage for state machine transitions (Downloading -> Paused -> Completed).
+  - **Test-first is mandatory** for new core behavior (especially in Rust
+    `manager.rs`, `resume_downloader.rs`):
+    - Write a failing test (RED), implement minimally (GREEN), refactor
+      (REFACTOR).
+    - Ensure robust unit coverage for state machine transitions (Downloading ->
+      Paused -> Completed).
 
-  - No pure dev server for IPC; you must ask the user to test interactive desktop flows, or run `pnpm tauri dev` automatically when the task explicitly authorises a long-running dev server.
+  - No pure dev server for IPC; you must ask the user to test interactive
+    desktop flows, or run `pnpm tauri dev` automatically when the task
+    explicitly authorises a long-running dev server.
 
-  - For E2E tests, utilize **Tauri MCP** tools (via `@hypothesi/tauri-mcp-server` configured in `.cursor/mcp.json`). **Never use Chrome DevTools MCP**, since this is exclusively a Tauri app.
+  - For E2E tests, utilize **Tauri MCP** tools (via
+    `@hypothesi/tauri-mcp-server` configured in `.cursor/mcp.json`). **Never use
+    Chrome DevTools MCP**, since this is exclusively a Tauri app.
 
   - **GSD + graphify workflow**:
     - GSD (local Codex runtime) is installed in `./.codex/` for this repo.
-    - Use GSD to manage planning/execution cadence: start with `$gsd-map-codebase`, then `$gsd-new-project`, then run the phase/plan/execute workflow that matches the current milestone.
-    - Graphify outputs live in `graphify-out/`. Before answering architecture questions or planning significant refactors, read `graphify-out/GRAPH_REPORT.md` first.
-    - Prefer `./scripts/graphify-sync.sh smart` after code changes to keep the code graph fresh with low overhead.
-    - If docs/media changes should affect semantic understanding, run a full graph rebuild manually instead of relying on smart sync.
-    - Treat `.planning/` and `graphify-out/` as local workflow artifacts; they are ignored by git unless explicitly added.
+    - Use GSD to manage planning/execution cadence: start with
+      `$gsd-map-codebase`, then `$gsd-new-project`, then run the
+      phase/plan/execute workflow that matches the current milestone.
+    - Graphify outputs live in `graphify-out/`. Before answering architecture
+      questions or planning significant refactors, read
+      `graphify-out/GRAPH_REPORT.md` first.
+    - Prefer `./scripts/graphify-sync.sh smart` after code changes to keep the
+      code graph fresh with low overhead.
+    - If docs/media changes should affect semantic understanding, run a full
+      graph rebuild manually instead of relying on smart sync.
+    - Treat `.planning/` and `graphify-out/` as local workflow artifacts; they
+      are ignored by git unless explicitly added.
 
 - Tech stack reference:
-
   - Framework: **Tauri v2** (Rust Backend, Plugin Architecture)
   - UI: **React 19**, **Vite v7**, **Tailwind CSS v4**, **shadcn/ui v4**
   - State: **Zustand v5**
@@ -76,81 +101,131 @@ cargo test --manifest-path src-tauri/Cargo.toml
   - Package Manager: **pnpm**
 
 - Tauri bridge patterns (v2):
-
-  - Rust -> Webview: standard `window.emit()` or `app_handle.emit()` using typed payloads (like `DownloadEvent::TaskProgress`), received by frontend `@tauri-apps/plugin-event` or similar `listen("event-name")`.
-  - Webview -> Rust: `@tauri-apps/plugin-core` `invoke()`. Always sync frontend types (e.g., `TaskStatus`) with backend Rust enums.
+  - Rust -> Webview: standard `window.emit()` or `app_handle.emit()` using typed
+    payloads (like `DownloadEvent::TaskProgress`), received by frontend
+    `@tauri-apps/plugin-event` or similar `listen("event-name")`.
+  - Webview -> Rust: `@tauri-apps/plugin-core` `invoke()`. Always sync frontend
+    types (e.g., `TaskStatus`) with backend Rust enums.
 
 - Writing style:
-
-  - **Em-dash spacing**: Always use spaces around em-dashes: `word — word` not `word—word` (applicable for English or Chinese Markdown).
+  - **Em-dash spacing**: Always use spaces around em-dashes: `word — word` not
+    `word—word` (applicable for English or Chinese Markdown).
 
 - Styling rules:
+  - **Tokens first**: Emulate shadcn/ui v4 behavior; use CSS variables
+    (`--background`, `--primary`, `--accent`) over hardcoded hex values.
 
-  - **Tokens first**: Emulate shadcn/ui v4 behavior; use CSS variables (`--background`, `--primary`, `--accent`) over hardcoded hex values.
+  - **Selection states**: Every interactive element must declare a
+    `focus-visible:ring-*` Tailwind utility (e.g.
+    `focus-visible:ring-2 focus-visible:ring-ring`).
 
-  - **Selection states**: Every interactive element must declare a `focus-visible:ring-*` Tailwind utility (e.g. `focus-visible:ring-2 focus-visible:ring-ring`).
+  - **Focus indicators**: Ensure keyboard navigation is accessible, especially
+    for pause/resume queue buttons or dialog interactions.
 
-  - **Focus indicators**: Ensure keyboard navigation is accessible, especially for pause/resume queue buttons or dialog interactions.
+  - **Dark theme**: The app heavily prefers modern dark modes. Use `.dark`
+    standard from Tailwind v4.
 
-  - **Dark theme**: The app heavily prefers modern dark modes. Use `.dark` standard from Tailwind v4.
-
-  - **Border radius**: Standardize on `rounded-md` (6px) or `rounded-lg` (8px) for major panels and dialogs as dictated by shadcn defaults.
+  - **Border radius**: Standardize on `rounded-md` (6px) or `rounded-lg` (8px)
+    for major panels and dialogs as dictated by shadcn defaults.
 
 - Cross-platform policy:
-
-  - **Windows and macOS are equal priorities.** All command spawns must accommodate Windows `.cmd` or `.exe` logic alongside macOS/Linux shell environments.
-  - When utilizing external binaries (like `yt-dlp` or `ffmpeg`), ensure sidecar configurations in `tauri.conf.json` perfectly match target triples for multiple platforms.
+  - **Windows and macOS are equal priorities.** All command spawns must
+    accommodate Windows `.cmd` or `.exe` logic alongside macOS/Linux shell
+    environments.
+  - When utilizing external binaries (like `yt-dlp` or `ffmpeg`), ensure sidecar
+    configurations in `tauri.conf.json` perfectly match target triples for
+    multiple platforms.
 
 - Key architectural patterns:
-
-  - **Concurrency Manager**: `manager.rs` holds the active Tokio semaphores and download tracking lock (`active_downloads`). You MUST avoid asynchronous deadlocks. Never `await` while holding a `std::sync::RwLock`/`Mutex` guard — switch to `tokio::sync::RwLock` or drop the guard before awaiting.
-  - **Graceful Pausing**: When intercepting a cancel or pause signal, the backend `resume_downloader.rs` MUST synchronously `flush()` and `sync_all()` local `.part` buffers to the file system before exiting the task.
-  - **Frontend State Delay**: The React UI should never destructively mutate `status: "paused"` on an explicit user action. Trigger `invoke()`, then rely on backend state synchronization (via `refreshTasks` or streaming Events) to determine truth, preventing sudden progress bar resets.
-  - **Adding a Tauri plugin (v2)**: 
+  - **Concurrency Manager**: `manager.rs` holds the active Tokio semaphores and
+    download tracking lock (`active_downloads`). You MUST avoid asynchronous
+    deadlocks. Never `await` while holding a `std::sync::RwLock`/`Mutex` guard —
+    switch to `tokio::sync::RwLock` or drop the guard before awaiting.
+  - **Graceful Pausing**: When intercepting a cancel or pause signal, the
+    backend `resume_downloader.rs` MUST synchronously `flush()` and `sync_all()`
+    local `.part` buffers to the file system before exiting the task.
+  - **Frontend State Delay**: The React UI should never destructively mutate
+    `status: "paused"` on an explicit user action. Trigger `invoke()`, then rely
+    on backend state synchronization (via `refreshTasks` or streaming Events) to
+    determine truth, preventing sudden progress bar resets.
+  - **Adding a Tauri plugin (v2)**:
     1. Add to `Cargo.toml`.
     2. Register `builder.plugin(...)` in `src-tauri/src/lib.rs`.
-    3. Update `src-tauri/capabilities/migrated.json` (the active capability file in this repo) to whitelist any new commands the plugin exposes.
+    3. Update `src-tauri/capabilities/migrated.json` (the active capability file
+       in this repo) to whitelist any new commands the plugin exposes.
 
 <!-- gitnexus:start -->
+
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **tauri-video-batch-downloader** (4795 symbols, 9139 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **tauri-video-batch-downloader** (4795
+symbols, 9139 relationships, 300 execution flows). Use the GitNexus MCP tools to
+understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in
+> terminal first.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- **MUST run impact analysis before editing any symbol.** Before modifying a
+  function, class, or method, run
+  `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report
+  the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your
+  changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before
+  proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to
+  find execution flows instead of grepping. It returns process-grouped results
+  ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which
+  execution flows it participates in — use
+  `gitnexus_context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER edit a function, class, or method without first running
+  `gitnexus_impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which
+  understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check
+  affected scope.
 
 ## Resources
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/tauri-video-batch-downloader/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/tauri-video-batch-downloader/clusters` | All functional areas |
-| `gitnexus://repo/tauri-video-batch-downloader/processes` | All execution flows |
-| `gitnexus://repo/tauri-video-batch-downloader/process/{name}` | Step-by-step execution trace |
+| Resource                                                      | Use for                                  |
+| ------------------------------------------------------------- | ---------------------------------------- |
+| `gitnexus://repo/tauri-video-batch-downloader/context`        | Codebase overview, check index freshness |
+| `gitnexus://repo/tauri-video-batch-downloader/clusters`       | All functional areas                     |
+| `gitnexus://repo/tauri-video-batch-downloader/processes`      | All execution flows                      |
+| `gitnexus://repo/tauri-video-batch-downloader/process/{name}` | Step-by-step execution trace             |
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Task                                         | Read this skill file                                        |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius / "What breaks if I change X?"  | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?"             | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename / extract / split / refactor          | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema reference           | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->
+
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+
+- Before answering architecture or codebase questions, read
+  graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- For cross-module "how does X relate to Y" questions, prefer
+  `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or
+  `graphify explain "<concept>"` over grep — these traverse the graph's
+  EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep
+  the graph current (AST-only, no API cost)

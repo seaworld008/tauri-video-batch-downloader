@@ -83,5 +83,8 @@ src/features/downloads/state/downloadEventBridge.ts
 - `src-tauri/src/main-fixed.rs`
 - `src-tauri/src/main-original.rs`
 - `src-tauri/tauri-minimal.conf.json`
+- `src-tauri/tauri-simple.conf.json`
+- `src-tauri/tauri-fixed.conf.json`
+- `src-tauri/check_output.txt`
 
 后续新增功能应沿正式入口扩展，不要重新引入平行启动链。
