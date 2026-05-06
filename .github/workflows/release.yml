@@ -6,24 +6,47 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release"
+        description: "Existing tag to build, for example v1.0.0"
         required: true
         type: string
+      platforms:
+        description: "Platforms to build"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+      publish:
+        description: "Upload artifacts to a draft GitHub Release"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag || '' }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  # Create Release Draft
-  create-release:
-    name: Create Release
+  preflight:
+    name: Release Preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     outputs:
-      release_id: ${{ steps.create-release.outputs.id }}
-      release_upload_url: ${{ steps.create-release.outputs.upload_url }}
-      release_body: ${{ steps.tag-info.outputs.tag_body }}
-      tag_name: ${{ steps.tag-info.outputs.tag }}
+      tag: ${{ steps.release-meta.outputs.tag }}
+      version: ${{ steps.release-meta.outputs.version }}
+      prerelease: ${{ steps.release-meta.outputs.prerelease }}
+      tag_body: ${{ steps.release-meta.outputs.tag_body }}
+      matrix: ${{ steps.release-meta.outputs.matrix }}
 
     steps:
       - name: Checkout repository
@@ -31,115 +54,153 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get tag information
-        id: tag-info
+      - name: Resolve release tag
+        id: release-meta
+        shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${{ github.event.inputs.tag }}"
+            TAG="${{ inputs.tag }}"
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-          # Extract version from tag (remove 'v' prefix)
-          VERSION=${TAG#v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag '$TAG' does not exist. Create the tag before running release builds." >&2
+            exit 1
+          fi
 
-          # Get the tag message/body
-          TAG_BODY=$(git tag -l --format='%(contents)' "$TAG" || echo "Release $TAG")
-          echo "tag_body<<EOF" >> $GITHUB_OUTPUT
-          echo "$TAG_BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          VERSION="${TAG#v}"
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
 
-      - name: Create GitHub Release
-        id: create-release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDOWS='{"key":"windows-x64","family":"windows","name":"Windows x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc"}'
+          MACOS_X64='{"key":"macos-x64","family":"macos","name":"macOS Intel","os":"macos-15-intel","rust_target":"x86_64-apple-darwin"}'
+          MACOS_ARM='{"key":"macos-aarch64","family":"macos","name":"macOS Apple Silicon","os":"macos-14","rust_target":"aarch64-apple-darwin"}'
+          LINUX='{"key":"linux-x64","family":"linux","name":"Linux x64","os":"ubuntu-22.04","rust_target":"x86_64-unknown-linux-gnu"}'
+
+          if [[ "${{ github.event_name }}" == "push" || "${{ inputs.platforms }}" == "all" ]]; then
+            MATRIX="[$WINDOWS,$MACOS_X64,$MACOS_ARM,$LINUX]"
+          elif [[ "${{ inputs.platforms }}" == "windows" ]]; then
+            MATRIX="[$WINDOWS]"
+          elif [[ "${{ inputs.platforms }}" == "macos" ]]; then
+            MATRIX="[$MACOS_X64,$MACOS_ARM]"
+          elif [[ "${{ inputs.platforms }}" == "linux" ]]; then
+            MATRIX="[$LINUX]"
+          else
+            echo "Unsupported platforms value: ${{ inputs.platforms }}" >&2
+            exit 1
+          fi
+
+          TAG_BODY="$(git tag -l --format='%(contents)' "$TAG")"
+          if [[ -z "$TAG_BODY" ]]; then
+            TAG_BODY="Release $TAG"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag_body<<EOF"
+            echo "$TAG_BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          tag_name: ${{ steps.tag-info.outputs.tag }}
-          release_name: "Video Downloader Pro ${{ steps.tag-info.outputs.version }}"
-          body: |
-            ## Video Downloader Pro ${{ steps.tag-info.outputs.version }}
+          node-version: "20"
 
-            🎉 **Professional batch video downloader with modern UI**
+      - name: Enable pnpm via Corepack
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
 
-            ### 📥 Downloads
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-            Choose the appropriate version for your operating system:
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
 
-            - **Windows**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_x64_en-US.msi`
-            - **macOS (Intel)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_x64.dmg`  
-            - **macOS (Apple Silicon)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_aarch64.dmg`
-            - **Linux (AppImage)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_amd64.AppImage`
-            - **Linux (deb)**: `video-downloader-pro_${{ steps.tag-info.outputs.version }}_amd64.deb`
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev
 
-            ### ✨ Features
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
-            - 🚀 **High-Performance Downloads**: Multi-threaded downloading with resume support
-            - 🎯 **Multiple Formats**: HTTP/HTTPS, M3U8 streams, YouTube videos
-            - 📊 **Real-time Progress**: Live bandwidth monitoring and statistics
-            - 🎨 **Modern UI**: Dark/light themes with responsive design
-            - 📁 **Batch Processing**: CSV import and bulk operations
-            - ⚙️ **Advanced Settings**: Proxy support, custom headers, speed limiting
+      - name: Type check
+        run: pnpm type-check
 
-            ### 🔧 System Requirements
+      - name: Lint code
+        run: pnpm lint
 
-            - **Windows**: Windows 10 version 1903+ (64-bit)
-            - **macOS**: macOS 10.15+ (Catalina or later)
-            - **Linux**: Ubuntu 18.04+ / Debian 10+ / other modern distributions
+      - name: Format check
+        run: >
+          pnpm exec prettier --check
+          "src/**/*.{ts,tsx,css,json}"
+          "*.html"
+          ".github/workflows/*.yml"
+          ".github/workflows/README.md"
+          "README.md"
+          "AGENTS.md"
+          "docs/**/*.md"
 
-            ### 📝 Changelog
+      - name: Run frontend tests
+        run: pnpm exec vitest run
 
-            ${{ steps.tag-info.outputs.tag_body }}
+      - name: Prepare frontendDist placeholder
+        run: |
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            printf '<!doctype html><html><body></body></html>\n' > dist/index.html
+          fi
 
-            ### 🛡️ Security
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+        working-directory: ./src-tauri
 
-            All release binaries are signed and checksums are provided below for verification.
+      - name: Run Rust clippy
+        run: cargo clippy -- -D warnings
+        working-directory: ./src-tauri
 
-            ---
+      - name: Run Rust tests
+        run: cargo test
+        working-directory: ./src-tauri
 
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ github.event.before }}...${{ steps.tag-info.outputs.tag }}
-          draft: true
-          prerelease: ${{ contains(steps.tag-info.outputs.tag, '-') }}
-
-  # Build for Multiple Platforms
   build-release:
-    name: Build Release
-    needs: create-release
+    name: Build ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.os }}
+    needs: preflight
+    timeout-minutes: 80
 
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
-        platform:
-          # Windows
-          - os: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            arch: x64
-            cmd: cmd
-
-          # macOS Intel
-          - os: macos-latest
-            rust_target: x86_64-apple-darwin
-            arch: x64
-            cmd: bash
-
-          # macOS Apple Silicon
-          - os: macos-latest
-            rust_target: aarch64-apple-darwin
-            arch: aarch64
-            cmd: bash
-
-          # Linux
-          - os: ubuntu-20.04
-            rust_target: x86_64-unknown-linux-gnu
-            arch: amd64
-            cmd: bash
+        platform: ${{ fromJson(needs.preflight.outputs.matrix) }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -163,9 +224,8 @@ jobs:
           workspaces: "./src-tauri -> target"
           key: ${{ matrix.platform.rust_target }}
 
-      # Platform-specific dependencies
       - name: Install Linux dependencies
-        if: matrix.platform.os == 'ubuntu-20.04'
+        if: matrix.platform.family == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -176,18 +236,18 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libwebkit2gtk-4.0-dev \
+            libwebkit2gtk-4.1-dev \
             patchelf
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        run: pnpm build
+        run: pnpm exec vite build
 
-      # Code signing setup
       - name: Import Windows certificate
-        if: matrix.platform.os == 'windows-latest'
+        if: matrix.platform.family == 'windows'
+        shell: pwsh
         run: |
           if (-not [string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
             $cert = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
@@ -195,14 +255,15 @@ jobs:
             certutil -user -q -p $env:WINDOWS_CERTIFICATE_PASSWORD -importpfx certificate.p12
             Remove-Item certificate.p12
           } else {
-            echo "No Windows certificate provided, skipping code signing"
+            Write-Host "No Windows certificate provided, skipping code signing"
           }
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
       - name: Import macOS certificate
-        if: matrix.platform.os == 'macos-latest'
+        if: matrix.platform.family == 'macos'
+        shell: bash
         run: |
           if [[ -n "$APPLE_CERTIFICATE" ]]; then
             echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
@@ -220,7 +281,6 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
-      # Build Tauri app
       - name: Build Tauri app
         run: pnpm tauri build --target ${{ matrix.platform.rust_target }}
         env:
@@ -234,11 +294,11 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # Post-build signing (macOS notarization)
       - name: Notarize macOS app
-        if: matrix.platform.os == 'macos-latest' && env.APPLE_ID != ''
+        if: matrix.platform.family == 'macos' && env.APPLE_ID != ''
+        shell: bash
         run: |
-          xcrun notarytool submit "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/dmg/*.dmg" \
+          xcrun notarytool submit src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/dmg/*.dmg \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
@@ -248,156 +308,124 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # Collect build artifacts
       - name: Collect Windows artifacts
-        if: matrix.platform.os == 'windows-latest'
+        if: matrix.platform.family == 'windows'
+        shell: pwsh
         run: |
-          mkdir -p artifacts
-          $msiPath = Get-ChildItem "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/msi/*.msi" | Select-Object -First 1
-          $exePath = Get-ChildItem "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
-          if ($msiPath) { Copy-Item $msiPath.FullName "artifacts/" }
-          if ($exePath) { Copy-Item $exePath.FullName "artifacts/" }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Get-ChildItem "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" -Recurse -Include *.msi,*.exe |
+            ForEach-Object { Copy-Item $_.FullName artifacts/ }
 
       - name: Collect macOS artifacts
-        if: matrix.platform.os == 'macos-latest'
+        if: matrix.platform.family == 'macos'
+        shell: bash
         run: |
           mkdir -p artifacts
-          find "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" -name "*.dmg" -exec cp {} artifacts/ \;
+          find "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" -type f -name "*.dmg" -exec cp {} artifacts/ \;
 
       - name: Collect Linux artifacts
-        if: matrix.platform.os == 'ubuntu-20.04'
+        if: matrix.platform.family == 'linux'
+        shell: bash
         run: |
           mkdir -p artifacts
-          find "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) -exec cp {} artifacts/ \;
+          find "src-tauri/target/${{ matrix.platform.rust_target }}/release/bundle" -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) -exec cp {} artifacts/ \;
 
-      # Generate checksums
-      - name: Generate checksums
+      - name: Verify artifacts exist
+        shell: bash
+        run: |
+          find artifacts -type f -maxdepth 1
+          if [[ -z "$(find artifacts -type f -maxdepth 1)" ]]; then
+            echo "No release artifacts were produced." >&2
+            exit 1
+          fi
+
+      - name: Generate checksums (Windows)
+        if: matrix.platform.family == 'windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts -File |
+            ForEach-Object { "$(Get-FileHash $_.FullName -Algorithm SHA256 | ForEach-Object Hash)  $($_.Name)" } |
+            Set-Content artifacts/checksums.txt
+
+      - name: Generate checksums (Unix)
+        if: matrix.platform.family != 'windows'
         shell: bash
         run: |
           cd artifacts
-          if [[ "${{ matrix.platform.cmd }}" == "cmd" ]]; then
-            for file in *; do
-              certutil -hashfile "$file" SHA256 >> checksums.txt
-            done
-          else
-            sha256sum * > checksums.txt
-          fi
+          find . -maxdepth 1 -type f ! -name checksums.txt -print0 | sort -z | xargs -0 shasum -a 256 > checksums.txt
 
-      # Upload artifacts
-      - name: Upload build artifacts
+      - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform.rust_target }}
+          name: release-${{ matrix.platform.key }}
           path: artifacts/*
-          retention-days: 30
+          retention-days: 14
 
-      # Upload to release
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v1
-        with:
-          files: artifacts/*
-          draft: true
-          tag_name: ${{ needs.create-release.outputs.tag_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Publish Release
   publish-release:
-    name: Publish Release
+    name: Publish Draft Release
     runs-on: ubuntu-latest
-    needs: [create-release, build-release]
+    needs: [preflight, build-release]
+    if: needs.build-release.result == 'success' && (github.event_name == 'push' || inputs.publish)
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # Download all artifacts and create combined checksum
-      - name: Download all artifacts
+      - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: release-*
           path: release-artifacts
 
-      - name: Create combined checksums
+      - name: Prepare release assets
+        shell: bash
         run: |
-          cd release-artifacts
-          echo "# SHA256 Checksums" > ../CHECKSUMS.txt
-          echo "" >> ../CHECKSUMS.txt
-          for dir in release-*; do
-            if [[ -d "$dir" ]]; then
-              echo "## $(basename $dir)" >> ../CHECKSUMS.txt
-              if [[ -f "$dir/checksums.txt" ]]; then
-                cat "$dir/checksums.txt" >> ../CHECKSUMS.txt
-              fi
-              echo "" >> ../CHECKSUMS.txt
-            fi
-          done
+          mkdir -p release-assets
+          find release-artifacts -type f ! -name checksums.txt -exec cp {} release-assets/ \;
+          {
+            echo "# SHA256 Checksums"
+            echo
+            for checksum in $(find release-artifacts -name checksums.txt | sort); do
+              echo "## ${checksum%/checksums.txt}"
+              cat "$checksum"
+              echo
+            done
+          } > release-assets/CHECKSUMS.txt
 
-      # Generate release notes with asset information
-      - name: Update release notes
-        uses: softprops/action-gh-release@v1
+      - name: Upload assets to draft release
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            CHECKSUMS.txt
-            release-artifacts/release-*/
-          draft: false # This publishes the release
-          tag_name: ${{ needs.create-release.outputs.tag_name }}
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          name: Video Downloader Pro ${{ needs.preflight.outputs.version }}
+          draft: true
+          prerelease: ${{ needs.preflight.outputs.prerelease }}
+          files: release-assets/*
           body: |
-            ${{ needs.create-release.outputs.release_body }}
+            ## Video Downloader Pro ${{ needs.preflight.outputs.version }}
 
-            ### 📋 Checksums
+            Professional batch video downloader built with Tauri v2, Rust, React, and Zustand.
 
-            SHA256 checksums are provided in `CHECKSUMS.txt` for integrity verification.
+            ### Downloads
 
-            ### 🔍 Verify Downloads
+            - Windows x64: `.msi` or `.exe`
+            - macOS Intel: `x64.dmg`
+            - macOS Apple Silicon: `aarch64.dmg`
+            - Linux x64: `.AppImage`, `.deb`, or `.rpm` when produced by Tauri
 
-            ```bash
-            # Download checksum file
-            curl -L -o CHECKSUMS.txt https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.tag_name }}/CHECKSUMS.txt
+            ### Checksums
 
-            # Verify your downloaded file
-            sha256sum -c CHECKSUMS.txt --ignore-missing
-            ```
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            SHA256 checksums are attached in `CHECKSUMS.txt`.
 
-  # Post-release tasks
-  post-release:
-    name: Post-Release Tasks
+            ### Changelog
+
+            ${{ needs.preflight.outputs.tag_body }}
+
+  release-summary:
+    name: Release Summary
     runs-on: ubuntu-latest
-    needs: [create-release, publish-release]
-    if: always() && needs.publish-release.result == 'success'
-    env:
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
-      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+    needs: [preflight, build-release, publish-release]
+    if: always()
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # Update Homebrew formula (if applicable)
-      - name: Update Homebrew formula
-        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+      - name: Summarize release workflow
         run: |
-          echo "TODO: Update Homebrew formula"
-          # Implementation for updating Homebrew tap
-
-      # Update Chocolatey package (if applicable)
-      - name: Update Chocolatey package
-        if: ${{ env.CHOCOLATEY_API_KEY != '' }}
-        run: |
-          echo "TODO: Update Chocolatey package"
-          # Implementation for updating Chocolatey package
-
-      # Create Docker image (if applicable)
-      - name: Build and push Docker image
-        if: ${{ env.DOCKER_HUB_TOKEN != '' }}
-        run: |
-          echo "TODO: Build and push Docker image"
-          # Implementation for Docker image creation
-
-      # Notify success
-      - name: Release notification
-        run: |
-          echo "🎉 Release ${{ needs.create-release.outputs.tag_name }} published successfully!"
-          echo "🔗 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.tag_name }}"
+          echo "Tag: ${{ needs.preflight.outputs.tag }}"
+          echo "Build result: ${{ needs.build-release.result }}"
+          echo "Publish result: ${{ needs.publish-release.result }}"

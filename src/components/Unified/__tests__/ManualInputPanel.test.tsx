@@ -82,9 +82,6 @@ describe('ManualInputPanel', () => {
     expect(systemCommandMocks.readClipboardTextCommand).toHaveBeenCalledTimes(1);
     expect(screen.getByText('待添加列表 (1)')).toBeInTheDocument();
     expect(screen.getByText('https://example.com/video.mp4')).toBeInTheDocument();
-    expect(notifyMocks.notify.success).toHaveBeenCalledWith(
-      '添加成功',
-      '从剪贴板添加了 1 个链接'
-    );
+    expect(notifyMocks.notify.success).toHaveBeenCalledWith('添加成功', '从剪贴板添加了 1 个链接');
   });
 });

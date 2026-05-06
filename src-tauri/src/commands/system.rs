@@ -122,9 +122,8 @@ async fn read_clipboard_text_impl() -> AppResult<String> {
             }
         }
 
-        return Err(last_error.unwrap_or_else(|| {
-            AppError::System("No supported clipboard reader found".to_string())
-        }));
+        Err(last_error
+            .unwrap_or_else(|| AppError::System("No supported clipboard reader found".to_string())))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]

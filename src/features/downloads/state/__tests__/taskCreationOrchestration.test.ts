@@ -224,7 +224,8 @@ describe('taskCreationOrchestration helpers', () => {
         验证耗时: '12.34ms',
         当前总数: 9,
       },
-      successMessage: '新增 4 个任务，识别已有 1 个（已完成 1、可续传 2、等待 1），已跳过 1 个无效任务',
+      successMessage:
+        '新增 4 个任务，识别已有 1 个（已完成 1、可续传 2、等待 1），已跳过 1 个无效任务',
     });
   });
 

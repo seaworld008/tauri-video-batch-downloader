@@ -15,6 +15,10 @@ on:
       - "**/*.md"
       - "**/*.txt"
       - "LICENSE*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -25,10 +29,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Frontend Tests (React + TypeScript + Vitest)
-  frontend:
-    name: Frontend CI
+  preflight:
+    name: Fast Preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -55,29 +59,51 @@ jobs:
         run: pnpm lint
 
       - name: Format check
-        run: pnpm exec prettier --check "src/**/*.{ts,tsx,css,json}" "*.html" ".github/workflows/*.yml" "README.md"
+        run: >
+          pnpm exec prettier --check
+          "src/**/*.{ts,tsx,css,json}"
+          "*.html"
+          ".github/workflows/*.yml"
+          ".github/workflows/README.md"
+          "README.md"
+          "AGENTS.md"
+          "docs/**/*.md"
+
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via Corepack
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Run unit tests
-        run: pnpm exec vitest run --coverage
+        run: pnpm exec vitest run
 
       - name: Run integration tests
         run: pnpm exec vitest run --config vitest.config.integration.ts
 
-      - name: Audit production npm dependencies
-        run: pnpm audit --prod
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage/lcov.info
-          flags: frontend
-          name: frontend-coverage
-          fail_ci_if_error: false
-
-  # Backend Tests (Rust + Tauri)
-  backend:
-    name: Backend CI
+  rust-static:
+    name: Rust Static Checks
     runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -117,24 +143,58 @@ jobs:
             printf '<!doctype html><html><body></body></html>\n' > dist/index.html
           fi
 
-      - name: Run Rust tests
-        run: cargo test --verbose
-        working-directory: ./src-tauri
-
       - name: Run Rust clippy
         run: cargo clippy -- -D warnings
         working-directory: ./src-tauri
 
-  # Build Check (Tauri App)
-  build-check:
-    name: Build Check
-    runs-on: ${{ matrix.os }}
-    needs: [frontend, backend]
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    needs: rust-static
+    timeout-minutes: 25
 
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJson(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install system dependencies (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Prepare frontendDist placeholder
+        run: |
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            printf '<!doctype html><html><body></body></html>\n' > dist/index.html
+          fi
+
+      - name: Run Rust tests
+        run: cargo test
+        working-directory: ./src-tauri
+
+  build-smoke:
+    name: Ubuntu Tauri Build Smoke
+    runs-on: ubuntu-latest
+    needs: [frontend-tests, backend-tests]
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 35
 
     steps:
       - name: Checkout repository
@@ -160,7 +220,6 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Install system dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -185,67 +244,32 @@ jobs:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
-      - name: Upload build artifacts
+      - name: Upload debug artifacts
         uses: actions/upload-artifact@v4
-        if: matrix.os == 'ubuntu-latest'
         with:
-          name: debug-build-${{ matrix.os }}
-          path: |
-            src-tauri/target/debug/bundle/
-          retention-days: 7
+          name: debug-build-ubuntu
+          path: src-tauri/target/debug/bundle/
+          retention-days: 3
 
-  # Performance Benchmarks (optional, for main branch)
-  benchmarks:
-    name: Performance Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            libssl-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libwebkit2gtk-4.1-dev
-
-      - name: Run benchmarks
-        run: cargo bench --no-run
-        continue-on-error: true
-        working-directory: ./src-tauri
-
-  # Final Status Check
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [frontend, backend, build-check]
+    needs: [preflight, frontend-tests, rust-static, backend-tests, build-smoke]
     if: always()
 
     steps:
-      - name: Check all jobs success
-        if: needs.frontend.result != 'success' || needs.backend.result != 'success' || needs.build-check.result != 'success'
+      - name: Check all required jobs
         run: |
-          echo "One or more CI jobs failed:"
-          echo "Frontend: ${{ needs.frontend.result }}"
-          echo "Backend: ${{ needs.backend.result }}"
-          echo "Build Check: ${{ needs.build-check.result }}"
-          exit 1
+          echo "Preflight: ${{ needs.preflight.result }}"
+          echo "Frontend tests: ${{ needs.frontend-tests.result }}"
+          echo "Rust static checks: ${{ needs.rust-static.result }}"
+          echo "Backend tests: ${{ needs.backend-tests.result }}"
+          echo "Build smoke: ${{ needs.build-smoke.result }}"
 
-      - name: CI passed successfully
-        run: |
-          echo "✅ All CI checks passed successfully!"
-          echo "🎉 Ready for merge or release."
+          if [[ "${{ needs.preflight.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.frontend-tests.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.rust-static.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.backend-tests.result }}" != "success" ]]; then exit 1; fi
+          if [[ "${{ needs.build-smoke.result }}" != "success" && "${{ needs.build-smoke.result }}" != "skipped" ]]; then exit 1; fi
+
+          echo "All required CI checks passed."

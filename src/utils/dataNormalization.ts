@@ -15,9 +15,10 @@ const normalizeTaskStatus = (status: unknown): VideoTask['status'] => {
     return 'pending';
   }
 
-  return TASK_STATUS_FROM_BACKEND[
-    status.toLowerCase() as keyof typeof TASK_STATUS_FROM_BACKEND
-  ] ?? 'pending';
+  return (
+    TASK_STATUS_FROM_BACKEND[status.toLowerCase() as keyof typeof TASK_STATUS_FROM_BACKEND] ??
+    'pending'
+  );
 };
 
 export const normalizeImportedData = (data: any): ImportedData => {
