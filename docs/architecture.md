@@ -1,5 +1,8 @@
 # 架构与模块（Architecture）
 
+> 这是一份基础架构摘要。完整的架构、功能设计、技术决策、状态机和后续路线请阅读
+> [`architecture-functional-design.md`](architecture-functional-design.md)。
+
 ## 架构概览
 
 - 前端（React）：负责 UI、状态管理、导入映射与用户交互

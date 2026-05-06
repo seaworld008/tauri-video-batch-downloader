@@ -1,0 +1,42 @@
+name: Site or protocol support
+description: Request support for a website, media format, M3U8 variant, or downloader integration.
+title: "[Support]: "
+labels: ["protocol", "needs-triage"]
+body:
+  - type: input
+    id: target
+    attributes:
+      label: Site, protocol, or media type
+      placeholder: "Example: M3U8 AES-128, DASH, a course platform, yt-dlp integration"
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample URL or anonymized example
+      description: Provide a public sample if possible. Do not paste private tokens, cookies, or paid course URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Current behavior
+      placeholder: The app currently fails with ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected support
+      placeholder: It should detect segments, resume partial files, and ...
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I can confirm this request does not require bypassing DRM or access controls.
+          required: true
+        - label: I removed private credentials, cookies, tokens, and paid content URLs.
+          required: true

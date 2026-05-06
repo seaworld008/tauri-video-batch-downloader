@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible bug in importing, queue control, downloading, packaging, or UI state.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Video Downloader Pro. Please include enough detail for us to reproduce the issue without guessing.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: The app ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Excel/CSV import
+        - Task queue and concurrency
+        - Pause/resume/retry
+        - HTTP download
+        - M3U8/HLS download
+        - YouTube integration
+        - Settings/configuration
+        - Packaging/release
+        - UI/UX
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps, input file shape, and buttons clicked.
+      placeholder: |
+        1. Import ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, app build, architecture, and whether you used a release build or dev mode.
+      placeholder: |
+        OS:
+        App version:
+        CPU architecture:
+        Build mode:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant backend/frontend logs, screenshots, or error messages. Remove secrets, cookies, and private URLs.
+      render: text
