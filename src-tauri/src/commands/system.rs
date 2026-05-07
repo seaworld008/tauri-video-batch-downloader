@@ -9,9 +9,62 @@ use tokio::process::Command;
 use tracing::{error, info};
 
 use crate::core::models::{AppError, AppResult};
+use crate::core::ytdlp_downloader::YtDlpDownloader;
+#[cfg(test)]
 use crate::infra::capability_service::ToolCapabilityService;
 use crate::utils::logging;
 use crate::AppState;
+
+#[tauri::command]
+pub async fn get_external_tool_status() -> Result<serde_json::Value, String> {
+    serde_json::to_value(crate::core::external_tools::status_for_all().await)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn check_external_tool_updates(
+    tool: Option<String>,
+) -> Result<serde_json::Value, String> {
+    crate::core::external_tools::check_updates(tool)
+        .await
+        .and_then(|status| Ok(serde_json::to_value(status)?))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn update_external_tool(tool: String) -> Result<serde_json::Value, String> {
+    crate::core::external_tools::update_tool(&tool)
+        .await
+        .and_then(|status| Ok(serde_json::to_value(status)?))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn rollback_external_tool(tool: String) -> Result<serde_json::Value, String> {
+    crate::core::external_tools::rollback_tool(&tool)
+        .await
+        .and_then(|status| Ok(serde_json::to_value(status)?))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn set_external_tool_override(
+    tool: String,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    crate::core::external_tools::set_override(&tool, &path)
+        .await
+        .and_then(|status| Ok(serde_json::to_value(status)?))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_external_tool_override(tool: String) -> Result<serde_json::Value, String> {
+    crate::core::external_tools::clear_override(&tool)
+        .await
+        .and_then(|status| Ok(serde_json::to_value(status)?))
+        .map_err(|err| err.to_string())
+}
 
 /// Open the downloads folder
 #[tauri::command]
@@ -169,6 +222,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(test)]
 async fn check_tool_availability(tool_name: &str, args: &[&str]) -> AppResult<bool> {
     ToolCapabilityService::is_available(tool_name, args)
         .await
@@ -234,29 +288,25 @@ async fn get_video_info_impl(url: &str) -> AppResult<serde_json::Value> {
         ));
     }
 
-    if is_youtube_url(url) {
-        let youtube_info = crate::commands::youtube::get_youtube_info_internal(url).await?;
-        return serde_json::to_value(youtube_info)
-            .map_err(|e| AppError::System(format!("Failed to serialize YouTube info: {}", e)));
+    let should_probe_with_ytdlp =
+        YtDlpDownloader::is_known_social_url(url) || !YtDlpDownloader::is_direct_media_url(url);
+    if should_probe_with_ytdlp {
+        let downloader =
+            YtDlpDownloader::default_with_user_agent("VideoDownloaderPro/1.0.0".to_string());
+        let external_info = downloader
+            .probe_video_info(url)
+            .await
+            .map_err(|err| AppError::System(err.to_string()))?;
+        return Ok(json!({
+            "title": external_info.title.clone().unwrap_or_else(|| extract_title_from_url_fallback(url)),
+            "url": url,
+            "available": !external_info.requires_auth,
+            "extractor": external_info.extractor,
+            "external_info": external_info,
+        }));
     }
 
-    // Try using yt-dlp if available
-    if check_tool_availability("yt-dlp", &["--version"])
-        .await
-        .unwrap_or(false)
-    {
-        return get_video_info_with_ytdlp(url).await;
-    }
-
-    // Try using youtube-dl as fallback
-    if check_tool_availability("youtube-dl", &["--version"])
-        .await
-        .unwrap_or(false)
-    {
-        return get_video_info_with_youtubedl(url).await;
-    }
-
-    // Basic info extraction without external tools
+    // Basic info extraction for direct media URLs without external tools.
     let parsed_url = url::Url::parse(url)
         .map_err(|e| AppError::System(format!("Failed to parse URL: {}", e)))?;
 
@@ -272,51 +322,10 @@ async fn get_video_info_impl(url: &str) -> AppResult<serde_json::Value> {
     }))
 }
 
-fn is_youtube_url(url: &str) -> bool {
-    let lower = url.to_lowercase();
-    lower.contains("youtube.com/") || lower.contains("youtu.be/")
-}
-
-async fn get_video_info_with_ytdlp(url: &str) -> AppResult<serde_json::Value> {
-    crate::utils::validation::assert_http_url(url)?;
-
-    let output = tokio::process::Command::new("yt-dlp")
-        .args(["--dump-json", "--no-download", url])
-        .output()
-        .await
-        .map_err(|e| AppError::System(format!("Failed to execute yt-dlp: {}", e)))?;
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::System(format!("yt-dlp failed: {}", error)));
-    }
-
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let info: serde_json::Value = serde_json::from_str(&json_str)
-        .map_err(|e| AppError::System(format!("Failed to parse yt-dlp JSON: {}", e)))?;
-
-    Ok(info)
-}
-
-async fn get_video_info_with_youtubedl(url: &str) -> AppResult<serde_json::Value> {
-    crate::utils::validation::assert_http_url(url)?;
-
-    let output = tokio::process::Command::new("youtube-dl")
-        .args(["--dump-json", "--no-download", url])
-        .output()
-        .await
-        .map_err(|e| AppError::System(format!("Failed to execute youtube-dl: {}", e)))?;
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::System(format!("youtube-dl failed: {}", error)));
-    }
-
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let info: serde_json::Value = serde_json::from_str(&json_str)
-        .map_err(|e| AppError::System(format!("Failed to parse youtube-dl JSON: {}", e)))?;
-
-    Ok(info)
+fn extract_title_from_url_fallback(url: &str) -> String {
+    url::Url::parse(url)
+        .map(|parsed| extract_title_from_url(&parsed))
+        .unwrap_or_else(|_| "视频下载".to_string())
 }
 
 fn extract_title_from_url(url: &url::Url) -> String {

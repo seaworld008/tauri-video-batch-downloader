@@ -21,6 +21,16 @@ const normalizeTaskStatus = (status: unknown): VideoTask['status'] => {
   );
 };
 
+const normalizeDownloaderType = (value: unknown): VideoTask['downloader_type'] => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  if (normalized === 'youtube' || normalized === 'ytdlp') return 'ytdlp';
+  if (normalized === 'http' || normalized === 'm3u8') return normalized;
+  return undefined;
+};
+
 export const normalizeImportedData = (data: any): ImportedData => {
   const normalizeString = (value: unknown): string | undefined => {
     if (typeof value !== 'string') return undefined;
@@ -67,7 +77,9 @@ export const normalizeTaskData = (data: any): Partial<VideoTask> => {
     display_speed_bps: Number(data.display_speed_bps ?? data.speed) || 0,
     created_at: data.created_at || new Date().toISOString(),
     updated_at: data.updated_at || new Date().toISOString(),
+    downloader_type: normalizeDownloaderType(data.downloader_type),
     video_info: hasVideoInfo ? normalizedVideoInfo : undefined,
+    external_info: data.external_info,
   };
 };
 

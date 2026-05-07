@@ -26,6 +26,26 @@ export const VideoInfoSchema = z
     }
   );
 
+export const SourcePlatformSchema = z.enum([
+  'youtube',
+  'tiktok',
+  'instagram',
+  'facebook',
+  'generic',
+]);
+
+export const ExternalVideoInfoSchema = z.object({
+  source_platform: SourcePlatformSchema,
+  extractor: z.string().nullable().optional(),
+  webpage_url: z.string().url().nullable().optional(),
+  title: z.string().nullable().optional(),
+  thumbnail: z.string().url().nullable().optional(),
+  duration_seconds: z.number().nullable().optional(),
+  format_id: z.string().nullable().optional(),
+  format_note: z.string().nullable().optional(),
+  requires_auth: z.boolean().optional().default(false),
+});
+
 export const VideoTaskBaseSchema = z.object({
   id: z.string().min(1, '任务ID不能为空'),
   url: z.string().url('请输入有效的URL'),
@@ -44,6 +64,7 @@ export const VideoTaskBaseSchema = z.object({
   updated_at: z.string().datetime('更新时间必须是有效的ISO datetime'),
   downloader_type: DownloaderTypeSchema.optional(),
   video_info: VideoInfoSchema.optional(),
+  external_info: ExternalVideoInfoSchema.optional(),
 });
 
 export const applyVideoTaskValidations = <T extends z.ZodTypeAny>(schema: T) =>
@@ -77,5 +98,6 @@ export const ProgressUpdateSchema = z.object({
 });
 
 export type VideoInfo = z.infer<typeof VideoInfoSchema>;
+export type ExternalVideoInfo = z.infer<typeof ExternalVideoInfoSchema>;
 export type VideoTask = z.infer<typeof VideoTaskSchema>;
 export type ProgressUpdate = z.infer<typeof ProgressUpdateSchema>;

@@ -7,6 +7,7 @@ pub mod config;
 pub mod download;
 pub mod import;
 pub mod system;
+#[allow(dead_code)]
 pub mod youtube;
 
 // Re-export all command functions for easy access

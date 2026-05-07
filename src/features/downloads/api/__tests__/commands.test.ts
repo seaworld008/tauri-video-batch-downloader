@@ -23,10 +23,17 @@ import {
   selectImportFileCommand,
 } from '../importCommands';
 import {
+  checkExternalToolUpdatesCommand,
+  clearExternalToolOverrideCommand,
   getVideoInfoCommand,
+  getExternalToolStatusCommand,
   logFrontendEventCommand,
   openDownloadFolderCommand,
+  rollbackExternalToolCommand,
+  selectExternalToolBinaryCommand,
   selectOutputDirectoryCommand,
+  setExternalToolOverrideCommand,
+  updateExternalToolCommand,
 } from '../systemCommands';
 import {
   exportConfigCommand,
@@ -214,6 +221,44 @@ describe('downloads api command seams', () => {
       multiple: false,
       title: '选择下载目录',
       defaultPath: '/existing-downloads',
+    });
+  });
+
+  it('wraps external tool management command seams', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce({ id: 'yt-dlp' } as never)
+      .mockResolvedValueOnce({ id: 'yt-dlp' } as never)
+      .mockResolvedValueOnce({ id: 'ffmpeg' } as never)
+      .mockResolvedValueOnce({ id: 'ffmpeg' } as never);
+    vi.mocked(open).mockResolvedValueOnce('/usr/local/bin/ffmpeg' as never);
+
+    await expect(getExternalToolStatusCommand()).resolves.toEqual([]);
+    await expect(checkExternalToolUpdatesCommand('yt-dlp')).resolves.toEqual([]);
+    await expect(updateExternalToolCommand('yt-dlp')).resolves.toEqual({ id: 'yt-dlp' });
+    await expect(rollbackExternalToolCommand('yt-dlp')).resolves.toEqual({ id: 'yt-dlp' });
+    await expect(
+      setExternalToolOverrideCommand('ffmpeg', '/usr/local/bin/ffmpeg')
+    ).resolves.toEqual({
+      id: 'ffmpeg',
+    });
+    await expect(clearExternalToolOverrideCommand('ffmpeg')).resolves.toEqual({ id: 'ffmpeg' });
+    await expect(selectExternalToolBinaryCommand('ffmpeg')).resolves.toBe('/usr/local/bin/ffmpeg');
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_external_tool_status');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'check_external_tool_updates', { tool: 'yt-dlp' });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'update_external_tool', { tool: 'yt-dlp' });
+    expect(invoke).toHaveBeenNthCalledWith(4, 'rollback_external_tool', { tool: 'yt-dlp' });
+    expect(invoke).toHaveBeenNthCalledWith(5, 'set_external_tool_override', {
+      tool: 'ffmpeg',
+      path: '/usr/local/bin/ffmpeg',
+    });
+    expect(invoke).toHaveBeenNthCalledWith(6, 'clear_external_tool_override', { tool: 'ffmpeg' });
+    expect(open).toHaveBeenCalledWith({
+      directory: false,
+      multiple: false,
+      title: '选择 ffmpeg 可执行文件',
     });
   });
 

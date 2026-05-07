@@ -10,7 +10,10 @@ export const TaskStatusSchema = z.enum([
   'cancelled',
 ]);
 
-export const DownloaderTypeSchema = z.enum(['http', 'm3u8', 'youtube']);
+export const DownloaderTypeSchema = z.preprocess(
+  value => (value === 'youtube' ? 'ytdlp' : value),
+  z.enum(['http', 'm3u8', 'ytdlp'])
+);
 export const ViewTypeSchema = z.enum(['dashboard', 'import', 'settings', 'about']);
 export const NotificationTypeSchema = z.enum(['success', 'error', 'warning', 'info']);
 export const ModalTypeSchema = z.enum(['confirm', 'info', 'warning', 'error', 'custom']);

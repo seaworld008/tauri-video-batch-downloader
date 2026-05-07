@@ -244,6 +244,12 @@ jobs:
       - name: Build frontend
         run: pnpm exec vite build
 
+      - name: Prepare sidecar binaries
+        run: pnpm sidecars:prepare -- --target ${{ matrix.platform.rust_target }}
+
+      - name: Validate sidecar binaries
+        run: node scripts/validate-sidecars.mjs --target ${{ matrix.platform.rust_target }}
+
       - name: Import Windows certificate
         if: matrix.platform.family == 'windows'
         shell: pwsh

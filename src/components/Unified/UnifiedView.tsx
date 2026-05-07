@@ -15,6 +15,7 @@ import { VirtualizedTaskList } from '../Optimized/VirtualizedTaskList';
 import { SettingsView } from '../Settings/SettingsView';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { StatusBar } from './StatusBar';
+import { SessionRecoveryBanner } from './SessionRecoveryBanner';
 
 type TabType = 'file' | 'manual';
 
@@ -139,6 +140,8 @@ export const UnifiedView: React.FC = () => {
         <div className='shrink-0 z-10'>
           <DashboardToolbar onOpenSettings={() => setShowSettings(true)} />
         </div>
+
+        <SessionRecoveryBanner />
 
         {/* Task List */}
         <div className='flex-1 overflow-hidden bg-gray-50 dark:bg-gray-900 px-4 pb-0 relative'>

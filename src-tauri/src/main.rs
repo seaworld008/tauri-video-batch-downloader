@@ -271,6 +271,12 @@ fn main() {
             open_download_folder,
             read_clipboard_text,
             get_video_info,
+            get_external_tool_status,
+            check_external_tool_updates,
+            update_external_tool,
+            rollback_external_tool,
+            set_external_tool_override,
+            clear_external_tool_override,
             log_frontend_event,
         ])
         .setup(|app| {

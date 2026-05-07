@@ -9,9 +9,12 @@
  * - 智能缓冲：预渲染缓冲区项目
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import toast from 'react-hot-toast';
+import { ClipboardDocumentIcon } from '@heroicons/react/24/outline';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { formatSpeed } from '../../utils/format';
 import type { VideoTask, TaskStatus } from '../../types';
+import { buildTaskSupportBundle } from '../../features/downloads/model/downloadDiagnostics';
 
 interface VirtualizedTaskListProps {
   overscan?: number; // 缓冲区项目数量
@@ -41,6 +44,30 @@ function formatTime(seconds: number): string {
   return `${Math.round(seconds / 3600)}h`;
 }
 
+const buttonFocusClass =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+
+const copyTextToClipboard = async (text: string): Promise<void> => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error('clipboard_copy_failed');
+  }
+};
+
 /**
  * 轻量级任务项组件 - 使用React.memo优化
  */
@@ -54,6 +81,15 @@ const TaskItem = React.memo<{
   const displaySpeed = task.display_speed_bps ?? 0;
   const handleSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onSelect(e.target.checked);
+  };
+  const handleCopyDiagnostic = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    try {
+      await copyTextToClipboard(buildTaskSupportBundle(task));
+      toast.success('任务诊断已复制');
+    } catch {
+      toast.error('复制诊断失败，请检查剪贴板权限');
+    }
   };
 
   const statusColor = useMemo(() => {
@@ -106,24 +142,35 @@ const TaskItem = React.memo<{
             </span>
             {task.title}
           </h4>
-          <span
-            className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}
-            data-testid='task-status'
-          >
-            {task.status === 'pending'
-              ? '等待中'
-              : task.status === 'downloading'
-                ? '下载中'
-                : task.status === 'committing'
-                  ? '提交中'
-                  : task.status === 'completed'
-                    ? '已完成'
-                    : task.status === 'failed'
-                      ? '失败'
-                      : task.status === 'paused'
-                        ? '暂停'
-                        : task.status}
-          </span>
+          <div className='flex items-center gap-2 shrink-0'>
+            <button
+              type='button'
+              onClick={handleCopyDiagnostic}
+              className={`p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-100 dark:hover:bg-gray-700 ${buttonFocusClass}`}
+              title='复制任务诊断'
+              aria-label={`复制任务诊断：${task.title}`}
+            >
+              <ClipboardDocumentIcon className='w-4 h-4' />
+            </button>
+            <span
+              className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}
+              data-testid='task-status'
+            >
+              {task.status === 'pending'
+                ? '等待中'
+                : task.status === 'downloading'
+                  ? '下载中'
+                  : task.status === 'committing'
+                    ? '提交中'
+                    : task.status === 'completed'
+                      ? '已完成'
+                      : task.status === 'failed'
+                        ? '失败'
+                        : task.status === 'paused'
+                          ? '暂停'
+                          : task.status}
+            </span>
+          </div>
         </div>
 
         <div className='flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400'>

@@ -89,6 +89,7 @@ use crate::core::models::*;
 use crate::core::resume_downloader::{
     ResumeDownloader, ResumeDownloaderConfig, ResumeInfo, ResumeProgressCallback,
 };
+use crate::core::ytdlp_downloader::YtDlpDownloader;
 use directories::ProjectDirs;
 use sha2::{Digest, Sha256};
 
@@ -144,6 +145,12 @@ pub struct DownloadStats {
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// 最后更新时间
     pub last_update: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone)]
+struct ContentMetadata {
+    content_length: Option<u64>,
+    content_type: Option<String>,
 }
 
 impl Default for DownloadStats {
@@ -243,6 +250,7 @@ pub struct HttpDownloader {
     is_paused: Arc<AtomicBool>,
     resume_downloader: Arc<ResumeDownloader>,
     m3u8_downloader: Arc<M3U8Downloader>,
+    ytdlp_downloader: Arc<YtDlpDownloader>,
     bandwidth_controller: BandwidthController,
 }
 
@@ -288,6 +296,7 @@ impl HttpDownloader {
 
         // 创建M3U8Downloader实例
         let m3u8_downloader = M3U8Downloader::new(m3u8_config)?;
+        let ytdlp_downloader = YtDlpDownloader::default_with_user_agent(config.user_agent.clone());
 
         Ok(Self {
             config,
@@ -299,6 +308,7 @@ impl HttpDownloader {
             is_paused: Arc::new(AtomicBool::new(false)),
             resume_downloader: Arc::new(resume_downloader),
             m3u8_downloader: Arc::new(m3u8_downloader),
+            ytdlp_downloader: Arc::new(ytdlp_downloader),
             bandwidth_controller,
         })
     }
@@ -542,14 +552,46 @@ impl HttpDownloader {
             return self.download_with_m3u8(task, cancel_flag, pause_flag).await;
         }
 
+        if YtDlpDownloader::is_known_social_url(&task.url) {
+            tracing::info!("🟢 [SMART_DOWNLOAD] Social/video webpage detected, using yt-dlp");
+            return self
+                .download_with_ytdlp(task, cancel_flag, pause_flag)
+                .await;
+        }
+
         // 对于非M3U8 URL，尝试获取文件大小
         tracing::info!(
             "🟢 [SMART_DOWNLOAD] Getting content length for task {} (url={})",
             task.id,
             task.url
         );
-        let content_length = match self.get_content_length(&task.url).await {
-            Ok(Some(size)) => {
+        let metadata = match self.get_content_metadata(&task.url).await {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                tracing::error!(
+                    "🔴 [SMART_DOWNLOAD] ❌ Failed to get content metadata for task {}: {}",
+                    task.id,
+                    e
+                );
+                tracing::info!(
+                    "🟢 [SMART_DOWNLOAD] Falling back to download_with_resume for task {}",
+                    task.id
+                );
+                return self
+                    .download_with_resume(task, cancel_flag, pause_flag)
+                    .await;
+            }
+        };
+
+        if YtDlpDownloader::should_handle_after_head(&task.url, metadata.content_type.as_deref()) {
+            tracing::info!("🟢 [SMART_DOWNLOAD] HTML webpage detected after HEAD, using yt-dlp");
+            return self
+                .download_with_ytdlp(task, cancel_flag, pause_flag)
+                .await;
+        }
+
+        let content_length = match metadata.content_length {
+            Some(size) => {
                 tracing::info!(
                     "🟢 [SMART_DOWNLOAD] ✅ Content length for task {}: {} bytes ({})",
                     task.id,
@@ -558,25 +600,10 @@ impl HttpDownloader {
                 );
                 size
             }
-            Ok(None) => {
+            None => {
                 tracing::warn!("🟡 [SMART_DOWNLOAD] No content length returned for task {}, using resume downloader", task.id);
                 return self
                     .download_with_resume_downloader(task, cancel_flag, pause_flag)
-                    .await;
-            }
-            Err(e) => {
-                tracing::error!(
-                    "🔴 [SMART_DOWNLOAD] ❌ Failed to get content length for task {}: {}",
-                    task.id,
-                    e
-                );
-                tracing::info!(
-                    "🟢 [SMART_DOWNLOAD] Falling back to download_with_resume for task {}",
-                    task.id
-                );
-                // 直接使用简单的下载方法而不是 resume_downloader
-                return self
-                    .download_with_resume(task, cancel_flag, pause_flag)
                     .await;
             }
         };
@@ -725,8 +752,7 @@ impl HttpDownloader {
         Ok(())
     }
 
-    /// 获取HTTP响应的内容长度
-    async fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
+    async fn get_content_metadata(&self, url: &str) -> Result<ContentMetadata> {
         tracing::info!("🔍 [GET_CONTENT_LENGTH] Sending HEAD request to: {}", url);
 
         // 使用较短的超时时间，防止阻塞
@@ -759,12 +785,20 @@ impl HttpDownloader {
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
 
         tracing::info!(
             "🔍 [GET_CONTENT_LENGTH] Content-Length: {:?}",
             content_length
         );
-        Ok(content_length)
+        Ok(ContentMetadata {
+            content_length,
+            content_type,
+        })
     }
 
     /// 格式化字节大小为可读格式
@@ -825,6 +859,25 @@ impl HttpDownloader {
         Ok(())
     }
 
+    async fn download_with_ytdlp(
+        &self,
+        task: &mut DownloadTask,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
+    ) -> Result<()> {
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            return Err(if cancel_flag.load(Ordering::Relaxed) {
+                anyhow::anyhow!("download_cancelled")
+            } else {
+                anyhow::anyhow!("download_paused")
+            });
+        }
+
+        self.ytdlp_downloader
+            .download(task, cancel_flag, pause_flag, self.progress_tx.clone())
+            .await
+    }
+
     /// 支持断点续传的下载实现
     async fn download_with_resume(
         &self,
@@ -851,7 +904,7 @@ impl HttpDownloader {
         }
 
         // 检查现有文件大小以支持断点续传
-        let existing_size = if full_path.exists() {
+        let mut existing_size = if full_path.exists() {
             tokio::fs::metadata(&full_path).await?.len()
         } else {
             0
@@ -863,7 +916,8 @@ impl HttpDownloader {
             task.url
         );
         let mut request = self.client.get(&task.url);
-        if existing_size > 0 && self.config.resume_enabled {
+        let range_requested = existing_size > 0 && self.config.resume_enabled;
+        if range_requested {
             request = request.header("Range", format!("bytes={}-", existing_size));
             tracing::info!(
                 "🟣 [DOWNLOAD_WITH_RESUME] Resume from byte: {}",
@@ -888,12 +942,22 @@ impl HttpDownloader {
         };
 
         // 检查响应状态
-        if !response.status().is_success() && response.status().as_u16() != 206 {
+        let response_status = response.status();
+        if !response_status.is_success() && response_status.as_u16() != 206 {
             tracing::error!(
                 "🔴 [DOWNLOAD_WITH_RESUME] HTTP error status: {}",
-                response.status()
+                response_status
             );
-            return Err(anyhow::anyhow!("HTTP错误: {}", response.status()));
+            return Err(anyhow::anyhow!("HTTP错误: {}", response_status));
+        }
+
+        let server_honored_range = range_requested && response_status.as_u16() == 206;
+        if range_requested && !server_honored_range {
+            tracing::warn!(
+                "Server ignored Range request for task {}; restarting download from byte 0 to avoid corrupt append",
+                task.id
+            );
+            existing_size = 0;
         }
 
         // 获取内容长度
@@ -917,7 +981,7 @@ impl HttpDownloader {
         task.stats.downloaded_bytes = existing_size;
 
         // 打开文件准备写入
-        let mut file = if existing_size > 0 {
+        let mut file = if existing_size > 0 && server_honored_range {
             tokio::fs::OpenOptions::new()
                 .append(true)
                 .open(&full_path)
@@ -1268,6 +1332,7 @@ impl Clone for HttpDownloader {
             is_paused: Arc::clone(&self.is_paused),
             resume_downloader: Arc::clone(&self.resume_downloader),
             m3u8_downloader: Arc::clone(&self.m3u8_downloader),
+            ytdlp_downloader: Arc::clone(&self.ytdlp_downloader),
             bandwidth_controller: self.bandwidth_controller.clone(),
         }
     }
@@ -1633,6 +1698,27 @@ mod test_support {
             return Ok(());
         }
 
+        if let Some(status) = path.strip_prefix("/status/") {
+            let status_code: u16 = status.parse().unwrap_or(500);
+            write_response(socket, status_code, "Test Status", b"status error").await?;
+            return Ok(());
+        }
+
+        if let Some(rest) = path.strip_prefix("/truncated/") {
+            let mut parts = rest.split('/');
+            let declared_size: usize = parts.next().and_then(|v| v.parse().ok()).unwrap_or(100);
+            let actual_size: usize = parts.next().and_then(|v| v.parse().ok()).unwrap_or(10);
+            let body = vec![b't'; actual_size.min(declared_size)];
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
+                declared_size
+            );
+            socket.write_all(response.as_bytes()).await?;
+            socket.write_all(&body).await?;
+            socket.shutdown().await?;
+            return Ok(());
+        }
+
         if let Some(size) = path.strip_prefix("/bytes/") {
             let size: usize = size.parse().unwrap_or(0);
             let data = vec![b'a'; size];
@@ -1654,6 +1740,13 @@ mod test_support {
 
             let header = "Accept-Ranges: bytes\r\n";
             write_response_with_headers(socket, 200, "OK", &data, header).await?;
+            return Ok(());
+        }
+
+        if let Some(size) = path.strip_prefix("/bytes-no-range/") {
+            let size: usize = size.parse().unwrap_or(0);
+            let data = vec![b'b'; size];
+            write_response(socket, 200, "OK", &data).await?;
             return Ok(());
         }
 
@@ -1754,6 +1847,130 @@ mod integration_tests {
         // 验证文件被续传（长度应该大于原来的partial内容）
         let metadata = fs::metadata(&file_path).await.unwrap();
         assert!(metadata.len() >= 7); // "partial" = 7 bytes
+    }
+
+    #[tokio::test]
+    async fn test_resume_restarts_when_server_ignores_range() {
+        let config = DownloaderConfig {
+            resume_enabled: true,
+            ..Default::default()
+        };
+        let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
+
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("no_range_resume.bin");
+        fs::write(&file_path, b"partial").await.unwrap();
+
+        let task = DownloadTask::new(
+            format!("{}/bytes-no-range/100", server.url()),
+            temp_dir.path().to_string_lossy().to_string(),
+            "no_range_resume.bin".to_string(),
+        );
+
+        let result = downloader.download(task).await;
+        assert!(result.is_ok());
+
+        let completed_task = result.unwrap();
+        assert_eq!(completed_task.status, TaskStatus::Completed);
+
+        let content = fs::read(&file_path).await.unwrap();
+        assert_eq!(content.len(), 100);
+        assert!(content.iter().all(|byte| *byte == b'b'));
+    }
+
+    #[tokio::test]
+    async fn test_429_rate_limit_returns_failed_task() {
+        let downloader = HttpDownloader::new(DownloaderConfig::default()).unwrap();
+        let server = super::test_support::TestServer::start().await;
+        let temp_dir = tempdir().unwrap();
+
+        let task = DownloadTask::new(
+            format!("{}/status/429", server.url()),
+            temp_dir.path().to_string_lossy().to_string(),
+            "rate-limit.bin".to_string(),
+        );
+
+        let result = downloader.download(task).await.unwrap();
+
+        assert_eq!(result.status, TaskStatus::Failed);
+        assert!(result
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("429"));
+        assert!(!temp_dir.path().join("rate-limit.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn test_output_parent_that_is_file_returns_failed_task() {
+        let downloader = HttpDownloader::new(DownloaderConfig::default()).unwrap();
+        let server = super::test_support::TestServer::start().await;
+        let temp_dir = tempdir().unwrap();
+        let not_a_directory = temp_dir.path().join("not-a-directory");
+        fs::write(&not_a_directory, b"already a file")
+            .await
+            .unwrap();
+
+        let task = DownloadTask::new(
+            format!("{}/bytes/32", server.url()),
+            not_a_directory.to_string_lossy().to_string(),
+            "video.bin".to_string(),
+        );
+
+        let result = downloader.download(task).await.unwrap();
+
+        assert_eq!(result.status, TaskStatus::Failed);
+        assert!(result.error_message.is_some());
+        assert_eq!(fs::read(&not_a_directory).await.unwrap(), b"already a file");
+    }
+
+    #[tokio::test]
+    async fn test_truncated_response_returns_failed_task() {
+        let downloader = HttpDownloader::new(DownloaderConfig::default()).unwrap();
+        let server = super::test_support::TestServer::start().await;
+        let temp_dir = tempdir().unwrap();
+
+        let task = DownloadTask::new(
+            format!("{}/truncated/100/10", server.url()),
+            temp_dir.path().to_string_lossy().to_string(),
+            "truncated.bin".to_string(),
+        );
+
+        let result = downloader.download(task).await.unwrap();
+
+        assert_eq!(result.status, TaskStatus::Failed);
+        assert!(result.error_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_resume_range_416_returns_failed_without_appending() {
+        let config = DownloaderConfig {
+            resume_enabled: true,
+            ..Default::default()
+        };
+        let downloader = HttpDownloader::new(config).unwrap();
+        let server = super::test_support::TestServer::start().await;
+
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("oversized-partial.bin");
+        fs::write(&file_path, b"partial").await.unwrap();
+
+        let task = DownloadTask::new(
+            format!("{}/bytes/4", server.url()),
+            temp_dir.path().to_string_lossy().to_string(),
+            "oversized-partial.bin".to_string(),
+        );
+
+        let result = downloader.download(task).await.unwrap();
+
+        assert_eq!(result.status, TaskStatus::Failed);
+        assert!(result
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("416"));
+        assert_eq!(fs::read(&file_path).await.unwrap(), b"partial");
     }
 
     #[tokio::test]

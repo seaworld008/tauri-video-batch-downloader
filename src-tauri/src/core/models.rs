@@ -1,6 +1,6 @@
 //! Core data models for the video downloader application
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,13 +26,55 @@ pub enum TaskStatus {
 
 /// Downloader type enumeration
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum DownloaderType {
     Http,
 
     M3u8,
 
+    YtDlp,
+}
+
+impl<'de> Deserialize<'de> for DownloaderType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "Http" | "http" => Ok(Self::Http),
+            "M3u8" | "m3u8" => Ok(Self::M3u8),
+            "YtDlp" | "ytdlp" | "Youtube" | "youtube" => Ok(Self::YtDlp),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown downloader type: {}",
+                other
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourcePlatform {
     Youtube,
+    Tiktok,
+    Instagram,
+    Facebook,
+    Generic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExternalVideoInfo {
+    pub source_platform: SourcePlatform,
+    pub extractor: Option<String>,
+    pub webpage_url: Option<String>,
+    pub title: Option<String>,
+    pub thumbnail: Option<String>,
+    pub duration_seconds: Option<f64>,
+    pub format_id: Option<String>,
+    pub format_note: Option<String>,
+    #[serde(default)]
+    pub requires_auth: bool,
 }
 
 /// Main video download task structure
@@ -86,6 +128,10 @@ pub struct VideoTask {
 
     // 保存完整的视频信息供后续使用
     pub video_info: Option<VideoInfo>,
+
+    /// Metadata discovered by external providers such as yt-dlp.
+    #[serde(default)]
+    pub external_info: Option<ExternalVideoInfo>,
 }
 
 /// Progress update information

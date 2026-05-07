@@ -1,6 +1,6 @@
 # 构建与发布（Build & Release）
 
-更新日期：2026-05-06
+更新日期：2026-05-07
 
 ## 生产包
 
@@ -8,10 +8,20 @@
 pnpm build:prod
 ```
 
-等价主路径：
+生产构建会先执行严格 sidecar 预检：
 
 ```bash
-pnpm build
+pnpm sidecars:check
+```
+
+当前 `pnpm build` 也走同一条严格链路。只要当前 target 的 `yt-dlp` 或 `ffmpeg`
+仍是占位文件、缺少可执行权限或 capability 配置不完整，生产构建会直接失败。
+
+如果当前机器需要准备真实 sidecar：
+
+```bash
+pnpm sidecars:prepare
+pnpm sidecars:check
 ```
 
 输出目录：
@@ -40,6 +50,12 @@ pnpm build:local
 - `src-tauri/tauri.conf.local.json`
 - `.env.localtest`
 
+本地测试包允许保留 sidecar 占位文件，便于先验证桌面壳、IPC 和普通下载链路：
+
+```bash
+pnpm sidecars:check:local
+```
+
 ## 平台说明
 
 | 平台    | 说明                                          |
@@ -48,12 +64,81 @@ pnpm build:local
 | Windows | 需要 WebView2 runtime；安装包应包含检测与引导 |
 | Linux   | 依赖 WebKitGTK/GTK，deb 依赖见 Tauri 配置     |
 
+## sidecar 外部工具
+
+当前 Tauri 配置声明了两个随包 sidecar：
+
+```text
+src-tauri/binaries/yt-dlp-$TARGET_TRIPLE
+src-tauri/binaries/ffmpeg-$TARGET_TRIPLE
+```
+
+Windows 目标文件需要 `.exe`
+后缀。真实发布前必须把当前占位文件替换为真实二进制，并确认：
+
+- 文件名与 Tauri target triple 完全匹配。
+- macOS/Linux 文件具有可执行权限。
+- `yt-dlp --version`、`yt-dlp --help`、`ffmpeg -version` 在打包后可执行。
+- `yt-dlp` release 下载源必须校验 checksum。
+- `ffmpeg` 暂不做 App 内自动下载，发布包应使用项目选择的可信构建来源。
+
+可用预检命令：
+
+```bash
+# 当前平台下载/复制真实 sidecar
+pnpm sidecars:prepare
+
+# 当前平台，严格发布模式
+pnpm sidecars:check
+
+# 当前平台，允许占位文件，仅用于本地 smoke
+pnpm sidecars:check:local
+
+# 四个正式发布 target 全量检查
+pnpm sidecars:check:all
+
+# 指定单个平台 target
+node scripts/validate-sidecars.mjs --target x86_64-pc-windows-msvc
+```
+
+预检内容包括：
+
+- `tauri.conf.json#bundle.externalBin` 是否声明 `binaries/yt-dlp` 和
+  `binaries/ffmpeg`。
+- `src-tauri/capabilities/migrated.json` 是否允许 shell sidecar `execute` /
+  `spawn`。
+- `src-tauri/binaries/<name>-$TARGET_TRIPLE(.exe)` 是否存在。
+- macOS/Linux sidecar 是否具有可执行权限。
+- 正式模式下是否仍是占位脚本或明显过小的不完整文件。
+
+`sidecars:prepare` 默认行为：
+
+- `yt-dlp` 从官方 GitHub latest release 下载对应平台 asset，并校验
+  `SHA2-256SUMS`。
+- `ffmpeg` 默认从 `ffmpeg-static`
+  当前 runner 二进制复制；如果项目选择了其他可信来源，可设置 `VDP_FFMPEG_BINARY`
+  指向本地二进制。
+- 如需使用已审计的 `yt-dlp` 二进制，可设置 `VDP_YTDLP_BINARY`。
+- `src-tauri/binaries/` 下真实二进制不入库；release
+  workflow 会在每个平台 runner 上按目标准备。
+
+App 运行时的外部工具优先级：
+
+```text
+用户指定路径 -> App 管理版本 -> 随包 sidecar -> PATH fallback
+```
+
+`yt-dlp`
+App 管理更新会在启用前做 checksum、版本和兼容性契约检查，并保留上一版用于回退。
+
 ## 发布前检查
 
 1. 跑通 `pnpm test:all`。
 2. 用真实 App 导入少量测试数据并验证开始、暂停、恢复、重复导入。
-3. 检查 `docs/current-state.md`、`docs/roadmap.md` 是否需要同步。
-4. 发布说明写清新增能力、修复问题、已知风险和升级建议。
+3. 用真实 App 验证 `yt-dlp` 探测、公开视频下载、工具更新提示和回退按钮。
+4. 跑通 `pnpm sidecars:check:all`，不允许占位 sidecar 进入正式发布。
+5. 检查 `docs/current-state.md`、`docs/roadmap.md` 是否需要同步。
+6. 发布说明写清新增能力、修复问题、已知风险和升级建议。
 
 ## GitHub Actions 发布链路
 
@@ -66,6 +151,8 @@ pnpm build:local
    Silicon、Linux 的平台矩阵。
 3. 手动触发时可以只构建单个平台族，适合先用 Linux 或 Windows 做低成本验证。
 4. 只有 tag push 或手动传入 `publish=true` 时，才上传到 draft GitHub Release。
+5. 每个平台进入 `pnpm tauri build` 前都会按 matrix
+   target 准备并严格预检 sidecar。
 
 手动低成本冒烟：
 

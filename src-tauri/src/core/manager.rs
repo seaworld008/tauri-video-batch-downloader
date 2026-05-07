@@ -868,6 +868,7 @@ impl DownloadManager {
             paused_from_active: false,
             downloader_type: None,
             video_info: None, // 没有额外的视频信息
+            external_info: None,
         };
 
         self.hydrate_existing_file_state(&mut task).await?;
@@ -3108,6 +3109,7 @@ impl DownloadManager {
             paused_from_active: false,
             downloader_type: None,
             video_info: None, // 没有额外的视频信息
+            external_info: None,
         };
 
         self.tasks.insert(task_id.clone(), task.clone());
@@ -3652,6 +3654,7 @@ mod tests {
                 course_id: None,
                 course_name: None,
             }),
+            external_info: None,
         };
 
         let duplicate_task = VideoTask {
@@ -3685,6 +3688,7 @@ mod tests {
                 course_id: None,
                 course_name: None,
             }),
+            external_info: None,
         };
 
         let first = manager.add_video_task(base_task).await?;
@@ -3841,6 +3845,7 @@ mod tests {
             paused_from_active: false,
             downloader_type: Some(DownloaderType::Http),
             video_info: None,
+            external_info: None,
         };
 
         let stored = manager.add_video_task(task).await?;

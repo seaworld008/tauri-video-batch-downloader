@@ -1,8 +1,10 @@
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ToolCapabilityService;
 
+#[allow(dead_code)]
 impl ToolCapabilityService {
     pub async fn is_available(tool_name: &str, args: &[&str]) -> Result<bool, String> {
         let output = Command::new(tool_name).args(args).output().await;

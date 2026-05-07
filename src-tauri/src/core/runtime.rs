@@ -407,6 +407,7 @@ mod tests {
                 course_id: None,
                 course_name: None,
             }),
+            external_info: None,
         }
     }
 

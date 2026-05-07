@@ -9,7 +9,21 @@ export type TaskStatus =
   | 'cancelled';
 
 // 下载器类型
-export type DownloaderType = 'http' | 'm3u8' | 'youtube';
+export type DownloaderType = 'http' | 'm3u8' | 'ytdlp';
+
+export type SourcePlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'generic';
+
+export interface ExternalVideoInfo {
+  source_platform: SourcePlatform;
+  extractor?: string;
+  webpage_url?: string;
+  title?: string;
+  thumbnail?: string;
+  duration_seconds?: number;
+  format_id?: string;
+  format_note?: string;
+  requires_auth?: boolean;
+}
 
 // 视频任务接口
 export interface VideoTask {
@@ -45,6 +59,8 @@ export interface VideoTask {
     course_id?: string;
     course_name?: string;
   };
+
+  external_info?: ExternalVideoInfo;
 }
 
 // 进度更新接口

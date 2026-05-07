@@ -180,23 +180,8 @@ impl M3U8Downloader {
         let task_temp_dir = self.config.temp_dir.join(task_id);
         tokio::fs::create_dir_all(&task_temp_dir).await?;
 
-        // 处理加密（如果有）
         let mut playlist = playlist;
-        if let Some(ref mut encryption) = playlist.encryption {
-            if encryption.method.to_uppercase() != "NONE" {
-                if let Some(key) = self.fetch_encryption_key(encryption).await? {
-                    encryption.key_data = Some(key.clone());
-                    for segment in &mut playlist.segments {
-                        if let Some(ref mut seg_enc) = segment.encryption {
-                            if seg_enc.method.to_uppercase() != "NONE" {
-                                seg_enc.key_data = Some(key.clone());
-                            }
-                        }
-                    }
-                    tracing::info!("已获取 AES-128 密钥并同步到所有片段");
-                }
-            }
-        }
+        self.hydrate_segment_encryption_keys(&mut playlist).await?;
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
         {
@@ -311,6 +296,9 @@ impl M3U8Downloader {
                 } else if line.starts_with("#EXT-X-KEY:") {
                     // 解析加密信息
                     current_encryption = self.parse_encryption_line(line)?;
+                    if let Some(ref mut encryption) = current_encryption {
+                        self.resolve_encryption_key_url(&playlist.base_url, encryption)?;
+                    }
                     playlist.encryption = current_encryption.clone();
                 } else if line.starts_with("#EXT-X-BYTERANGE:") {
                     let value = line.replace("#EXT-X-BYTERANGE:", "");
@@ -418,13 +406,27 @@ impl M3U8Downloader {
         }))
     }
 
+    fn resolve_encryption_key_url(
+        &self,
+        base_url: &str,
+        encryption: &mut M3U8Encryption,
+    ) -> Result<()> {
+        let Some(key_url) = encryption.key_url.as_deref() else {
+            return Ok(());
+        };
+
+        if Url::parse(key_url).is_ok() {
+            return Ok(());
+        }
+
+        encryption.key_url = Some(Url::parse(base_url)?.join(key_url)?.to_string());
+        Ok(())
+    }
+
     /// 获取基础URL
     fn get_base_url(&self, m3u8_url: &str) -> Result<String> {
         let url = Url::parse(m3u8_url)?;
-        let mut base_url = url.clone();
-        base_url.set_path("");
-        base_url.set_query(None);
-        Ok(base_url.to_string())
+        Ok(url.to_string())
     }
 
     /// 解析相对URL
@@ -449,6 +451,43 @@ impl M3U8Downloader {
         } else {
             Ok(None)
         }
+    }
+
+    async fn hydrate_segment_encryption_keys(&self, playlist: &mut M3U8Playlist) -> Result<()> {
+        let mut key_cache: HashMap<String, Vec<u8>> = HashMap::new();
+
+        for segment in &mut playlist.segments {
+            let Some(encryption) = segment.encryption.as_mut() else {
+                continue;
+            };
+
+            if encryption.method.to_uppercase() == "NONE" || encryption.key_data.is_some() {
+                continue;
+            }
+
+            let Some(key_url) = encryption.key_url.clone() else {
+                continue;
+            };
+
+            let key = if let Some(cached) = key_cache.get(&key_url) {
+                cached.clone()
+            } else {
+                let fetched = self
+                    .fetch_encryption_key(encryption)
+                    .await?
+                    .ok_or_else(|| anyhow!("AES-128 加密片段缺少密钥 URL"))?;
+                key_cache.insert(key_url.clone(), fetched.clone());
+                fetched
+            };
+
+            encryption.key_data = Some(key);
+        }
+
+        if !key_cache.is_empty() {
+            tracing::info!("已获取 {} 个 HLS AES-128 密钥", key_cache.len());
+        }
+
+        Ok(())
     }
 
     /// 下载所有片段
@@ -710,20 +749,28 @@ impl M3U8Downloader {
         }
 
         let response = request.send().await?;
+        let response_status = response.status();
 
-        if !response.status().is_success() {
+        if !response_status.is_success() {
             if let Some((start, end)) = byte_range {
                 tracing::error!(
                     "片段请求失败: {} [{}-{}] - {}",
                     segment_url,
                     start,
                     end,
-                    response.status()
+                    response_status
                 );
             } else {
-                tracing::error!("片段请求失败: {} - {}", segment_url, response.status());
+                tracing::error!("片段请求失败: {} - {}", segment_url, response_status);
             }
-            bail!("下载片段失败: {} - {}", segment_url, response.status());
+            bail!("下载片段失败: {} - {}", segment_url, response_status);
+        }
+
+        if byte_range.is_some() && response_status.as_u16() != 206 {
+            bail!(
+                "服务器未返回 M3U8 byte-range 分片响应(206)，无法安全写入片段: {}",
+                response_status
+            );
         }
 
         let mut data = response.bytes().await?.to_vec();
@@ -882,7 +929,11 @@ impl M3U8Downloader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cbc::Encryptor;
+    use cipher::BlockEncryptMut;
     use tempfile::tempdir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn test_m3u8_downloader_creation() {
@@ -939,6 +990,175 @@ http://example.com/segment002.ts
             resolved.unwrap(),
             "https://example.com/videos/segment000.ts"
         );
+    }
+
+    #[tokio::test]
+    async fn test_m3u8_relative_segments_use_playlist_directory() {
+        let m3u8_content = r#"#EXTM3U
+#EXT-X-VERSION:3
+#EXTINF:9.009,
+segment000.ts
+#EXT-X-ENDLIST"#;
+
+        let downloader = M3U8Downloader::new(M3U8DownloaderConfig::default()).unwrap();
+        let playlist = downloader
+            .parse_m3u8_content("https://example.com/videos/hls/master.m3u8", m3u8_content)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            playlist.segments[0].url,
+            "https://example.com/videos/hls/segment000.ts"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_m3u8_relative_key_uri_uses_playlist_directory() {
+        let m3u8_content = r#"#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-KEY:METHOD=AES-128,URI="../keys/key.bin",IV=0X00000000000000000000000000000000
+#EXTINF:9.009,
+segment000.ts
+#EXT-X-ENDLIST"#;
+
+        let downloader = M3U8Downloader::new(M3U8DownloaderConfig::default()).unwrap();
+        let playlist = downloader
+            .parse_m3u8_content("https://example.com/videos/hls/master.m3u8", m3u8_content)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            playlist.segments[0]
+                .encryption
+                .as_ref()
+                .and_then(|enc| enc.key_url.as_deref()),
+            Some("https://example.com/videos/keys/key.bin")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_m3u8_download_uses_distinct_keys_per_segment() {
+        fn encrypt_segment(data: &[u8], key: &[u8; 16], iv: &[u8; 16]) -> Vec<u8> {
+            Encryptor::<Aes128>::new_from_slices(key, iv)
+                .unwrap()
+                .encrypt_padded_vec_mut::<Pkcs7>(data)
+        }
+
+        let key_a = *b"0123456789abcdef";
+        let key_b = *b"abcdef0123456789";
+        let iv_a = [0u8; 16];
+        let mut iv_b = [0u8; 16];
+        iv_b[15] = 1;
+        let segment_a_plain = b"first segment payload";
+        let segment_b_plain = b"second segment payload";
+        let segment_a = encrypt_segment(segment_a_plain, &key_a, &iv_a);
+        let segment_b = encrypt_segment(segment_b_plain, &key_b, &iv_b);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..5 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0u8; 1024];
+                let bytes_read = socket.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+
+                let (body, content_type): (Vec<u8>, &str) = match path {
+                    "/master.m3u8" => (
+                        format!(
+                            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key-a.bin\",IV=0X00000000000000000000000000000000\n#EXTINF:1.0,\n/seg-a.ts\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key-b.bin\",IV=0X00000000000000000000000000000001\n#EXTINF:1.0,\n/seg-b.ts\n#EXT-X-ENDLIST\n"
+                        )
+                        .into_bytes(),
+                        "application/vnd.apple.mpegurl",
+                    ),
+                    "/key-a.bin" => (key_a.to_vec(), "application/octet-stream"),
+                    "/key-b.bin" => (key_b.to_vec(), "application/octet-stream"),
+                    "/seg-a.ts" => (segment_a.clone(), "video/mp2t"),
+                    "/seg-b.ts" => (segment_b.clone(), "video/mp2t"),
+                    _ => (Vec::new(), "text/plain"),
+                };
+
+                let status = if body.is_empty() {
+                    "404 Not Found"
+                } else {
+                    "200 OK"
+                };
+                let response = format!(
+                    "HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
+                    status,
+                    body.len(),
+                    content_type
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let mut config = M3U8DownloaderConfig::default();
+        config.temp_dir = temp_dir.path().join("segments");
+        let downloader = M3U8Downloader::new(config).unwrap();
+        let output = temp_dir.path().join("output.ts");
+
+        downloader
+            .download_m3u8(
+                "multi-key-task",
+                &format!("http://{}/master.m3u8", addr),
+                &output.to_string_lossy(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+
+        let merged = tokio::fs::read(&output).await.unwrap();
+        assert_eq!(
+            merged,
+            [segment_a_plain.as_slice(), segment_b_plain.as_slice()].concat()
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_byte_range_segment_rejects_ignored_range() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 1024];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            let body = b"full segment";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.write_all(body).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let output_file = temp_dir.path().join("segment.ts");
+        let result = M3U8Downloader::download_segment_attempt(
+            &Client::new(),
+            &format!("http://{}", addr),
+            &output_file,
+            Some((0, 3)),
+            0,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("206"));
+        server.await.unwrap();
     }
 
     #[test]

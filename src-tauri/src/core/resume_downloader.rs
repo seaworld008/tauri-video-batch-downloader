@@ -866,6 +866,19 @@ impl ResumeDownloader {
         let part_path = resume_info.part_file_path();
 
         if part_path.exists() {
+            let metadata = tokio::fs::metadata(&part_path).await?;
+            if !metadata.is_file() {
+                self.quarantine_corrupt_part_file(&part_path, "part path is not a regular file")
+                    .await?;
+                return Ok(false);
+            }
+
+            if resume_info.total_size > 0 && metadata.len() > resume_info.total_size {
+                self.quarantine_corrupt_part_file(&part_path, "part file is larger than expected")
+                    .await?;
+                return Ok(false);
+            }
+
             return Ok(true);
         }
 
@@ -879,6 +892,32 @@ impl ResumeDownloader {
         }
 
         self.has_any_chunk_files(&resume_info.task_id).await
+    }
+
+    async fn quarantine_corrupt_part_file(&self, part_path: &Path, reason: &str) -> Result<()> {
+        if !part_path.exists() {
+            return Ok(());
+        }
+
+        let stamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        let file_name = part_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "download.part".to_string());
+        let quarantine_path = part_path.with_file_name(format!("{file_name}.corrupt-{stamp}"));
+
+        tracing::warn!(
+            "Quarantining corrupt part file {} to {} ({})",
+            part_path.display(),
+            quarantine_path.display(),
+            reason
+        );
+        tokio::fs::rename(part_path, quarantine_path).await?;
+
+        Ok(())
     }
 
     async fn prepare_storage(
@@ -975,12 +1014,22 @@ impl ResumeDownloader {
 
         let mut updated = false;
 
+        let metadata = tokio::fs::metadata(&part_path).await?;
+        let part_size = metadata.len();
+
         if resume_info.chunks.len() == 1 {
-            let metadata = tokio::fs::metadata(&part_path).await?;
-            let size = metadata.len().min(resume_info.chunks[0].size());
+            let size = part_size.min(resume_info.chunks[0].size());
             if size != resume_info.chunks[0].downloaded {
                 resume_info.chunks[0].downloaded = size;
                 updated = true;
+            }
+        } else {
+            for chunk in &mut resume_info.chunks {
+                let available = part_size.saturating_sub(chunk.start).min(chunk.size());
+                if chunk.downloaded > available {
+                    chunk.downloaded = available;
+                    updated = true;
+                }
             }
         }
 
@@ -994,8 +1043,9 @@ impl ResumeDownloader {
             };
         }
 
-        if updated {
-            resume_info.downloaded_total = resume_info.chunks.iter().map(|c| c.downloaded).sum();
+        let downloaded_total = resume_info.chunks.iter().map(|c| c.downloaded).sum();
+        if updated || resume_info.downloaded_total != downloaded_total {
+            resume_info.downloaded_total = downloaded_total;
             resume_info.last_modified = SystemTime::now();
         }
 
@@ -1327,6 +1377,91 @@ mod tests {
 
         assert!(!writer.part_path().exists());
         assert!(!temp_dir.path().join("cleanup-task.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_oversized_part_file_and_quarantines_it() {
+        let temp_dir = tempdir().unwrap();
+        let mut config = ResumeDownloaderConfig::default();
+        config.resume_info_dir = temp_dir.path().to_path_buf();
+
+        let client = Client::new();
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
+
+        let final_path = temp_dir.path().join("corrupt-video.mp4");
+        let writer = PartFileWriter::new(&final_path);
+        writer.prepare(None).await.unwrap();
+        let mut chunk_writer = writer.open_chunk_writer(0).await.unwrap();
+        chunk_writer.write_all(b"too-large").await.unwrap();
+        chunk_writer.flush_and_sync().await.unwrap();
+
+        let mut resume_info = ResumeInfo::new(
+            "corrupt-task".to_string(),
+            final_path.to_string_lossy().to_string(),
+            "https://example.com/video.mp4".to_string(),
+            4,
+        );
+        resume_info.chunks = vec![ChunkInfo::new(0, 0, 3)];
+
+        let is_valid = downloader
+            .validate_existing_state(&resume_info)
+            .await
+            .unwrap();
+
+        assert!(!is_valid);
+        assert!(!writer.part_path().exists());
+        let quarantined = tokio::fs::read_dir(temp_dir.path())
+            .await
+            .unwrap()
+            .next_entry()
+            .await
+            .unwrap()
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".corrupt-");
+        assert!(quarantined);
+    }
+
+    #[tokio::test]
+    async fn test_truncated_part_file_clamps_multi_chunk_progress() {
+        let temp_dir = tempdir().unwrap();
+        let mut config = ResumeDownloaderConfig::default();
+        config.resume_info_dir = temp_dir.path().to_path_buf();
+
+        let client = Client::new();
+        let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
+
+        let final_path = temp_dir.path().join("truncated-video.mp4");
+        let writer = PartFileWriter::new(&final_path);
+        writer.prepare(None).await.unwrap();
+        let mut chunk_writer = writer.open_chunk_writer(0).await.unwrap();
+        chunk_writer.write_all(b"abcde").await.unwrap();
+        chunk_writer.flush_and_sync().await.unwrap();
+
+        let mut resume_info = ResumeInfo::new(
+            "truncated-task".to_string(),
+            final_path.to_string_lossy().to_string(),
+            "https://example.com/video.mp4".to_string(),
+            8,
+        );
+        resume_info.chunks = vec![ChunkInfo::new(0, 0, 3), ChunkInfo::new(1, 4, 7)];
+        resume_info.chunks[0].downloaded = 4;
+        resume_info.chunks[0].status = ChunkStatus::Completed;
+        resume_info.chunks[1].downloaded = 4;
+        resume_info.chunks[1].status = ChunkStatus::Completed;
+        resume_info.downloaded_total = 8;
+
+        downloader
+            .sync_chunks_with_part_file(&mut resume_info)
+            .await
+            .unwrap();
+
+        assert_eq!(resume_info.chunks[0].downloaded, 4);
+        assert_eq!(resume_info.chunks[0].status, ChunkStatus::Completed);
+        assert_eq!(resume_info.chunks[1].downloaded, 1);
+        assert_eq!(resume_info.chunks[1].status, ChunkStatus::Paused);
+        assert_eq!(resume_info.downloaded_total, 5);
     }
 
     #[tokio::test]

@@ -1,9 +1,16 @@
+import type { VideoTask } from '../../../types';
+
 export type DownloadDiagnosticCode =
   | 'max_concurrency_reached'
   | 'permission_denied'
   | 'rate_limited'
   | 'external_tool_missing'
   | 'external_tool_failed'
+  | 'authentication_required'
+  | 'geo_or_policy_restricted'
+  | 'unsupported_extractor'
+  | 'ffmpeg_missing'
+  | 'ytdlp_update_recommended'
   | 'json_parse_failed'
   | 'part_file_corrupted'
   | 'network_error'
@@ -11,7 +18,12 @@ export type DownloadDiagnosticCode =
 
 export type DownloadDiagnosticSeverity = 'info' | 'warning' | 'error';
 
-export type ExternalToolStatus = 'available' | 'missing' | 'failed' | 'unknown';
+export type ExternalToolStatus =
+  | 'available'
+  | 'missing'
+  | 'failed'
+  | 'version_unsupported'
+  | 'unknown';
 
 export interface DownloadDiagnostic {
   code: DownloadDiagnosticCode;
@@ -19,6 +31,13 @@ export interface DownloadDiagnostic {
   message: string;
   externalToolStatus?: ExternalToolStatus;
 }
+
+export interface TaskSupportBundleOptions {
+  generatedAt?: Date;
+  logPaths?: string[];
+}
+
+const DEFAULT_LOG_PATHS = ['./log/backend.log', './log/frontend.log'];
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -56,6 +75,41 @@ export const classifyDownloadDiagnosticCode = (error: unknown): DownloadDiagnost
 
   if (normalized.includes('429') || normalized.includes('rate limit')) {
     return 'rate_limited';
+  }
+
+  if (
+    normalized.includes('authentication_required') ||
+    normalized.includes('sign in') ||
+    normalized.includes('login') ||
+    normalized.includes('private') ||
+    normalized.includes('age-restricted')
+  ) {
+    return 'authentication_required';
+  }
+
+  if (
+    normalized.includes('geo_or_policy_restricted') ||
+    normalized.includes('not available in your country') ||
+    normalized.includes('geo') ||
+    normalized.includes('policy')
+  ) {
+    return 'geo_or_policy_restricted';
+  }
+
+  if (
+    normalized.includes('unsupported_extractor') ||
+    normalized.includes('unsupported url') ||
+    normalized.includes('no suitable extractor')
+  ) {
+    return 'unsupported_extractor';
+  }
+
+  if (normalized.includes('ffmpeg_missing') || normalized.includes('ffmpeg not found')) {
+    return 'ffmpeg_missing';
+  }
+
+  if (normalized.includes('ytdlp_update_recommended')) {
+    return 'ytdlp_update_recommended';
   }
 
   if (normalized.includes('yt-dlp') || normalized.includes('youtube-dl')) {
@@ -121,6 +175,38 @@ export const toDownloadDiagnostic = (error: unknown): DownloadDiagnostic => {
         message: '外部视频工具执行失败，请检查工具安装、站点可访问性或链接有效性。',
         externalToolStatus: 'failed',
       };
+    case 'authentication_required':
+      return {
+        code,
+        severity: 'warning',
+        message: '该内容需要登录、年龄确认或私有权限；当前仅支持公开内容下载。',
+      };
+    case 'geo_or_policy_restricted':
+      return {
+        code,
+        severity: 'warning',
+        message: '该内容受地区、版权或平台策略限制，当前不会绕过这些限制。',
+      };
+    case 'unsupported_extractor':
+      return {
+        code,
+        severity: 'warning',
+        message: 'yt-dlp 暂不支持该链接或站点结构已变化，请确认链接是否为公开视频页。',
+      };
+    case 'ffmpeg_missing':
+      return {
+        code,
+        severity: 'warning',
+        message: '未检测到 ffmpeg sidecar 或 PATH fallback，无法合并音视频流。',
+        externalToolStatus: 'missing',
+      };
+    case 'ytdlp_update_recommended':
+      return {
+        code,
+        severity: 'warning',
+        message: '当前 yt-dlp 版本可能过旧，建议更新随包版本后重试。',
+        externalToolStatus: 'version_unsupported',
+      };
     case 'json_parse_failed':
       return {
         code,
@@ -147,4 +233,49 @@ export const toDownloadDiagnostic = (error: unknown): DownloadDiagnostic => {
         message: originalMessage || '下载操作失败，请查看日志获取更多信息。',
       };
   }
+};
+
+const formatSupportValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  return String(value);
+};
+
+export const buildTaskSupportBundle = (
+  task: VideoTask,
+  options: TaskSupportBundleOptions = {}
+): string => {
+  const generatedAt = options.generatedAt ?? new Date();
+  const diagnostic = toDownloadDiagnostic(task.error_message ?? '');
+  const externalInfo = task.external_info;
+  const logPaths = options.logPaths ?? DEFAULT_LOG_PATHS;
+
+  return [
+    'Video Downloader Pro Task Diagnostic',
+    `generated_at: ${generatedAt.toISOString()}`,
+    `task_id: ${task.id}`,
+    `title: ${formatSupportValue(task.title)}`,
+    `url: ${formatSupportValue(task.url)}`,
+    `status: ${task.status}`,
+    `downloader_type: ${formatSupportValue(task.downloader_type)}`,
+    `source_platform: ${formatSupportValue(externalInfo?.source_platform)}`,
+    `extractor: ${formatSupportValue(externalInfo?.extractor)}`,
+    `webpage_url: ${formatSupportValue(externalInfo?.webpage_url)}`,
+    `format_id: ${formatSupportValue(externalInfo?.format_id)}`,
+    `format_note: ${formatSupportValue(externalInfo?.format_note)}`,
+    `requires_auth: ${formatSupportValue(externalInfo?.requires_auth)}`,
+    `progress: ${task.progress}%`,
+    `downloaded_size: ${task.downloaded_size}`,
+    `file_size: ${formatSupportValue(task.file_size)}`,
+    `output_path: ${formatSupportValue(task.output_path)}`,
+    `resolved_path: ${formatSupportValue(task.resolved_path)}`,
+    `created_at: ${formatSupportValue(task.created_at)}`,
+    `updated_at: ${formatSupportValue(task.updated_at)}`,
+    `diagnostic_code: ${diagnostic.code}`,
+    `diagnostic_severity: ${diagnostic.severity}`,
+    `diagnostic_message: ${diagnostic.message}`,
+    `raw_error: ${formatSupportValue(task.error_message)}`,
+    `logs: ${logPaths.join(', ')}`,
+  ].join('\n');
 };

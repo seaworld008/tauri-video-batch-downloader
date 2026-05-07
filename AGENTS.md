@@ -158,8 +158,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **tauri-video-batch-downloader** (3959
-symbols, 8302 relationships, 300 execution flows). Use the GitNexus MCP tools to
+This project is indexed by GitNexus as **tauri-video-batch-downloader** (4267
+symbols, 8963 relationships, 300 execution flows). Use the GitNexus MCP tools to
 understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in

@@ -1,6 +1,6 @@
 # 文档导航
 
-更新日期：2026-05-06
+更新日期：2026-05-07
 
 这份目录只保留当前仍应维护的文档。2 月、4 月的一次性计划、过期评审和旧交接记录已经清理；其中仍有价值的结论已合并到
 `current-state.md`、`architecture-functional-design.md`、`roadmap.md`、`code-quality.md`
@@ -30,6 +30,7 @@
 | `features.md`        | 功能清单和当前支持范围                       |
 | `integration.md`     | CSV/Excel 导入字段、对接建议、Tauri 命令边界 |
 | `development.md`     | 本地开发、测试、E2E 和工具版本               |
+| `tauri-e2e.md`       | Tauri MCP Bridge 真实桌面 App smoke          |
 | `build-release.md`   | 本地测试包、生产包、平台发布说明             |
 | `troubleshooting.md` | 日志、WebView2、导入、续传、事件排查         |
 
@@ -54,6 +55,7 @@
 | `app-regression-test-plan-2026-05-06.md` | App 真实导入、并发、暂停、恢复、重复导入、关闭重开回归用例 |
 | `code-quality.md`                        | 当前质量门禁、安全状态、GitNexus/Graphify 使用约定         |
 | `roadmap.md`                             | P0/P1/P2/P3 后续优化路线                                   |
+| `tauri-e2e.md`                           | 真实 Tauri MCP Bridge smoke 运行方式和限制                 |
 
 ---
 

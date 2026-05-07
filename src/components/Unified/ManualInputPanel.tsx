@@ -19,16 +19,86 @@ import {
   readClipboardTextCommand,
   selectOutputDirectoryCommand,
 } from '../../features/downloads/api/systemCommands';
-import type { VideoTask } from '../../types';
+import type { DownloaderType, ExternalVideoInfo, SourcePlatform, VideoTask } from '../../types';
 
 interface ManualUrlEntry {
   id: string;
   url: string;
   title?: string;
+  platform?: SourcePlatform;
+  externalInfo?: ExternalVideoInfo;
   isValid?: boolean;
   isProcessing?: boolean;
   error?: string;
 }
+
+const detectSourcePlatform = (url: string): SourcePlatform => {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes('youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be')) {
+      return 'youtube';
+    }
+    if (host.includes('tiktok.com')) return 'tiktok';
+    if (host.includes('instagram.com')) return 'instagram';
+    if (host.includes('facebook.com') || host.includes('fb.watch') || host.includes('fb.com')) {
+      return 'facebook';
+    }
+  } catch {
+    return 'generic';
+  }
+  return 'generic';
+};
+
+const isM3u8Url = (url: string) => {
+  const lower = url.toLowerCase();
+  return lower.includes('.m3u8') || lower.includes('m3u8');
+};
+
+const isDirectMediaUrl = (url: string) => {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return [
+      '.mp4',
+      '.m4v',
+      '.mov',
+      '.mkv',
+      '.webm',
+      '.avi',
+      '.flv',
+      '.wmv',
+      '.mp3',
+      '.m4a',
+      '.aac',
+      '.wav',
+      '.ogg',
+    ].some(ext => path.endsWith(ext));
+  } catch {
+    return false;
+  }
+};
+
+const inferDownloaderType = (url: string): DownloaderType => {
+  if (isM3u8Url(url)) return 'm3u8';
+  if (detectSourcePlatform(url) !== 'generic') return 'ytdlp';
+  return isDirectMediaUrl(url) ? 'http' : 'ytdlp';
+};
+
+const platformLabel = (platform?: SourcePlatform) => {
+  switch (platform) {
+    case 'youtube':
+      return 'YouTube';
+    case 'tiktok':
+      return 'TikTok';
+    case 'instagram':
+      return 'Instagram';
+    case 'facebook':
+      return 'Facebook';
+    case 'generic':
+      return '网页';
+    default:
+      return undefined;
+  }
+};
 
 export const ManualInputPanel: React.FC = () => {
   const [manualUrls, setManualUrls] = useState<ManualUrlEntry[]>([]);
@@ -104,19 +174,27 @@ export const ManualInputPanel: React.FC = () => {
       try {
         const isValidUrl = /^https?:\/\//.test(entry.url);
         let title = entry.url;
+        let platform = detectSourcePlatform(entry.url);
+        let externalInfo: ExternalVideoInfo | undefined;
 
-        if (entry.url.includes('youtube.com') || entry.url.includes('youtu.be')) {
+        if (isValidUrl) {
           try {
             const videoInfo = await getVideoInfoCommand<any>({ url: entry.url });
             title = (videoInfo as any).title || entry.url;
+            externalInfo = (videoInfo as any).external_info;
+            platform = externalInfo?.source_platform ?? platform;
           } catch {
-            // Silent fail
+            if (inferDownloaderType(entry.url) === 'ytdlp') {
+              throw new Error('公开内容探测失败，请确认链接可公开访问且 yt-dlp 可用');
+            }
           }
         }
 
         updateUrlEntry(entry.id, {
           isValid: isValidUrl,
           title: title,
+          platform,
+          externalInfo,
           isProcessing: false,
           error: isValidUrl ? undefined : '无效的URL格式',
         });
@@ -151,17 +229,6 @@ export const ManualInputPanel: React.FC = () => {
       return;
     }
 
-    const youtubeUrls = validUrls.filter(
-      entry => entry.url.includes('youtube.com') || entry.url.includes('youtu.be')
-    );
-    if (youtubeUrls.length > 0) {
-      notify.error(
-        'YouTube 链接暂不建议从这里直接下载',
-        '当前版本的“添加链接”入口还没有完全接通 YouTube 专用下载链路，先继续使用会出现小文件假完成或状态异常。请先用 HTTP/HTTPS 直链，YouTube 我会继续修。'
-      );
-      return;
-    }
-
     const targetDir = outputDir || defaultOutputDirFromConfig || './downloads';
 
     try {
@@ -176,13 +243,19 @@ export const ManualInputPanel: React.FC = () => {
         speed: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        downloader_type: entry.url.includes('youtube') ? 'youtube' : 'http',
+        downloader_type: inferDownloaderType(entry.url),
         video_info: {
           zl_id: entry.id,
           zl_name: '手动添加',
           record_url: entry.url,
           kc_id: entry.id,
           kc_name: entry.title || '手动添加下载',
+        },
+        external_info: entry.externalInfo ?? {
+          source_platform: entry.platform ?? detectSourcePlatform(entry.url),
+          webpage_url: entry.url,
+          title: entry.title,
+          requires_auth: false,
         },
       }));
 
@@ -288,6 +361,12 @@ export const ManualInputPanel: React.FC = () => {
                   </div>
                   {entry.title && entry.title !== entry.url && (
                     <div className='text-xs text-gray-500 truncate'>{entry.url}</div>
+                  )}
+                  {entry.platform && (
+                    <div className='text-xs text-gray-500 mt-0.5'>
+                      {platformLabel(entry.platform)} ·{' '}
+                      {inferDownloaderType(entry.url) === 'ytdlp' ? 'yt-dlp' : '原生下载器'}
+                    </div>
                   )}
                   {entry.error && <div className='text-xs text-red-500 mt-0.5'>{entry.error}</div>}
                 </div>

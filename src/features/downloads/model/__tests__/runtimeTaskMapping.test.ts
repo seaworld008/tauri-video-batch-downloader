@@ -25,11 +25,29 @@ describe('runtimeTaskMapping', () => {
         output_path: '/tmp/video.mp4',
         created_at: '2026-04-16T00:00:00.000Z',
         updated_at: '2026-04-16T00:00:00.000Z',
-        downloader_type: 'youtube',
+        downloader_type: 'ytdlp',
       } as any)
     ).toMatchObject({
       status: 'Downloading',
-      downloader_type: 'Youtube',
+      downloader_type: 'YtDlp',
+    });
+  });
+
+  it('normalizes legacy youtube downloader values to ytdlp', () => {
+    expect(
+      normalizeBackendTask({
+        id: 'task-youtube',
+        url: 'https://youtu.be/example',
+        title: 'Example',
+        status: 'Pending',
+        progress: 0,
+        output_path: '/tmp',
+        created_at: '2026-04-16T00:00:00.000Z',
+        updated_at: '2026-04-16T00:00:00.000Z',
+        downloader_type: 'Youtube',
+      })
+    ).toMatchObject({
+      downloader_type: 'ytdlp',
     });
   });
 

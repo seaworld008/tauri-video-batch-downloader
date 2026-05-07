@@ -164,6 +164,8 @@ yarn.lock
 
 # Tauri specific
 src-tauri/gen/
+/src-tauri/binaries/*
+!/src-tauri/binaries/README.md
 
 # Local AI workflow artifacts
 .planning/

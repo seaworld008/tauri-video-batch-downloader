@@ -121,6 +121,7 @@ interface DownloadState {
   isLoading: boolean;
 
   selectedTasks: string[];
+  recoveredSessionTaskIds: string[];
 
   // \u6570\u636e\u9a8c\u8bc1\u72b6\u6001
 
@@ -186,6 +187,7 @@ interface DownloadState {
   toggleTaskSelection: (taskId: string) => void;
   selectAllTasks: () => void;
   clearSelection: () => void;
+  clearRecoveredSession: () => void;
   // Actions - \u8fc7\u6ee4\u548c\u641c\u7d22
 
   setFilterStatus: (status: TaskStatus | 'all') => void;
@@ -266,12 +268,14 @@ export const useDownloadStore = create<DownloadState>()(
     isImporting: false,
 
     isLoading: false,
+    recoveredSessionTaskIds: [],
 
     ...DEFAULT_DOWNLOAD_VIEW_STATE,
     ...DEFAULT_IMPORT_SESSION_STATE,
 
     ...createDownloadViewStateActions(set),
     ...createImportSessionStateActions(set),
+    clearRecoveredSession: () => set({ recoveredSessionTaskIds: [] }),
 
     refreshTasks: async () => {
       const rawTasks = await fetchRuntimeTasks(getDownloadTasksCommand);
@@ -641,7 +645,7 @@ export const useDownloadStore = create<DownloadState>()(
       reportFrontendDiagnosticIfEnabled('info', 'download_store:initialize:validation:start');
 
       try {
-        await executeInitializeStoreStoreAction({
+        const result = await executeInitializeStoreStoreAction({
           validationStartTime: performance.now(),
           queryTasks: getDownloadTasksCommand,
           queryStats: getDownloadStatsCommand,
@@ -655,6 +659,7 @@ export const useDownloadStore = create<DownloadState>()(
           applySuccessPatch: patch => set(patch),
           applyFailurePatch: patch => set(patch),
         });
+        set({ recoveredSessionTaskIds: result.validatedTasks.map(task => task.id) });
       } catch (error) {
         handleError('初始化下载管理器', error);
       }

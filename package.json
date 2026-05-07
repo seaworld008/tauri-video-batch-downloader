@@ -8,9 +8,9 @@
     "dev:clean": "powershell -ExecutionPolicy Bypass -File ./scripts/dev.ps1 -Clean",
     "dev:check": "powershell -ExecutionPolicy Bypass -File ./scripts/dev.ps1 -Check",
     "start": "./scripts/quick-start.bat",
-    "build": "tauri build",
-    "build:local": "tauri build --config src-tauri/tauri.conf.local.json --features local-logging",
-    "build:prod": "tauri build",
+    "build": "pnpm sidecars:check && tauri build",
+    "build:local": "pnpm sidecars:check -- --allow-placeholders && tauri build --config src-tauri/tauri.conf.local.json --features local-logging",
+    "build:prod": "pnpm sidecars:check && tauri build",
     "vite": "vite",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -20,7 +20,12 @@
     "test:integration": "vitest --config vitest.config.integration.ts",
     "test:integration:ui": "vitest --config vitest.config.integration.ts --ui",
     "test:e2e": "vitest run --config vitest.config.integration.ts",
+    "test:tauri-smoke": "node scripts/tauri-mcp-smoke.mjs",
     "test:all": "pnpm lint && pnpm type-check && pnpm exec vitest run && pnpm exec vitest run --config vitest.config.integration.ts && cargo fmt --manifest-path src-tauri/Cargo.toml --all --check && cargo test --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "sidecars:check": "node scripts/validate-sidecars.mjs",
+    "sidecars:check:all": "node scripts/validate-sidecars.mjs --all",
+    "sidecars:check:local": "node scripts/validate-sidecars.mjs --allow-placeholders",
+    "sidecars:prepare": "node scripts/prepare-sidecars.mjs",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext ts,tsx --fix",
     "format": "prettier --write .",
@@ -76,6 +81,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.16",
+    "ffmpeg-static": "^5.2.0",
     "husky": "^9.1.7",
     "jsdom": "^25.0.1",
     "lint-staged": "^15.5.2",
@@ -84,7 +90,8 @@
     "typescript": "^5.7.2",
     "vite": "^7.3.2",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.5",
+    "ws": "^8.18.3"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

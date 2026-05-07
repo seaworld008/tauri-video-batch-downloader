@@ -4,7 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsView } from '../SettingsView';
 
 const systemCommandMocks = vi.hoisted(() => ({
+  checkExternalToolUpdatesCommand: vi.fn(),
+  clearExternalToolOverrideCommand: vi.fn(),
+  getExternalToolStatusCommand: vi.fn(),
+  rollbackExternalToolCommand: vi.fn(),
+  selectExternalToolBinaryCommand: vi.fn(),
   selectOutputDirectoryCommand: vi.fn(),
+  setExternalToolOverrideCommand: vi.fn(),
+  updateExternalToolCommand: vi.fn(),
 }));
 
 const frontendLoggingMocks = vi.hoisted(() => ({
@@ -99,6 +106,29 @@ describe('SettingsView', () => {
     vi.clearAllMocks();
     configState.config.download.output_directory = '/default-downloads';
     frontendLoggingMocks.reportFrontendIssue.mockReset();
+    systemCommandMocks.getExternalToolStatusCommand.mockResolvedValue([
+      {
+        id: 'yt-dlp',
+        display_name: 'yt-dlp',
+        status: 'available',
+        source: 'bundled_sidecar',
+        path: '/app/yt-dlp',
+        current_version: '2026.01.01',
+        update_available: false,
+        can_auto_update: true,
+        can_rollback: true,
+      },
+      {
+        id: 'ffmpeg',
+        display_name: 'FFmpeg',
+        status: 'missing',
+        source: 'path_fallback',
+        path: 'ffmpeg',
+        update_available: false,
+        can_auto_update: false,
+        can_rollback: false,
+      },
+    ]);
   });
 
   it('selects default download directory through the shared system command seam', async () => {
@@ -136,5 +166,75 @@ describe('SettingsView', () => {
       );
     });
     expect(notifyMocks.notify.error).toHaveBeenCalledWith('选择目录失败', expect.any(Error));
+  });
+
+  it('checks external tool updates from settings', async () => {
+    const user = userEvent.setup();
+    systemCommandMocks.checkExternalToolUpdatesCommand.mockResolvedValueOnce([
+      {
+        id: 'yt-dlp',
+        display_name: 'yt-dlp',
+        status: 'available',
+        source: 'managed',
+        path: '/managed/yt-dlp',
+        current_version: '2026.01.01',
+        latest_version: '2026.02.01',
+        update_available: true,
+        can_auto_update: true,
+        can_rollback: true,
+      },
+    ]);
+
+    render(<SettingsView />);
+
+    await user.click(await screen.findByRole('button', { name: '检查更新' }));
+
+    await waitFor(() => {
+      expect(systemCommandMocks.checkExternalToolUpdatesCommand).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('最新 2026.02.01')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        '更新会先校验 checksum，再执行兼容性探测；探测失败不会替换当前可用版本。'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('explains the manual trusted-binary path for ffmpeg updates', async () => {
+    render(<SettingsView />);
+
+    expect(
+      await screen.findByText(
+        'FFmpeg 采用可信本地文件手动更新；选择后会先执行版本和兼容性探测，通过后才切换。'
+      )
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '选择新版文件' })).toBeInTheDocument();
+  });
+
+  it('rolls back a managed external tool version from settings', async () => {
+    const user = userEvent.setup();
+    systemCommandMocks.rollbackExternalToolCommand.mockResolvedValueOnce({
+      id: 'yt-dlp',
+      display_name: 'yt-dlp',
+      status: 'available',
+      source: 'managed',
+      path: '/managed/yt-dlp',
+      current_version: '2026.01.01',
+      update_available: false,
+      can_auto_update: true,
+      can_rollback: true,
+    });
+
+    render(<SettingsView />);
+
+    await user.click(await screen.findByRole('button', { name: '回退上一版' }));
+
+    await waitFor(() => {
+      expect(systemCommandMocks.rollbackExternalToolCommand).toHaveBeenCalledWith('yt-dlp');
+    });
+    expect(notifyMocks.notify.success).toHaveBeenCalledWith(
+      '工具已回退',
+      'yt-dlp 已切回上一个 App 管理版本'
+    );
   });
 });

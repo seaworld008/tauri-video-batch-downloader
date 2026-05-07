@@ -29,6 +29,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": [
+      "binaries/yt-dlp",
+      "binaries/ffmpeg"
+    ],
     "resources": [],
     "copyright": "© 2024 Video Downloader Pro Team",
     "category": "Productivity",

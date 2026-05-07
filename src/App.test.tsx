@@ -6,6 +6,10 @@ const appMocks = vi.hoisted(() => ({
   initializeDownloadEventBridge: vi.fn(() => Promise.resolve()),
   initializeStore: vi.fn(() => Promise.resolve()),
   loadConfig: vi.fn(() => Promise.resolve()),
+  checkExternalToolUpdatesCommand: vi.fn(() => Promise.resolve([])),
+  notify: {
+    warning: vi.fn(),
+  },
   reportFrontendIssue: vi.fn(),
 }));
 
@@ -36,17 +40,29 @@ vi.mock('./stores/configStore', () => ({
     selector({ loadConfig: appMocks.loadConfig }),
 }));
 
+vi.mock('./stores/uiStore', () => ({
+  notify: appMocks.notify,
+}));
+
+vi.mock('./features/downloads/api/systemCommands', () => ({
+  checkExternalToolUpdatesCommand: appMocks.checkExternalToolUpdatesCommand,
+}));
+
 vi.mock('./utils/frontendLogging', () => ({
   reportFrontendIssue: appMocks.reportFrontendIssue,
 }));
 
 describe('App bootstrap', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     appMocks.initializeDownloadEventBridge.mockClear();
     appMocks.initializeStore.mockReset();
     appMocks.initializeStore.mockResolvedValue(undefined);
     appMocks.loadConfig.mockReset();
     appMocks.loadConfig.mockResolvedValue(undefined);
+    appMocks.checkExternalToolUpdatesCommand.mockReset();
+    appMocks.checkExternalToolUpdatesCommand.mockResolvedValue([]);
+    appMocks.notify.warning.mockClear();
     appMocks.reportFrontendIssue.mockReset();
   });
 
@@ -99,5 +115,53 @@ describe('App bootstrap', () => {
       'app_bootstrap:load_config_failed',
       expect.any(Error)
     );
+  });
+
+  it('prompts when external tools have newer managed versions', async () => {
+    appMocks.checkExternalToolUpdatesCommand.mockResolvedValueOnce([
+      {
+        id: 'yt-dlp',
+        display_name: 'yt-dlp',
+        status: 'available',
+        source: 'managed',
+        path: '/tmp/yt-dlp',
+        current_version: '2026.01.01',
+        latest_version: '2026.05.01',
+        update_available: true,
+        can_auto_update: true,
+        can_rollback: false,
+        message: '可用',
+      },
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unified-view')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(appMocks.notify.warning).toHaveBeenCalledWith(
+        '外部工具可更新',
+        'yt-dlp 2026.01.01 -> 2026.05.01。可在设置中手动更新。',
+        8000
+      );
+    });
+  });
+
+  it('throttles automatic external tool update checks', async () => {
+    window.localStorage.setItem(
+      'video-downloader:last-external-tool-update-check',
+      String(Date.now())
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unified-view')).toBeInTheDocument();
+    });
+
+    expect(appMocks.checkExternalToolUpdatesCommand).not.toHaveBeenCalled();
+    expect(appMocks.notify.warning).not.toHaveBeenCalled();
   });
 });
