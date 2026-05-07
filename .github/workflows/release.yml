@@ -306,7 +306,23 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
       - name: Build Tauri app
-        run: pnpm tauri build --target ${{ matrix.platform.build_target }} --bundles ${{ matrix.platform.bundles }}
+        shell: bash
+        run: |
+          for var in \
+            TAURI_PRIVATE_KEY \
+            TAURI_KEY_PASSWORD \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID; do
+            if [[ -z "${!var:-}" ]]; then
+              unset "$var"
+            fi
+          done
+
+          pnpm tauri build --target ${{ matrix.platform.build_target }} --bundles ${{ matrix.platform.bundles }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
