@@ -75,8 +75,8 @@ jobs:
             PRERELEASE=false
           fi
 
-          WINDOWS='{"key":"windows-x64","family":"windows","name":"Windows 10+ x64","os":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","build_target":"x86_64-pc-windows-msvc","sidecar_targets":"x86_64-pc-windows-msvc"}'
-          MACOS='{"key":"macos-universal","family":"macos","name":"macOS Universal","os":"macos-latest","rust_targets":"x86_64-apple-darwin,aarch64-apple-darwin","build_target":"universal-apple-darwin","sidecar_targets":"x86_64-apple-darwin,aarch64-apple-darwin"}'
+          WINDOWS='{"key":"windows-x64","family":"windows","name":"Windows 10+ x64","os":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","build_target":"x86_64-pc-windows-msvc","sidecar_targets":"x86_64-pc-windows-msvc","bundles":"nsis"}'
+          MACOS='{"key":"macos-universal","family":"macos","name":"macOS Universal","os":"macos-latest","rust_targets":"x86_64-apple-darwin,aarch64-apple-darwin","build_target":"universal-apple-darwin","sidecar_targets":"x86_64-apple-darwin,aarch64-apple-darwin","bundles":"dmg"}'
 
           if [[ "${{ github.event_name }}" == "push" || "${{ inputs.platforms }}" == "all" ]]; then
             MATRIX="[$WINDOWS,$MACOS]"
@@ -306,7 +306,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
       - name: Build Tauri app
-        run: pnpm tauri build --target ${{ matrix.platform.build_target }}
+        run: pnpm tauri build --target ${{ matrix.platform.build_target }} --bundles ${{ matrix.platform.bundles }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -426,7 +426,7 @@ jobs:
 
             ### Downloads
 
-            - Windows 10+ x64: `.msi` or `.exe`
+            - Windows 10+ x64: `.exe`
             - macOS Universal: `.dmg` for Apple Silicon and Intel Macs
 
             ### Checksums

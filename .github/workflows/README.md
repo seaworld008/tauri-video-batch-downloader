@@ -56,15 +56,15 @@ Release stages:
 
 Supported hosted runners:
 
-| Package             | Runner           | Build target             | Sidecar targets                               |
-| ------------------- | ---------------- | ------------------------ | --------------------------------------------- |
-| Windows 10+ x64     | `windows-latest` | `x86_64-pc-windows-msvc` | `x86_64-pc-windows-msvc`                      |
-| macOS Universal DMG | `macos-latest`   | `universal-apple-darwin` | `x86_64-apple-darwin`, `aarch64-apple-darwin` |
+| Package                   | Runner           | Build target             | Bundle | Sidecar targets                               |
+| ------------------------- | ---------------- | ------------------------ | ------ | --------------------------------------------- |
+| Windows 10+ x64 installer | `windows-latest` | `x86_64-pc-windows-msvc` | `nsis` | `x86_64-pc-windows-msvc`                      |
+| macOS Universal DMG       | `macos-latest`   | `universal-apple-darwin` | `dmg`  | `x86_64-apple-darwin`, `aarch64-apple-darwin` |
 
 Important details:
 
 - Release packaging intentionally produces only two downloadable packages:
-  Windows 10+ x64 and macOS universal.
+  Windows 10+ x64 `.exe` and macOS universal `.dmg`.
 - The macOS universal build installs both Apple Rust targets and runs
   `pnpm tauri build --target universal-apple-darwin`, producing one `.dmg` for
   Apple Silicon and Intel Macs.
