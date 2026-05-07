@@ -142,6 +142,18 @@ jobs:
             printf '<!doctype html><html><body></body></html>\n' > dist/index.html
           fi
 
+      - name: Prepare Linux sidecar placeholders
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          for name in yt-dlp ffmpeg; do
+            path="src-tauri/binaries/${name}-x86_64-unknown-linux-gnu"
+            if [ ! -f "$path" ]; then
+              printf '#!/usr/bin/env sh\nexit 0\n' > "$path"
+              chmod +x "$path"
+            fi
+          done
+
       - name: Run Rust clippy
         run: cargo clippy -- -D warnings
         working-directory: ./src-tauri
@@ -183,6 +195,18 @@ jobs:
           if [ ! -f dist/index.html ]; then
             printf '<!doctype html><html><body></body></html>\n' > dist/index.html
           fi
+
+      - name: Prepare Linux sidecar placeholders
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          for name in yt-dlp ffmpeg; do
+            path="src-tauri/binaries/${name}-x86_64-unknown-linux-gnu"
+            if [ ! -f "$path" ]; then
+              printf '#!/usr/bin/env sh\nexit 0\n' > "$path"
+              chmod +x "$path"
+            fi
+          done
 
       - name: Run Rust tests
         run: cargo test
@@ -236,6 +260,18 @@ jobs:
 
       - name: Build frontend
         run: pnpm exec vite build
+
+      - name: Prepare Linux sidecar placeholders
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          for name in yt-dlp ffmpeg; do
+            path="src-tauri/binaries/${name}-x86_64-unknown-linux-gnu"
+            if [ ! -f "$path" ]; then
+              printf '#!/usr/bin/env sh\nexit 0\n' > "$path"
+              chmod +x "$path"
+            fi
+          done
 
       - name: Build Tauri app (debug)
         run: pnpm tauri build --debug
