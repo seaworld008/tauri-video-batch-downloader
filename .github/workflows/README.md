@@ -29,7 +29,7 @@ Quota controls:
 - Frontend and Rust jobs are gated by the fast preflight, so formatting or lint
   failures stop before heavy jobs start.
 - Rust clippy runs before Rust tests to catch static failures sooner.
-- Full Windows/macOS/Linux packaging is removed from regular CI and handled by
+- Windows and macOS packaging is removed from regular CI and handled by
   `release.yml`.
 - Coverage upload is not part of every CI run; add it back as a manual or
   scheduled workflow if project coverage reporting becomes a release gate.
@@ -38,9 +38,12 @@ Quota controls:
 
 Triggers:
 
-- Pushing a `v*` tag builds all platforms.
-- Manual dispatch builds an existing tag and lets the operator choose `all`,
-  `windows`, `macos`, or `linux`.
+- Pushing a `v*` tag builds both release packages.
+- Regular branch pushes and pull requests do not run release packaging; they
+  stay on the cheaper CI checks in `ci.yml`.
+- Manual dispatch rebuilds an existing tag and defaults to `windows` so a tester
+  can quickly download a Windows installer without spending all platform
+  minutes. Operators can still choose `macos` or `all`.
 
 Release stages:
 
@@ -53,16 +56,18 @@ Release stages:
 
 Supported hosted runners:
 
-| Target              | Runner           | Rust target                |
-| ------------------- | ---------------- | -------------------------- |
-| Windows x64         | `windows-latest` | `x86_64-pc-windows-msvc`   |
-| macOS Intel         | `macos-15-intel` | `x86_64-apple-darwin`      |
-| macOS Apple Silicon | `macos-14`       | `aarch64-apple-darwin`     |
-| Linux x64           | `ubuntu-22.04`   | `x86_64-unknown-linux-gnu` |
+| Package             | Runner           | Build target             | Sidecar targets                               |
+| ------------------- | ---------------- | ------------------------ | --------------------------------------------- |
+| Windows 10+ x64     | `windows-latest` | `x86_64-pc-windows-msvc` | `x86_64-pc-windows-msvc`                      |
+| macOS Universal DMG | `macos-latest`   | `universal-apple-darwin` | `x86_64-apple-darwin`, `aarch64-apple-darwin` |
 
 Important details:
 
-- Linux uses Tauri v2's `libwebkit2gtk-4.1-dev` dependency.
+- Release packaging intentionally produces only two downloadable packages:
+  Windows 10+ x64 and macOS universal.
+- The macOS universal build installs both Apple Rust targets and runs
+  `pnpm tauri build --target universal-apple-darwin`, producing one `.dmg` for
+  Apple Silicon and Intel Macs.
 - The frontend build step is `pnpm exec vite build`, so the workflow does not
   accidentally run a nested `tauri build` before the matrix build.
 - `strategy.fail-fast` is enabled for release builds to stop sibling platform
@@ -73,7 +78,7 @@ Important details:
 Manual release dry run:
 
 ```bash
-gh workflow run release.yml -f tag=v1.2.3 -f platforms=linux -f publish=false
+gh workflow run release.yml -f tag=v1.2.3 -f platforms=windows -f publish=false
 ```
 
 Manual draft release publish:
@@ -81,6 +86,18 @@ Manual draft release publish:
 ```bash
 gh workflow run release.yml -f tag=v1.2.3 -f platforms=all -f publish=true
 ```
+
+Tag-triggered packaging:
+
+```bash
+git tag -a v1.2.3 -m "Release v1.2.3"
+git push origin v1.2.3
+```
+
+For a Windows test build, open the completed `Release` workflow run and download
+the `release-windows-x64` artifact. For a macOS test build, download
+`release-macos-universal`. If the tag run publishes successfully, the same
+installer files are also attached to the draft GitHub Release.
 
 ## Security Audit (`security.yml`)
 

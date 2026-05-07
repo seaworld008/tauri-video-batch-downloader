@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { gunzipSync } from 'node:zlib';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -101,6 +102,15 @@ function isWindowsTarget(target) {
 
 function currentHostCanPrepareTarget(target) {
   return detectCurrentTarget() === target;
+}
+
+function ffmpegStaticTarget(target) {
+  if (target === 'x86_64-pc-windows-msvc') return { platform: 'win32', arch: 'x64' };
+  if (target === 'x86_64-apple-darwin') return { platform: 'darwin', arch: 'x64' };
+  if (target === 'aarch64-apple-darwin') return { platform: 'darwin', arch: 'arm64' };
+  if (target === 'x86_64-unknown-linux-gnu') return { platform: 'linux', arch: 'x64' };
+
+  throw new Error(`Unsupported ffmpeg-static target: ${target}`);
 }
 
 async function fetchJson(url, timeoutMs) {
@@ -223,6 +233,22 @@ function prepareFfmpeg({ target, outputPath }) {
   return `copied ffmpeg-static from ${ffmpegPath}`;
 }
 
+async function downloadFfmpegStatic({ target, outputPath, timeoutMs }) {
+  const { platform, arch } = ffmpegStaticTarget(target);
+  const pkgConfig = require('ffmpeg-static/package.json')['ffmpeg-static'];
+  const release =
+    process.env[pkgConfig['binary-release-tag-env-var']] || pkgConfig['binary-release-tag'];
+  const downloadsUrl =
+    process.env.FFMPEG_BINARIES_URL ||
+    'https://github.com/eugeneware/ffmpeg-static/releases/download';
+  const executableBaseName = pkgConfig['executable-base-name'];
+  const downloadUrl = `${downloadsUrl}/${release}/${executableBaseName}-${platform}-${arch}.gz`;
+  const binary = gunzipSync(await fetchBuffer(downloadUrl, timeoutMs));
+
+  writeExecutable(outputPath, binary);
+  return `downloaded ffmpeg-static ${release} for ${platform}/${arch}`;
+}
+
 function copyExecutable(source, destination) {
   if (!fs.existsSync(source)) {
     throw new Error(`Sidecar source does not exist: ${source}`);
@@ -260,10 +286,16 @@ async function run() {
 
   if (!options.skipFfmpeg) {
     const ffmpegPath = path.join(binariesDir, sidecarFileName('ffmpeg', options.target));
-    const summary = prepareFfmpeg({
-      target: options.target,
-      outputPath: ffmpegPath,
-    });
+    const summary = currentHostCanPrepareTarget(options.target)
+      ? prepareFfmpeg({
+          target: options.target,
+          outputPath: ffmpegPath,
+        })
+      : await downloadFfmpegStatic({
+          target: options.target,
+          outputPath: ffmpegPath,
+          timeoutMs: options.timeoutMs,
+        });
     console.log(`ffmpeg: ${summary}`);
   }
 }
