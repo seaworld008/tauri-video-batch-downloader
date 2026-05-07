@@ -36,8 +36,9 @@ pub(crate) async fn get_youtube_info_internal(url: &str) -> AppResult<YoutubeVid
 async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
     crate::utils::validation::assert_http_url(url).map_err(|e| AppError::Youtube(e.to_string()))?;
 
-    let output = tokio::process::Command::new("yt-dlp")
-        .args(["--dump-json", "--no-warnings", "--no-playlist", url])
+    let (tool_path, _) = crate::core::external_tools::resolve_tool_path("yt-dlp");
+    let output = tokio::process::Command::new(&tool_path)
+        .args(["--dump-single-json", "--no-warnings", "--no-playlist", url])
         .output()
         .await
         .map_err(|e| AppError::Youtube(format!("Failed to run yt-dlp: {}", e)))?;
@@ -207,9 +208,15 @@ fn parse_single_subtitle_from_json(
 }
 
 fn is_valid_youtube_url(url: &str) -> bool {
-    url.contains("youtube.com/watch")
-        || url.contains("youtu.be/")
-        || url.contains("youtube.com/embed/")
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    let path = parsed.path();
+
+    (host == "youtu.be" && !path.trim_start_matches('/').is_empty())
+        || ((host == "youtube.com" || host.ends_with(".youtube.com"))
+            && (path == "/watch" || path.starts_with("/embed/")))
 }
 
 fn extract_youtube_id(url: &str) -> Option<String> {
@@ -297,6 +304,9 @@ mod tests {
             "https://www.youtube.com/embed/dQw4w9WgXcQ"
         ));
         assert!(!is_valid_youtube_url("https://example.com/video"));
+        assert!(!is_valid_youtube_url(
+            "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ"
+        ));
     }
 
     #[test]
