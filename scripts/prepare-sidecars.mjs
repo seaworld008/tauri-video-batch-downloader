@@ -140,9 +140,16 @@ async function fetchBuffer(url, timeoutMs) {
 async function fetchWithTimeout(url, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = { 'user-agent': USER_AGENT };
+  const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (githubToken && new URL(url).hostname === 'api.github.com') {
+    headers.authorization = `Bearer ${githubToken}`;
+    headers.accept = 'application/vnd.github+json';
+  }
+
   try {
     return await fetch(url, {
-      headers: { 'user-agent': USER_AGENT },
+      headers,
       signal: controller.signal,
     });
   } finally {
