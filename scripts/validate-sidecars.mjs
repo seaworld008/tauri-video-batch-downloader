@@ -10,7 +10,12 @@ const DEFAULT_CONFIG = 'src-tauri/tauri.conf.json';
 const DEFAULT_CAPABILITY = 'src-tauri/capabilities/migrated.json';
 const DEFAULT_BINARIES_DIR = 'src-tauri/binaries';
 const SIDECARS = ['yt-dlp', 'ffmpeg'];
-const RELEASE_TARGETS = ['x86_64-pc-windows-msvc', 'x86_64-apple-darwin', 'aarch64-apple-darwin'];
+const RELEASE_TARGETS = [
+  'x86_64-pc-windows-msvc',
+  'x86_64-apple-darwin',
+  'aarch64-apple-darwin',
+  'universal-apple-darwin',
+];
 
 const MIN_REAL_BINARY_BYTES = {
   'yt-dlp': 1024 * 1024,

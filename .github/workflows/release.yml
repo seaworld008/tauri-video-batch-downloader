@@ -245,6 +245,18 @@ jobs:
           for target in "${targets[@]}"; do
             pnpm sidecars:prepare --target "$target"
           done
+          if [[ "${{ matrix.platform.build_target }}" == "universal-apple-darwin" ]]; then
+            for name in yt-dlp ffmpeg; do
+              x64="src-tauri/binaries/${name}-x86_64-apple-darwin"
+              arm64="src-tauri/binaries/${name}-aarch64-apple-darwin"
+              universal="src-tauri/binaries/${name}-universal-apple-darwin"
+              if ! lipo -create "$x64" "$arm64" -output "$universal"; then
+                echo "lipo could not merge $name; copying arm64 sidecar as universal"
+                cp "$arm64" "$universal"
+              fi
+              chmod +x "$universal"
+            done
+          fi
 
       - name: Validate sidecar binaries
         shell: bash
@@ -254,6 +266,7 @@ jobs:
           for target in "${targets[@]}"; do
             args+=(--target "$target")
           done
+          args+=(--target "${{ matrix.platform.build_target }}")
           node scripts/validate-sidecars.mjs "${args[@]}"
 
       - name: Import Windows certificate
