@@ -5,7 +5,6 @@
 
 use std::path::Path;
 use tauri::{AppHandle, State};
-use tokio::process::Command;
 use tracing::{error, info};
 
 use crate::core::download_provider::should_probe_with_ytdlp_for_info;
@@ -14,6 +13,7 @@ use crate::core::ytdlp_downloader::YtDlpDownloader;
 #[cfg(test)]
 use crate::infra::capability_service::ToolCapabilityService;
 use crate::utils::logging;
+use crate::utils::process::hidden_command;
 use crate::AppState;
 
 #[tauri::command]
@@ -122,7 +122,7 @@ pub async fn get_video_info(url: String) -> Result<serde_json::Value, String> {
 // Implementation functions
 
 async fn run_clipboard_command(program: &str, args: &[&str]) -> AppResult<String> {
-    let output = Command::new(program)
+    let output = hidden_command(program)
         .args(args)
         .output()
         .await
@@ -198,7 +198,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
 
     #[cfg(target_os = "windows")]
     {
-        tokio::process::Command::new("explorer.exe")
+        hidden_command("explorer.exe")
             .arg(folder_path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
@@ -206,7 +206,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
 
     #[cfg(target_os = "macos")]
     {
-        tokio::process::Command::new("open")
+        hidden_command("open")
             .arg(folder_path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
@@ -214,7 +214,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
 
     #[cfg(target_os = "linux")]
     {
-        tokio::process::Command::new("xdg-open")
+        hidden_command("xdg-open")
             .arg(folder_path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;

@@ -6,6 +6,7 @@
 use tracing::{debug, warn};
 
 use crate::core::models::{AppError, AppResult, SubtitleTrack, VideoFormat, YoutubeVideoInfo};
+use crate::utils::process::hidden_command;
 
 // Implementation functions
 
@@ -37,7 +38,7 @@ async fn get_video_info_with_ytdlp(url: &str) -> AppResult<YoutubeVideoInfo> {
     crate::utils::validation::assert_http_url(url).map_err(|e| AppError::Youtube(e.to_string()))?;
 
     let (tool_path, _) = crate::core::external_tools::resolve_tool_path("yt-dlp");
-    let output = tokio::process::Command::new(&tool_path)
+    let output = hidden_command(&tool_path)
         .args(["--dump-single-json", "--no-warnings", "--no-playlist", url])
         .output()
         .await

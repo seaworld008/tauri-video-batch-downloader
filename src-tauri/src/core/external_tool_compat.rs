@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tokio::process::Command;
+
+use crate::utils::process::hidden_command;
 
 const YTDLP_REQUIRED_FLAGS: &[&str] = &[
     "--dump-single-json",
@@ -20,7 +21,7 @@ pub(crate) async fn validate_tool_contract(path: &Path, tool_id: &str) -> Result
 }
 
 async fn validate_ytdlp_contract(path: &Path) -> Result<()> {
-    let output = Command::new(path).arg("--help").output().await?;
+    let output = hidden_command(path).arg("--help").output().await?;
     if !output.status.success() {
         return Err(anyhow!(
             "version_unsupported: yt-dlp compatibility probe failed"
@@ -36,7 +37,7 @@ async fn validate_ytdlp_contract(path: &Path) -> Result<()> {
 }
 
 async fn validate_ffmpeg_contract(path: &Path) -> Result<()> {
-    let output = Command::new(path).arg("-version").output().await?;
+    let output = hidden_command(path).arg("-version").output().await?;
     if !output.status.success() {
         return Err(anyhow!(
             "version_unsupported: ffmpeg compatibility probe failed"

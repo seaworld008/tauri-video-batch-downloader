@@ -1,4 +1,4 @@
-use tokio::process::Command;
+use crate::utils::process::hidden_command;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -7,7 +7,7 @@ pub struct ToolCapabilityService;
 #[allow(dead_code)]
 impl ToolCapabilityService {
     pub async fn is_available(tool_name: &str, args: &[&str]) -> Result<bool, String> {
-        let output = Command::new(tool_name).args(args).output().await;
+        let output = hidden_command(tool_name).args(args).output().await;
 
         match output {
             Ok(output) => Ok(output.status.success()),

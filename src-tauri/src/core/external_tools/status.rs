@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tokio::process::Command;
 
 use crate::core::external_tool_compat::validate_tool_contract;
+use crate::utils::process::hidden_command;
 
 use super::registry::{
     display_name, ExternalToolSource, ExternalToolStatus, ExternalToolStatusKind,
@@ -62,7 +62,7 @@ pub(crate) async fn read_tool_version(path: &Path, tool_id: &str) -> Result<Stri
     } else {
         "--version"
     };
-    let output = Command::new(path).arg(arg).output().await?;
+    let output = hidden_command(path).arg(arg).output().await?;
     if !output.status.success() {
         return Err(anyhow!("external_tool_failed: version check failed"));
     }

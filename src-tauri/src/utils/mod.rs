@@ -6,6 +6,7 @@ pub mod encoding;
 pub mod file_utils;
 pub mod logging;
 pub mod network;
+pub mod process;
 pub mod validation;
 
 // Re-export commonly used utilities
@@ -13,4 +14,5 @@ pub use encoding::*;
 pub use file_utils::*;
 pub use logging::*;
 pub use network::*;
+pub use process::*;
 pub use validation::*;

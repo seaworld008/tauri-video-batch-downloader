@@ -320,7 +320,6 @@ mod windows_webview {
         fs, mem,
         os::windows::ffi::OsStrExt,
         path::{Path, PathBuf},
-        process::Command,
         thread,
         time::Duration,
     };
@@ -449,7 +448,7 @@ mod windows_webview {
 
     fn install_runtime() -> Result<(), String> {
         let installer_path = download_bootstrapper()?;
-        let status = Command::new(&installer_path)
+        let status = crate::utils::process::hidden_std_command(&installer_path)
             .args(["/install", "/silent", "/norestart"])
             .status()
             .map_err(|err| format!("无法启动 WebView2 安装程序: {}", err))?;

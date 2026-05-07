@@ -9,7 +9,6 @@ use std::sync::{
     Arc,
 };
 use std::time::Instant;
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
 
@@ -21,6 +20,7 @@ use crate::core::ytdlp_support::{
     spawn_line_reader,
 };
 pub use crate::core::ytdlp_support::{parse_progress_line, YtDlpDownloaderConfig};
+use crate::utils::process::hidden_command;
 
 #[derive(Debug, Clone)]
 pub struct YtDlpDownloader {
@@ -59,7 +59,7 @@ impl YtDlpDownloader {
     pub async fn probe_video_info(&self, url: &str) -> Result<ExternalVideoInfo> {
         crate::utils::validation::assert_http_url(url)?;
         let tool = self.resolve_ytdlp_command();
-        let output = Command::new(&tool)
+        let output = hidden_command(&tool)
             .args(Self::build_probe_args(url))
             .output()
             .await;
@@ -103,7 +103,7 @@ impl YtDlpDownloader {
             Some(&ffmpeg),
         );
 
-        let mut child = Command::new(&ytdlp)
+        let mut child = hidden_command(&ytdlp)
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -209,7 +209,7 @@ impl YtDlpDownloader {
             .or_else(|| env_path("VDP_FFMPEG_PATH"))
             .or_else(|| sidecar_path("ffmpeg"))
             .unwrap_or_else(|| PathBuf::from(exe_name("ffmpeg")));
-        match Command::new(&path).arg("-version").output().await {
+        match hidden_command(&path).arg("-version").output().await {
             Ok(output) if output.status.success() => Ok(path),
             Ok(_) => Err(anyhow::anyhow!(
                 "ffmpeg_missing: ffmpeg version check failed"
