@@ -206,6 +206,45 @@ async fn runtime_resume_paused_task_queues_when_slots_full() -> AppResult<()> {
 }
 
 #[tokio::test]
+async fn runtime_start_paused_active_task_resumes_existing_worker() -> AppResult<()> {
+    let temp_dir = TempDir::new().unwrap();
+    let state_path = temp_dir.path().join("download_state.json");
+    let mut manager = DownloadManager::new_with_state_path(DownloadConfig::default(), state_path)?;
+
+    let task_id = manager
+        .add_task(
+            "https://example.com/paused-active.mp4".to_string(),
+            "./downloads".to_string(),
+        )
+        .await?;
+    if let Some(task) = manager.tasks.get_mut(&task_id) {
+        task.status = TaskStatus::Paused;
+        task.paused_at = Some(chrono::Utc::now());
+        task.paused_from_active = true;
+    }
+
+    let handle = tokio::spawn(async {
+        std::future::pending::<()>().await;
+    });
+    manager.active_downloads.insert(task_id.clone(), handle);
+
+    let manager = Arc::new(RwLock::new(manager));
+    DownloadManager::runtime_start_download(&manager, &task_id).await?;
+
+    let mut guard = manager.write().await;
+    let task = guard.tasks.get(&task_id).expect("task must exist");
+    assert_eq!(task.status, TaskStatus::Downloading);
+    assert_eq!(task.paused_at, None);
+    assert!(!task.paused_from_active);
+
+    if let Some(handle) = guard.active_downloads.remove(&task_id) {
+        handle.abort();
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn runtime_cancel_queued_task_removes_queue_entry_and_emits_event() -> AppResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("download_state.json");

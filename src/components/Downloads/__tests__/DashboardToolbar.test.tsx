@@ -213,6 +213,52 @@ describe('DashboardToolbar', () => {
     expect(storeActions.applyOutputDirectoryOverride).not.toHaveBeenCalled();
   });
 
+  it('starts selected tasks sequentially with concurrency toast suppressed', async () => {
+    const user = userEvent.setup();
+    storeActions.startDownload.mockResolvedValue('started');
+    storeState.selectedTasks = ['partial-task', 'fresh-task'];
+    storeState.tasks = [
+      {
+        id: 'partial-task',
+        title: 'Partial task',
+        url: 'https://example.com/partial.mp4',
+        output_path: '/downloads',
+        status: 'paused',
+        progress: 52,
+        downloaded_size: 52,
+        speed: 0,
+        display_speed_bps: 0,
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+      },
+      {
+        id: 'fresh-task',
+        title: 'Fresh task',
+        url: 'https://example.com/fresh.mp4',
+        output_path: '/downloads',
+        status: 'pending',
+        progress: 0,
+        downloaded_size: 0,
+        speed: 0,
+        display_speed_bps: 0,
+        created_at: new Date(1).toISOString(),
+        updated_at: new Date(1).toISOString(),
+      },
+    ];
+
+    render(<DashboardToolbar />);
+
+    await user.click(screen.getByRole('button', { name: '开始选中' }));
+    await user.click(screen.getByRole('button', { name: '开始下载' }));
+
+    await waitFor(() => {
+      expect(storeActions.startDownload.mock.calls).toEqual([
+        ['partial-task', { suppressConcurrencyToast: true }],
+        ['fresh-task', { suppressConcurrencyToast: true }],
+      ]);
+    });
+  });
+
   it('cleans inactive tasks through the confirm dialog instead of deleting immediately', async () => {
     const user = userEvent.setup();
 

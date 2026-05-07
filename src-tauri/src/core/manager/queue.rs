@@ -2,26 +2,37 @@ use super::*;
 
 impl DownloadManager {
     pub(super) async fn enqueue_task(&self, task_id: &str, priority: u8) -> bool {
-        let inserted = {
+        let effective_priority = self.queue_priority_for_task_id(task_id, priority);
+        let changed = {
             let mut queue = self.task_queue.lock().await;
             if queue.iter().any(|item| item.task_id == task_id) {
-                return false;
+                let mut items = Vec::with_capacity(queue.len());
+                let mut upgraded = false;
+                while let Some(mut item) = queue.pop() {
+                    if item.task_id == task_id && item.priority < effective_priority {
+                        item.priority = effective_priority;
+                        upgraded = true;
+                    }
+                    items.push(item);
+                }
+                *queue = items.into_iter().collect();
+                return upgraded;
             }
 
             queue.push(TaskPriority {
                 task_id: task_id.to_string(),
-                priority,
+                priority: effective_priority,
                 created_at: chrono::Utc::now(),
             });
             true
         };
 
-        if inserted {
+        if changed {
             if let Err(err) = self.persist_state().await {
                 warn!("Failed to persist state after enqueue: {}", err);
             }
         }
-        inserted
+        changed
     }
 
     pub(super) async fn remove_task_from_queue(&self, task_id: &str) -> bool {
@@ -89,6 +100,10 @@ impl DownloadManager {
             }
 
             self.refresh_task_file_state(&task_id).await.ok();
+            let task = match self.tasks.get(&task_id).cloned() {
+                Some(task) => task,
+                None => continue,
+            };
 
             let permit = match self.download_semaphore.clone().try_acquire_owned() {
                 Ok(permit) => permit,

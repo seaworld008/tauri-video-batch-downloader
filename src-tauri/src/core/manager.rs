@@ -137,6 +137,12 @@ enum DownloadOutcome {
     Cancelled,
 }
 
+const QUEUE_PRIORITY_DEFAULT: u8 = 5;
+const QUEUE_PRIORITY_PARTIAL: u8 = 7;
+const QUEUE_PRIORITY_MANUAL: u8 = 8;
+const QUEUE_PRIORITY_PAUSED_PARTIAL: u8 = 9;
+const QUEUE_PRIORITY_RESTORE: u8 = 10;
+
 /// Channel for communication between download manager and UI
 pub type EventSender = mpsc::UnboundedSender<DownloadEvent>;
 pub type EventReceiver = mpsc::UnboundedReceiver<DownloadEvent>;
@@ -522,7 +528,7 @@ impl DownloadManager {
             handle.abort();
             self.update_task_status(&task_id, TaskStatus::Pending)
                 .await?;
-            let _ = self.enqueue_task(&task_id, 10).await;
+            let _ = self.enqueue_task(&task_id, QUEUE_PRIORITY_RESTORE).await;
         }
 
         self.queue_paused = false;
@@ -534,7 +540,8 @@ impl DownloadManager {
 
     /// Add a new download task
     pub async fn add_task(&mut self, url: String, output_path: String) -> AppResult<String> {
-        self.add_task_with_priority(url, output_path, 5).await // Default priority = 5
+        self.add_task_with_priority(url, output_path, QUEUE_PRIORITY_DEFAULT)
+            .await
     }
 
     pub async fn update_task_output_paths(
@@ -859,7 +866,7 @@ impl DownloadManager {
         let mut task_ids = Vec::with_capacity(tasks.len());
 
         for (url, output_path, priority) in tasks {
-            let priority = priority.unwrap_or(5); // Default priority
+            let priority = priority.unwrap_or(QUEUE_PRIORITY_DEFAULT);
             let task_id = self
                 .add_task_with_priority(url, output_path, priority)
                 .await?;
@@ -904,7 +911,7 @@ impl DownloadManager {
 
         // 即使 semaphore 仍有可用 permit，也要遵守当前并发配置，避免降配后短时间超发。
         if self.active_downloads.len() >= self.config.concurrent_downloads {
-            self.enqueue_task(task_id, 5).await;
+            self.enqueue_task(task_id, QUEUE_PRIORITY_MANUAL).await;
             if let Some(task) = self.tasks.get_mut(task_id) {
                 if task.status == TaskStatus::Failed {
                     task.status = TaskStatus::Pending;
@@ -925,7 +932,7 @@ impl DownloadManager {
         let permit = match self.download_semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
-                self.enqueue_task(task_id, 5).await;
+                self.enqueue_task(task_id, QUEUE_PRIORITY_MANUAL).await;
                 if let Some(task) = self.tasks.get_mut(task_id) {
                     if task.status == TaskStatus::Failed {
                         task.status = TaskStatus::Pending;
@@ -1265,7 +1272,10 @@ impl DownloadManager {
                                 normalized_pending = true;
                             }
                         }
-                        if self.enqueue_task(remaining_id, 5).await {
+                        if self
+                            .enqueue_task(remaining_id, QUEUE_PRIORITY_DEFAULT)
+                            .await
+                        {
                             queued += 1;
                         }
                     }
@@ -1535,7 +1545,7 @@ impl DownloadManager {
     ) -> AppResult<()> {
         let task = Self::runtime_hydrate_task_file_state(manager, task_id).await?;
 
-        let (queue_admission, semaphore, task_for_start) = {
+        let (queue_admission, semaphore, task_for_start, active_paused_downloader) = {
             let mut guard = manager.write().await;
 
             guard.settle_pending_semaphore_reduction();
@@ -1553,25 +1563,66 @@ impl DownloadManager {
                 return Err(AppError::Download(message));
             }
 
-            if guard.active_downloads.contains_key(task_id) {
-                return Err(AppError::Download(format!(
-                    "Task is already running: {}",
-                    task_id
-                )));
-            }
+            let active_paused_downloader = if guard.active_downloads.contains_key(task_id) {
+                if task_snapshot.status == TaskStatus::Paused {
+                    Some(Arc::clone(&guard.http_downloader))
+                } else {
+                    return Err(AppError::Download(format!(
+                        "Task is already running: {}",
+                        task_id
+                    )));
+                }
+            } else {
+                None
+            };
 
-            (
-                decide_queue_admission(
-                    guard.active_downloads.len(),
-                    guard.config.concurrent_downloads,
-                ),
-                Arc::clone(&guard.download_semaphore),
-                task,
-            )
+            if active_paused_downloader.is_some() {
+                (
+                    QueueAdmissionResult::StartNow,
+                    Arc::clone(&guard.download_semaphore),
+                    task,
+                    active_paused_downloader,
+                )
+            } else {
+                (
+                    decide_queue_admission(
+                        guard.active_downloads.len(),
+                        guard.config.concurrent_downloads,
+                    ),
+                    Arc::clone(&guard.download_semaphore),
+                    task,
+                    None,
+                )
+            }
         };
 
+        if let Some(downloader) = active_paused_downloader {
+            downloader
+                .resume_task(task_id)
+                .await
+                .map_err(|err| AppError::Download(format!("Failed to resume task: {}", err)))?;
+
+            {
+                let mut guard = manager.write().await;
+                if let Some(task_mut) = guard.tasks.get_mut(task_id) {
+                    mark_resumed_active(task_mut, chrono::Utc::now());
+                }
+                guard.recompute_stats();
+            }
+            Self::runtime_persist_state_best_effort(manager, "runtime_start_resume_active").await;
+
+            if let Some(sender) = Self::runtime_event_sender(manager).await {
+                let _ = sender.send(DownloadEvent::TaskResumed {
+                    task_id: task_id.to_string(),
+                });
+            }
+
+            info!("▶️ Resumed active paused download via start: {}", task_id);
+            return Ok(());
+        }
+
         if queue_admission == QueueAdmissionResult::QueueForConcurrency {
-            let _ = Self::runtime_enqueue_task(manager, task_id, 5).await;
+            let _ = Self::runtime_enqueue_task(manager, task_id, QUEUE_PRIORITY_MANUAL).await;
             {
                 let mut guard = manager.write().await;
                 if let Some(task) = guard.tasks.get_mut(task_id) {
@@ -1592,7 +1643,7 @@ impl DownloadManager {
         let permit = match semaphore.try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
-                let _ = Self::runtime_enqueue_task(manager, task_id, 5).await;
+                let _ = Self::runtime_enqueue_task(manager, task_id, QUEUE_PRIORITY_MANUAL).await;
                 {
                     let mut guard = manager.write().await;
                     if let Some(task) = guard.tasks.get_mut(task_id) {
@@ -1788,23 +1839,23 @@ impl DownloadManager {
     }
 
     fn collect_task_ids_by_status(&self, statuses: &[TaskStatus]) -> Vec<String> {
-        let mut entries: Vec<(String, chrono::DateTime<chrono::Utc>)> = self
+        let mut entries: Vec<(String, VideoTask)> = self
             .tasks
             .iter()
             .filter_map(|(task_id, task)| {
                 if statuses.contains(&task.status) {
-                    Some((task_id.clone(), task.created_at))
+                    Some((task_id.clone(), task.clone()))
                 } else {
                     None
                 }
             })
             .collect();
-        entries.sort_by_key(|(_, created_at)| *created_at);
+        entries.sort_by(Self::compare_task_start_preference);
         entries.into_iter().map(|(task_id, _)| task_id).collect()
     }
 
     fn collect_paused_task_ids_preferred(&self) -> Vec<String> {
-        let paused_entries: Vec<(String, VideoTask)> = self
+        let mut paused_entries: Vec<(String, VideoTask)> = self
             .tasks
             .iter()
             .filter_map(|(task_id, task)| {
@@ -1820,26 +1871,86 @@ impl DownloadManager {
             return Vec::new();
         }
 
-        let mut preferred: Vec<(String, VideoTask)> = paused_entries
-            .iter()
-            .filter(|(_, task)| task.paused_from_active)
-            .cloned()
-            .collect();
+        paused_entries.sort_by(Self::compare_task_start_preference);
+        paused_entries.into_iter().map(|(id, _)| id).collect()
+    }
 
-        if preferred.is_empty() {
-            preferred = paused_entries;
+    fn has_resume_progress(task: &VideoTask) -> bool {
+        task.downloaded_size > 0 || task.progress > 0.0
+    }
+
+    fn preferred_task_queue_priority(task: &VideoTask, requested_priority: u8) -> u8 {
+        let mut priority = requested_priority;
+        if Self::has_resume_progress(task) {
+            priority = priority.max(QUEUE_PRIORITY_PARTIAL);
+        }
+        if task.status == TaskStatus::Paused && Self::has_resume_progress(task) {
+            priority = priority.max(QUEUE_PRIORITY_PAUSED_PARTIAL);
+        }
+        if task.status == TaskStatus::Paused && !Self::has_resume_progress(task) {
+            priority = priority.max(QUEUE_PRIORITY_MANUAL);
+        }
+        priority
+    }
+
+    pub(super) fn queue_priority_for_task_id(&self, task_id: &str, requested_priority: u8) -> u8 {
+        self.tasks
+            .get(task_id)
+            .map(|task| Self::preferred_task_queue_priority(task, requested_priority))
+            .unwrap_or(requested_priority)
+    }
+
+    fn task_start_rank(task: &VideoTask) -> u8 {
+        let has_progress = Self::has_resume_progress(task);
+        match task.status {
+            TaskStatus::Paused if has_progress && task.paused_from_active => 0,
+            TaskStatus::Paused if has_progress => 1,
+            TaskStatus::Failed if has_progress => 2,
+            TaskStatus::Pending if has_progress => 3,
+            TaskStatus::Paused if task.paused_from_active => 4,
+            TaskStatus::Paused => 5,
+            TaskStatus::Pending => 6,
+            TaskStatus::Failed => 7,
+            _ => 8,
+        }
+    }
+
+    fn compare_task_start_preference(
+        a: &(String, VideoTask),
+        b: &(String, VideoTask),
+    ) -> std::cmp::Ordering {
+        let rank_order = Self::task_start_rank(&a.1).cmp(&Self::task_start_rank(&b.1));
+        if rank_order != std::cmp::Ordering::Equal {
+            return rank_order;
         }
 
-        preferred.sort_by(|a, b| {
+        if a.1.status == TaskStatus::Paused && b.1.status == TaskStatus::Paused {
             let a_time = a.1.paused_at.unwrap_or(a.1.updated_at);
             let b_time = b.1.paused_at.unwrap_or(b.1.updated_at);
-            // 优先恢复“最近一次暂停”的任务，才能稳定接续用户刚暂停的并发集合。
-            b_time
-                .cmp(&a_time)
-                .then_with(|| a.1.created_at.cmp(&b.1.created_at))
-        });
+            let pause_order = b_time.cmp(&a_time);
+            if pause_order != std::cmp::Ordering::Equal {
+                return pause_order;
+            }
+        }
 
-        preferred.into_iter().map(|(id, _)| id).collect()
+        if Self::has_resume_progress(&a.1) && Self::has_resume_progress(&b.1) {
+            let progress_order =
+                b.1.progress
+                    .partial_cmp(&a.1.progress)
+                    .unwrap_or(std::cmp::Ordering::Equal);
+            if progress_order != std::cmp::Ordering::Equal {
+                return progress_order;
+            }
+
+            let size_order = b.1.downloaded_size.cmp(&a.1.downloaded_size);
+            if size_order != std::cmp::Ordering::Equal {
+                return size_order;
+            }
+        }
+
+        a.1.created_at
+            .cmp(&b.1.created_at)
+            .then_with(|| a.0.cmp(&b.0))
     }
 
     async fn resume_task_list(&mut self, task_ids: &[String], priority: u8) -> usize {
@@ -3265,6 +3376,102 @@ mod tests {
 
         let ordered = manager.collect_paused_task_ids_preferred();
         assert_eq!(ordered, vec![new_id, old_id]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_collect_paused_task_ids_prefers_partial_resume_before_empty_active(
+    ) -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let partial_id = manager
+            .add_task(
+                "https://example.com/partial.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let empty_active_id = manager
+            .add_task(
+                "https://example.com/empty-active.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        let now = chrono::Utc::now();
+        if let Some(task) = manager.tasks.get_mut(&partial_id) {
+            task.status = TaskStatus::Paused;
+            task.progress = 42.0;
+            task.downloaded_size = 42_000;
+            task.paused_at = Some(now - chrono::Duration::minutes(10));
+            task.paused_from_active = false;
+        }
+        if let Some(task) = manager.tasks.get_mut(&empty_active_id) {
+            task.status = TaskStatus::Paused;
+            task.paused_at = Some(now);
+            task.paused_from_active = true;
+        }
+
+        let ordered = manager.collect_paused_task_ids_preferred();
+        assert_eq!(ordered, vec![partial_id, empty_active_id]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_collect_task_ids_by_status_prefers_partial_pending_before_fresh() -> AppResult<()>
+    {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+
+        let fresh_id = manager
+            .add_task(
+                "https://example.com/fresh.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+        let partial_id = manager
+            .add_task(
+                "https://example.com/partial-pending.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        if let Some(task) = manager.tasks.get_mut(&partial_id) {
+            task.progress = 18.0;
+            task.downloaded_size = 18_000;
+        }
+
+        let ordered = manager.collect_task_ids_by_status(&[TaskStatus::Pending]);
+        assert_eq!(ordered.first(), Some(&partial_id));
+        assert!(ordered.iter().any(|task_id| task_id == &fresh_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_task_upgrades_existing_partial_resume_priority() -> AppResult<()> {
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new(config)?;
+        let task_id = manager
+            .add_task(
+                "https://example.com/queued.mp4".to_string(),
+                "./downloads".to_string(),
+            )
+            .await?;
+
+        assert!(manager.enqueue_task(&task_id, QUEUE_PRIORITY_DEFAULT).await);
+        if let Some(task) = manager.tasks.get_mut(&task_id) {
+            task.status = TaskStatus::Paused;
+            task.progress = 55.0;
+            task.downloaded_size = 55_000;
+        }
+
+        assert!(manager.enqueue_task(&task_id, QUEUE_PRIORITY_DEFAULT).await);
+        let queue = manager.task_queue.lock().await;
+        let queued = queue
+            .iter()
+            .find(|item| item.task_id == task_id)
+            .expect("task should remain queued");
+        assert_eq!(queued.priority, QUEUE_PRIORITY_PAUSED_PARTIAL);
         Ok(())
     }
 

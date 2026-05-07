@@ -7,6 +7,7 @@ import {
   buildTaskOutputPathPreview,
   resolveStartConfirmDirectory,
 } from '../../features/downloads/model/outputPathOverride';
+import { startTasksSequentially } from '../../features/downloads/state/batchControlEffects';
 import {
   openDownloadFolderCommand,
   selectOutputDirectoryCommand,
@@ -299,10 +300,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       switch (action) {
         case 'start':
           openStartConfirm(async () => {
-            await Promise.all(
-              selectedItems
-                .filter(task => ['pending', 'paused', 'failed'].includes(task.status))
-                .map(task => startDownload(task.id))
+            await startTasksSequentially(
+              selectedItems.filter(task => ['pending', 'paused', 'failed'].includes(task.status)),
+              startDownload
             );
           }, startableSelectedTaskIds);
           break;

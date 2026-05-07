@@ -17,14 +17,17 @@ describe('batchControlEffects helpers', () => {
       { id: 'task-1', status: 'pending' },
       { id: 'task-2', status: 'paused' },
       { id: 'task-3', status: 'completed' },
+      { id: 'task-4', status: 'failed' },
     ] as any;
 
-    expect(selectStartableTasks(tasks, ['task-2', 'task-3'])).toEqual([
+    expect(selectStartableTasks(tasks, ['task-2', 'task-3', 'task-4'])).toEqual([
       { id: 'task-2', status: 'paused' },
+      { id: 'task-4', status: 'failed' },
     ]);
     expect(selectStartableTasks(tasks, [])).toEqual([
       { id: 'task-1', status: 'pending' },
       { id: 'task-2', status: 'paused' },
+      { id: 'task-4', status: 'failed' },
     ]);
   });
 

@@ -8,7 +8,7 @@ export const selectStartableTasks = (
   const targetTasks =
     selectedTaskIds.length > 0 ? tasks.filter(task => selectedTaskIds.includes(task.id)) : tasks;
 
-  return targetTasks.filter(task => ['pending', 'paused'].includes(task.status));
+  return targetTasks.filter(task => ['pending', 'paused', 'failed'].includes(task.status));
 };
 
 export const startTasksSequentially = async (
