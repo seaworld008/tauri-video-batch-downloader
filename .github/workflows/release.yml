@@ -322,7 +322,11 @@ jobs:
             fi
           done
 
-          pnpm tauri build --target ${{ matrix.platform.build_target }} --bundles ${{ matrix.platform.bundles }}
+          VERSION="${{ needs.preflight.outputs.version }}"
+          pnpm tauri build \
+            --target ${{ matrix.platform.build_target }} \
+            --bundles ${{ matrix.platform.bundles }} \
+            --config "{\"version\":\"$VERSION\"}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
