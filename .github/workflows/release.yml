@@ -241,7 +241,7 @@ jobs:
         run: |
           IFS=',' read -ra targets <<< "${{ matrix.platform.sidecar_targets }}"
           for target in "${targets[@]}"; do
-            pnpm sidecars:prepare -- --target "$target"
+            pnpm sidecars:prepare --target "$target"
           done
 
       - name: Validate sidecar binaries
