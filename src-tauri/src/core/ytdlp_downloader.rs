@@ -123,18 +123,21 @@ impl YtDlpDownloader {
         let started = Instant::now();
         let mut stderr = String::new();
         let mut final_path: Option<PathBuf> = None;
+        let mut handle_line = |line: String, task: &mut DownloadTask| {
+            if let Some(path) = line.strip_prefix("filepath:") {
+                final_path = Some(PathBuf::from(path.trim()));
+            } else if let Some(progress) = parse_progress_line(&line) {
+                emit_progress(task, &progress, started, progress_tx.as_ref());
+            } else if !line.trim().is_empty() {
+                stderr.push_str(&line);
+                stderr.push('\n');
+            }
+        };
         loop {
             tokio::select! {
                 maybe_line = line_rx.recv() => {
                     if let Some(line) = maybe_line {
-                        if let Some(path) = line.strip_prefix("filepath:") {
-                            final_path = Some(PathBuf::from(path.trim()));
-                        } else if let Some(progress) = parse_progress_line(&line) {
-                            emit_progress(task, &progress, started, progress_tx.as_ref());
-                        } else if !line.trim().is_empty() {
-                            stderr.push_str(&line);
-                            stderr.push('\n');
-                        }
+                        handle_line(line, task);
                     }
                 }
                 status = child.wait() => {
@@ -155,6 +158,9 @@ impl YtDlpDownloader {
                     }
                 }
             }
+        }
+        while let Ok(line) = line_rx.try_recv() {
+            handle_line(line, task);
         }
 
         let final_path =
