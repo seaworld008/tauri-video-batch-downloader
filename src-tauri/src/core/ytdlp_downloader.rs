@@ -11,7 +11,7 @@ use std::sync::{
 use std::time::Instant;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 
 use crate::core::downloader::{DownloadStats, DownloadTask};
 use crate::core::models::{ExternalVideoInfo, SourcePlatform};
@@ -133,7 +133,7 @@ impl YtDlpDownloader {
                 stderr.push('\n');
             }
         };
-        loop {
+        let exit_status = loop {
             tokio::select! {
                 maybe_line = line_rx.recv() => {
                     if let Some(line) = maybe_line {
@@ -142,10 +142,7 @@ impl YtDlpDownloader {
                 }
                 status = child.wait() => {
                     let status = status?;
-                    if !status.success() {
-                        return Err(anyhow::anyhow!(classify_error(&stderr)));
-                    }
-                    break;
+                    break status;
                 }
                 _ = sleep(Duration::from_millis(150)) => {
                     if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
@@ -158,9 +155,16 @@ impl YtDlpDownloader {
                     }
                 }
             }
-        }
+        };
         while let Ok(line) = line_rx.try_recv() {
             handle_line(line, task);
+        }
+        while let Ok(Some(line)) = timeout(Duration::from_secs(1), line_rx.recv()).await {
+            handle_line(line, task);
+        }
+
+        if !exit_status.success() {
+            return Err(anyhow::anyhow!(classify_error(&stderr)));
         }
 
         let final_path =
