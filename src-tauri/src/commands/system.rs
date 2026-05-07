@@ -8,6 +8,7 @@ use tauri::{AppHandle, State};
 use tokio::process::Command;
 use tracing::{error, info};
 
+use crate::core::download_provider::should_probe_with_ytdlp_for_info;
 use crate::core::models::{AppError, AppResult};
 use crate::core::ytdlp_downloader::YtDlpDownloader;
 #[cfg(test)]
@@ -288,9 +289,7 @@ async fn get_video_info_impl(url: &str) -> AppResult<serde_json::Value> {
         ));
     }
 
-    let should_probe_with_ytdlp =
-        YtDlpDownloader::is_known_social_url(url) || !YtDlpDownloader::is_direct_media_url(url);
-    if should_probe_with_ytdlp {
+    if should_probe_with_ytdlp_for_info(url) {
         let downloader =
             YtDlpDownloader::default_with_user_agent("VideoDownloaderPro/1.0.0".to_string());
         let external_info = downloader

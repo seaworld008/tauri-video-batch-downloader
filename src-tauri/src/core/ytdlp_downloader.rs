@@ -17,8 +17,8 @@ use crate::core::downloader::{DownloadStats, DownloadTask};
 use crate::core::models::{ExternalVideoInfo, SourcePlatform};
 use crate::core::ytdlp_support::{
     build_download_args, build_probe_args, classify_error, detect_platform, emit_committing,
-    emit_progress, env_path, exe_name, external_info_from_json, is_direct_media_url,
-    sanitize_filename, sidecar_path, spawn_line_reader,
+    emit_progress, env_path, exe_name, external_info_from_json, sanitize_filename, sidecar_path,
+    spawn_line_reader,
 };
 pub use crate::core::ytdlp_support::{parse_progress_line, YtDlpDownloaderConfig};
 
@@ -41,29 +41,6 @@ impl YtDlpDownloader {
 
     pub fn detect_platform(url: &str) -> SourcePlatform {
         detect_platform(url)
-    }
-
-    pub fn is_known_social_url(url: &str) -> bool {
-        !matches!(Self::detect_platform(url), SourcePlatform::Generic)
-    }
-
-    pub fn is_direct_media_url(url: &str) -> bool {
-        is_direct_media_url(url)
-    }
-
-    pub fn should_handle_after_head(url: &str, content_type: Option<&str>) -> bool {
-        if Self::is_known_social_url(url) {
-            return true;
-        }
-        if Self::is_direct_media_url(url) {
-            return false;
-        }
-        content_type
-            .map(|ct| {
-                let normalized = ct.to_lowercase();
-                normalized.contains("text/html") || normalized.contains("application/xhtml")
-            })
-            .unwrap_or(false)
     }
 
     pub fn build_probe_args(url: &str) -> Vec<String> {

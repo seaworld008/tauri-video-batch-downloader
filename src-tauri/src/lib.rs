@@ -48,29 +48,15 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> anyhow::Result<Self> {
-        let mut config = Self::load_or_initialize_config();
+        let mut config = core::app_bootstrap::load_or_initialize_config();
         let download_config = config.download.clone();
 
-        // 创建HTTP下载器配置
-        let downloader_config = core::downloader::DownloaderConfig {
-            max_concurrent: download_config.concurrent_downloads.max(1),
-            max_connections_per_download: 4,
-            timeout: download_config.timeout_seconds,
-            retry_attempts: download_config.retry_attempts,
-            buffer_size: 64 * 1024, // 64KB
-            user_agent: download_config.user_agent.clone(),
-            resume_enabled: true,
-        };
-
-        let http_downloader = HttpDownloader::new(downloader_config)
+        let downloader_config =
+            core::app_bootstrap::downloader_config_from_download_config(&download_config);
+        let http_downloader = core::app_bootstrap::create_http_downloader(downloader_config)
             .map_err(|e| anyhow::anyhow!("Failed to create HTTP downloader: {}", e))?;
 
-        if config.ui.is_none() {
-            config.ui = Some(core::config::UiConfig::default());
-        }
-        if config.system.is_none() {
-            config.system = Some(core::config::SystemConfig::default());
-        }
+        core::app_bootstrap::ensure_optional_config_defaults(&mut config);
 
         let download_manager = Arc::new(tokio::sync::RwLock::new(DownloadManager::new(
             download_config,
@@ -85,37 +71,6 @@ impl AppState {
             download_runtime,
             task_engine,
         })
-    }
-
-    fn load_or_initialize_config() -> AppConfig {
-        match AppConfig::load() {
-            Ok(cfg) => {
-                if let Err(err) = cfg.validate() {
-                    tracing::warn!(
-                        "Invalid configuration detected ({}), falling back to defaults",
-                        err
-                    );
-                    let default_cfg = AppConfig::default();
-                    if let Err(save_err) = default_cfg.save() {
-                        tracing::warn!("Failed to persist default configuration: {}", save_err);
-                    }
-                    default_cfg
-                } else {
-                    cfg
-                }
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "Failed to load configuration from disk: {}. Using defaults",
-                    err
-                );
-                let default_cfg = AppConfig::default();
-                if let Err(save_err) = default_cfg.save() {
-                    tracing::warn!("Failed to persist default configuration: {}", save_err);
-                }
-                default_cfg
-            }
-        }
     }
 }
 

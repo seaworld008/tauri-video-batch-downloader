@@ -84,6 +84,9 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
 use uuid::Uuid;
 
+use crate::core::download_provider::{
+    ContentMetadata, DownloadProviderRouter, InitialProviderDecision, ResolvedProviderDecision,
+};
 use crate::core::m3u8_downloader::{M3U8Downloader, M3U8DownloaderConfig};
 use crate::core::models::*;
 use crate::core::resume_downloader::{
@@ -145,12 +148,6 @@ pub struct DownloadStats {
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// 最后更新时间
     pub last_update: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone)]
-struct ContentMetadata {
-    content_length: Option<u64>,
-    content_type: Option<String>,
 }
 
 impl Default for DownloadStats {
@@ -251,6 +248,7 @@ pub struct HttpDownloader {
     resume_downloader: Arc<ResumeDownloader>,
     m3u8_downloader: Arc<M3U8Downloader>,
     ytdlp_downloader: Arc<YtDlpDownloader>,
+    provider_router: Arc<DownloadProviderRouter>,
     bandwidth_controller: BandwidthController,
 }
 
@@ -297,6 +295,7 @@ impl HttpDownloader {
         // 创建M3U8Downloader实例
         let m3u8_downloader = M3U8Downloader::new(m3u8_config)?;
         let ytdlp_downloader = YtDlpDownloader::default_with_user_agent(config.user_agent.clone());
+        let provider_router = DownloadProviderRouter::new(50 * 1024 * 1024);
 
         Ok(Self {
             config,
@@ -309,6 +308,7 @@ impl HttpDownloader {
             resume_downloader: Arc::new(resume_downloader),
             m3u8_downloader: Arc::new(m3u8_downloader),
             ytdlp_downloader: Arc::new(ytdlp_downloader),
+            provider_router: Arc::new(provider_router),
             bandwidth_controller,
         })
     }
@@ -540,23 +540,25 @@ impl HttpDownloader {
         )
         .await;
 
-        // 首先检测是否为M3U8流媒体
-        let is_m3u8 = self.is_m3u8_url(&task.url);
+        // 首先通过 provider router 做不需要 HEAD 的快速判定。
+        let initial_decision = self.provider_router.initial_decision(&task.url);
         tracing::info!(
-            "🟢 [SMART_DOWNLOAD] is_m3u8_url={} for task {}",
-            is_m3u8,
-            task.id
+            "🟢 [SMART_DOWNLOAD] initial provider decision for task {}: {:?}",
+            task.id,
+            initial_decision,
         );
-        if is_m3u8 {
-            tracing::info!("🟢 [SMART_DOWNLOAD] M3U8 URL detected, using M3U8 downloader");
-            return self.download_with_m3u8(task, cancel_flag, pause_flag).await;
-        }
-
-        if YtDlpDownloader::is_known_social_url(&task.url) {
-            tracing::info!("🟢 [SMART_DOWNLOAD] Social/video webpage detected, using yt-dlp");
-            return self
-                .download_with_ytdlp(task, cancel_flag, pause_flag)
-                .await;
+        match initial_decision {
+            InitialProviderDecision::M3u8 => {
+                tracing::info!("🟢 [SMART_DOWNLOAD] M3U8 URL detected, using M3U8 downloader");
+                return self.download_with_m3u8(task, cancel_flag, pause_flag).await;
+            }
+            InitialProviderDecision::YtDlp => {
+                tracing::info!("🟢 [SMART_DOWNLOAD] Social/video webpage detected, using yt-dlp");
+                return self
+                    .download_with_ytdlp(task, cancel_flag, pause_flag)
+                    .await;
+            }
+            InitialProviderDecision::NeedsHead => {}
         }
 
         // 对于非M3U8 URL，尝试获取文件大小
@@ -583,54 +585,61 @@ impl HttpDownloader {
             }
         };
 
-        if YtDlpDownloader::should_handle_after_head(&task.url, metadata.content_type.as_deref()) {
-            tracing::info!("🟢 [SMART_DOWNLOAD] HTML webpage detected after HEAD, using yt-dlp");
-            return self
-                .download_with_ytdlp(task, cancel_flag, pause_flag)
-                .await;
-        }
-
-        let content_length = match metadata.content_length {
-            Some(size) => {
+        match self.provider_router.after_head(&task.url, &metadata) {
+            ResolvedProviderDecision::YtDlp => {
                 tracing::info!(
-                    "🟢 [SMART_DOWNLOAD] ✅ Content length for task {}: {} bytes ({})",
-                    task.id,
-                    size,
-                    self.format_bytes(size)
+                    "🟢 [SMART_DOWNLOAD] HTML webpage detected after HEAD, using yt-dlp"
                 );
-                size
+                return self
+                    .download_with_ytdlp(task, cancel_flag, pause_flag)
+                    .await;
             }
-            None => {
+            ResolvedProviderDecision::HttpResumable if metadata.content_length.is_none() => {
                 tracing::warn!("🟡 [SMART_DOWNLOAD] No content length returned for task {}, using resume downloader", task.id);
                 return self
                     .download_with_resume_downloader(task, cancel_flag, pause_flag)
                     .await;
             }
-        };
-
-        // 设置任务的总文件大小
-        task.stats.total_bytes = Some(content_length);
-
-        // 更新一次带有总大小的进度
-        self.update_progress(
-            task,
-            task.stats.downloaded_bytes,
-            content_length,
-            Instant::now(),
-        )
-        .await;
-
-        // 根据文件大小选择下载策略
-        let large_file_threshold = 50 * 1024 * 1024; // 50MB
-
-        if content_length >= large_file_threshold {
-            tracing::info!("大文件检测：使用ResumeDownloader进行分片下载");
-            self.download_with_resume_downloader(task, cancel_flag, pause_flag)
-                .await
-        } else {
-            tracing::info!("小文件检测：使用传统HTTP下载");
-            self.download_with_resume(task, cancel_flag, pause_flag)
-                .await
+            ResolvedProviderDecision::HttpResumable => {
+                let content_length = metadata.content_length.unwrap_or_default();
+                tracing::info!(
+                    "🟢 [SMART_DOWNLOAD] ✅ Content length for task {}: {} bytes ({})",
+                    task.id,
+                    content_length,
+                    self.format_bytes(content_length)
+                );
+                task.stats.total_bytes = Some(content_length);
+                self.update_progress(
+                    task,
+                    task.stats.downloaded_bytes,
+                    content_length,
+                    Instant::now(),
+                )
+                .await;
+                tracing::info!("大文件检测：使用ResumeDownloader进行分片下载");
+                self.download_with_resume_downloader(task, cancel_flag, pause_flag)
+                    .await
+            }
+            ResolvedProviderDecision::HttpSimple => {
+                let content_length = metadata.content_length.unwrap_or_default();
+                tracing::info!(
+                    "🟢 [SMART_DOWNLOAD] ✅ Content length for task {}: {} bytes ({})",
+                    task.id,
+                    content_length,
+                    self.format_bytes(content_length)
+                );
+                task.stats.total_bytes = Some(content_length);
+                self.update_progress(
+                    task,
+                    task.stats.downloaded_bytes,
+                    content_length,
+                    Instant::now(),
+                )
+                .await;
+                tracing::info!("小文件检测：使用传统HTTP下载");
+                self.download_with_resume(task, cancel_flag, pause_flag)
+                    .await
+            }
         }
     }
 
@@ -819,15 +828,6 @@ impl HttpDownloader {
         }
 
         format!("{:.1} {}", size, UNITS[unit_index])
-    }
-
-    /// 检测是否为M3U8 URL
-    fn is_m3u8_url(&self, url: &str) -> bool {
-        // 检查URL是否包含.m3u8扩展名或常见的M3U8参数
-        url.contains(".m3u8")
-            || url.to_lowercase().contains("m3u8")
-            || url.contains("playlist") && url.contains("hls")
-            || url.contains("master") && url.contains("m3u8")
     }
 
     /// 使用M3U8Downloader进行流媒体下载
@@ -1333,6 +1333,7 @@ impl Clone for HttpDownloader {
             resume_downloader: Arc::clone(&self.resume_downloader),
             m3u8_downloader: Arc::clone(&self.m3u8_downloader),
             ytdlp_downloader: Arc::clone(&self.ytdlp_downloader),
+            provider_router: Arc::clone(&self.provider_router),
             bandwidth_controller: self.bandwidth_controller.clone(),
         }
     }

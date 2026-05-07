@@ -21,7 +21,7 @@ mod utils;
 
 use commands::*;
 use core::{
-    downloader::{DownloaderConfig, HttpDownloader},
+    downloader::HttpDownloader,
     models::{AppError, DownloadConfig},
     queue_scheduler::spawn_queue_scheduler,
     runtime::{create_download_runtime_handle, spawn_router_loop, DownloadRuntimeHandle},
@@ -67,7 +67,7 @@ impl AppState {
 
     fn try_new() -> Result<Self, String> {
         // 使用更安全的方式优先加载本地配置，失败时再回退到默认值
-        let mut config = Self::load_initial_config();
+        let mut config = core::app_bootstrap::load_or_initialize_config();
         let download_config = config.download.clone();
 
         // 简化DownloadManager创建
@@ -81,26 +81,12 @@ impl AppState {
         info!("📡 Download runtime handle created (router will be spawned in Tauri setup)");
         let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
 
-        // 根据实际配置生成HTTP下载器参数
-        let downloader_config = DownloaderConfig {
-            max_concurrent: download_config.concurrent_downloads.max(1), // 至少一个并发
-            max_connections_per_download: 4,
-            timeout: download_config.timeout_seconds,
-            retry_attempts: download_config.retry_attempts,
-            buffer_size: 64 * 1024,
-            user_agent: download_config.user_agent.clone(),
-            resume_enabled: true,
-        };
-
-        let http_downloader = HttpDownloader::new(downloader_config)
+        let downloader_config =
+            core::app_bootstrap::downloader_config_from_download_config(&download_config);
+        let http_downloader = core::app_bootstrap::create_http_downloader(downloader_config)
             .map_err(|e| format!("HttpDownloader creation failed: {}", e))?;
 
-        if config.ui.is_none() {
-            config.ui = Some(core::config::UiConfig::default());
-        }
-        if config.system.is_none() {
-            config.system = Some(core::config::SystemConfig::default());
-        }
+        core::app_bootstrap::ensure_optional_config_defaults(&mut config);
 
         Ok(Self {
             download_manager,
@@ -112,40 +98,9 @@ impl AppState {
         })
     }
 
-    fn load_initial_config() -> AppConfig {
-        match AppConfig::load() {
-            Ok(cfg) => {
-                if let Err(err) = cfg.validate() {
-                    warn!(
-                        "Invalid configuration detected ({}), falling back to defaults",
-                        err
-                    );
-                    let default_cfg = AppConfig::default();
-                    if let Err(save_err) = default_cfg.save() {
-                        warn!("Failed to persist default configuration: {}", save_err);
-                    }
-                    default_cfg
-                } else {
-                    cfg
-                }
-            }
-            Err(err) => {
-                warn!(
-                    "Failed to load configuration from disk: {}. Using defaults",
-                    err
-                );
-                let default_cfg = AppConfig::default();
-                if let Err(save_err) = default_cfg.save() {
-                    warn!("Failed to persist default configuration: {}", save_err);
-                }
-                default_cfg
-            }
-        }
-    }
-
     fn create_fallback() -> Result<Self, String> {
         // 创建最基本的状态，即使某些组件失败也能工作
-        let mut config = Self::load_initial_config();
+        let mut config = core::app_bootstrap::load_or_initialize_config();
 
         // 如果DownloadManager创建失败，使用更简单的配置
         let download_manager = match DownloadManager::new(config.download.clone()) {
@@ -173,17 +128,8 @@ impl AppState {
             create_download_runtime_handle(download_manager.clone());
         let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
 
-        let downloader_config = DownloaderConfig {
-            max_concurrent: 1,
-            max_connections_per_download: 1,
-            timeout: 120,
-            retry_attempts: 0,
-            buffer_size: 16 * 1024,
-            user_agent: "VideoDownloaderPro/1.0.0-fallback".to_string(),
-            resume_enabled: false,
-        };
-
-        let http_downloader = HttpDownloader::new(downloader_config)
+        let downloader_config = core::app_bootstrap::fallback_downloader_config();
+        let http_downloader = core::app_bootstrap::create_http_downloader(downloader_config)
             .map_err(|error| format!("Cannot create fallback HttpDownloader: {}", error))?;
 
         Ok(Self {

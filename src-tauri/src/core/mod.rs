@@ -3,11 +3,12 @@
 //! This module contains the core domain models, managers, and business logic
 //! for the video downloader application.
 
+pub mod app_bootstrap;
 pub mod config;
+pub mod download_provider;
 pub mod downloader;
 pub mod error_handling;
 mod external_tool_compat;
-mod external_tool_update;
 pub mod external_tools;
 pub mod file_parser;
 pub mod integrity_checker;

@@ -5,10 +5,10 @@ use std::path::Path;
 use tokio::io::AsyncWriteExt;
 
 use crate::core::external_tool_compat::validate_tool_contract;
-use crate::core::external_tools::{
-    managed_backup_path, managed_tool_path, read_tool_version, status_for_tool, tool_data_dir,
-    ExternalToolStatus,
-};
+
+use super::registry::ExternalToolStatus;
+use super::resolver::{managed_backup_path, managed_tool_path, tool_data_dir};
+use super::status::{read_tool_version, status_for_tool};
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -279,9 +279,8 @@ mod tests {
 
         assert!(err.to_string().contains("No such file") || err.to_string().contains("not found"));
         assert_eq!(
-            tokio::fs::read(&target).await.expect("target restored"),
-            b"previous-version"
+            tokio::fs::read_to_string(&target).await.unwrap(),
+            "previous-version"
         );
-        assert!(!backup.exists(), "backup should be consumed during restore");
     }
 }

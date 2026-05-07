@@ -21,6 +21,9 @@
 
 ## P1：协议与工具链
 
+- 已抽离：`DownloadProviderRouter`
+  统一负责 M3U8、直链媒体、社媒网页和 HEAD 后 HTML 页面的 provider 选择，避免新增平台规则牵动 HTTP
+  Range/M3U8 主路径。
 - 继续强化 M3U8/HLS：直播/超长 playlist、失败 segment 重试。
 - 已补强：M3U8 相对 segment、相对 key URI、byte-range
   Range 响应校验、同一 playlist 多 AES key 下载与缓存。
@@ -29,6 +32,8 @@
 - 已预留：`yt-dlp` 平台 host registry，新增平台时集中扩展 host 规则和 schema。
 - 已接入：`yt-dlp` / `ffmpeg` sidecar 配置、工具状态探测、`yt-dlp`
   手动更新、兼容性契约检查和回退。
+- 已拆分：external tools service 按 registry/resolver/status/update/config
+  store 分层，后续更新/回滚策略变化不再集中修改单个大模块。
 - 已接入：严格 sidecar 发布预检，覆盖 macOS/Windows/Linux target
   triple、capability、可执行权限和占位文件拦截。
 - 已接入：`sidecars:prepare` 发布准备链路，release runner 会在打包前准备真实
@@ -49,6 +54,8 @@
 
 ## P3：发布与社区
 
+- 已新增：`pnpm risk:gitnexus` 本地风险门禁，普通 PR 默认不允许 `critical`
+  影响面；核心迁移需显式放行并说明验证范围。
 - 已建立真实 Tauri MCP Bridge
   smoke，避免只靠普通浏览器或 jsdom；后续补下载链路 E2E。
 - 补充真实截图、短视频或 demo GIF。

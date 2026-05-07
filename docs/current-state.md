@@ -182,9 +182,9 @@ Graphify 当前报告：
 最核心节点：
 
 1. `DownloadManager`
-2. `YoutubeDownloader`
-3. `invokeTauri()`
-4. `HttpDownloader`
+2. `invokeTauri()`
+3. `HttpDownloader`
+4. `YoutubeDownloader`（旧能力保留为兼容模块，不再挂载在 `DownloadManager`）
 5. `reportFrontendDiagnosticIfEnabled()`
 6. `PerformanceBenchmark`
 
@@ -205,9 +205,9 @@ GitNexus 对当前未提交工作树的影响检查：
 - `src/features/downloads/model/*`
 - `src-tauri/src/core/downloader.rs`
 - `src-tauri/src/core/ytdlp_downloader.rs`
-- `src-tauri/src/core/external_tools.rs`
-- `src-tauri/src/core/external_tool_update.rs`
+- `src-tauri/src/core/external_tools/*`
 - `scripts/validate-sidecars.mjs`
+- `scripts/check-gitnexus-risk.mjs`
 
 ---
 

@@ -26,6 +26,7 @@
     "sidecars:check:all": "node scripts/validate-sidecars.mjs --all",
     "sidecars:check:local": "node scripts/validate-sidecars.mjs --allow-placeholders",
     "sidecars:prepare": "node scripts/prepare-sidecars.mjs",
+    "risk:gitnexus": "node scripts/check-gitnexus-risk.mjs --scope all",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext ts,tsx --fix",
     "format": "prettier --write .",
