@@ -32,9 +32,7 @@ const checkExternalToolUpdatesInBackground = async () => {
 
     const updatableTools = statuses.filter(
       tool =>
-        tool.latest_version &&
-        tool.current_version &&
-        tool.latest_version !== tool.current_version
+        tool.latest_version && tool.current_version && tool.latest_version !== tool.current_version
     );
 
     if (updatableTools.length === 0) {
