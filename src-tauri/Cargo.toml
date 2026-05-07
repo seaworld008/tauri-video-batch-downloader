@@ -6,6 +6,7 @@ authors = ["Video Downloader Team"]
 edition = "2021"
 license = "MIT"
 default-run = "video-downloader-pro"
+autobins = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
