@@ -3,6 +3,8 @@
 //! This module provides the main DownloadManager that orchestrates all download operations,
 //! manages concurrent downloads, and handles progress tracking and event emission.
 
+#[cfg(test)]
+mod concurrency_slot_tests;
 mod events;
 mod identity;
 mod integrity;
@@ -2574,9 +2576,24 @@ impl DownloadManager {
 
     /// Eagerly reap finished handles to avoid short-lived "phantom occupied" slots.
     fn reap_finished_active_downloads(&mut self) -> usize {
+        let active_status_task_ids: std::collections::HashSet<String> = self
+            .tasks
+            .iter()
+            .filter_map(|(task_id, task)| {
+                if matches!(
+                    task.status,
+                    TaskStatus::Downloading | TaskStatus::Committing
+                ) {
+                    Some(task_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
         let before = self.active_downloads.len();
-        self.active_downloads
-            .retain(|_, handle| !handle.is_finished());
+        self.active_downloads.retain(|task_id, handle| {
+            !handle.is_finished() || active_status_task_ids.contains(task_id)
+        });
         before.saturating_sub(self.active_downloads.len())
     }
 
