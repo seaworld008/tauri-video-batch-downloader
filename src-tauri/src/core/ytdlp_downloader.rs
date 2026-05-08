@@ -285,50 +285,43 @@ async fn terminate_external_child(child: &mut tokio::process::Child) {
 
     #[cfg(unix)]
     {
-        let child_pgid = process_group_for_pid(pid);
-        let current_pgid = current_process_group_id();
-        if let Some(child_pgid) = child_pgid.filter(|pgid| *pgid > 1 && Some(*pgid) != current_pgid)
-        {
-            let process_group = format!("-{}", child_pgid);
-            let _ = hidden_command("kill")
-                .args(["-TERM", &process_group])
-                .output()
-                .await;
-            if timeout(Duration::from_secs(2), child.wait()).await.is_ok() {
-                return;
-            }
-            let _ = hidden_command("kill")
-                .args(["-KILL", &process_group])
-                .output()
-                .await;
-        } else {
-            terminate_child_descendants(pid, "-TERM").await;
-            if timeout(Duration::from_secs(2), child.wait()).await.is_ok() {
-                return;
-            }
-            terminate_child_descendants(pid, "-KILL").await;
+        terminate_child_tree(pid, "-TERM").await;
+        if timeout(Duration::from_secs(2), child.wait()).await.is_ok() {
+            return;
         }
+        terminate_child_tree(pid, "-KILL").await;
     }
 
     let _ = child.kill().await;
 }
 
 #[cfg(unix)]
-fn process_group_for_pid(pid: u32) -> Option<i32> {
-    let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
-    (pgid > 0).then_some(pgid)
+async fn terminate_child_tree(root_pid: u32, signal: &str) {
+    let mut stack = child_pids(root_pid).await;
+    let mut descendants = Vec::new();
+    while let Some(pid) = stack.pop() {
+        stack.extend(child_pids(pid).await);
+        descendants.push(pid);
+    }
+    for pid in descendants.into_iter().rev() {
+        let _ = hidden_command("kill")
+            .args([signal, &pid.to_string()])
+            .output()
+            .await;
+    }
 }
 
 #[cfg(unix)]
-fn current_process_group_id() -> Option<i32> {
-    let pgid = unsafe { libc::getpgrp() };
-    (pgid > 0).then_some(pgid)
-}
-
-#[cfg(unix)]
-async fn terminate_child_descendants(pid: u32, signal: &str) {
-    let _ = hidden_command("pkill")
-        .args([signal, "-P", &pid.to_string()])
+async fn child_pids(pid: u32) -> Vec<u32> {
+    let output = hidden_command("pgrep")
+        .args(["-P", &pid.to_string()])
         .output()
         .await;
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect()
 }

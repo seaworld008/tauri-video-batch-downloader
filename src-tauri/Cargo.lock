@@ -5777,7 +5777,6 @@ dependencies = [
  "futures-util",
  "hex",
  "hls_m3u8",
- "libc",
  "log",
  "m3u8-rs",
  "md-5",
