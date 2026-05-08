@@ -78,6 +78,7 @@ fn builds_safe_probe_and_download_args() {
     assert!(download
         .windows(2)
         .any(|pair| pair == ["--merge-output-format", "mp4"]));
+    assert!(download.iter().any(|arg| arg == "--progress"));
     assert!(download
         .windows(2)
         .any(|pair| pair == ["--ffmpeg-location", "/tmp/ffmpeg"]));
@@ -85,6 +86,7 @@ fn builds_safe_probe_and_download_args() {
         .windows(2)
         .find_map(|pair| (pair[0] == "--progress-template").then_some(pair[1].as_str()))
         .expect("progress template");
+    assert!(progress_template.starts_with("download:download:"));
     assert!(progress_template.contains("%(progress.total_bytes_estimate)s"));
     assert!(progress_template.contains("%(progress._percent_str)s"));
 }
@@ -118,6 +120,11 @@ fn parses_ytdlp_progress_template_lines() {
             .expect("prefixed progress");
     assert_eq!(prefixed.total_bytes, Some(4096));
     assert_eq!(prefixed.progress, Some(0.25));
+
+    let unprefixed = parse_progress_line("1024\tNA\t4096\tNA\t12\t 25.0%\tdownloading")
+        .expect("unprefixed progress emitted by yt-dlp");
+    assert_eq!(unprefixed.total_bytes, Some(4096));
+    assert_eq!(unprefixed.progress, Some(0.25));
 
     let committing =
         parse_progress_line("download:2048\t2048\t0\tNA\tfinished").expect("finished progress");

@@ -131,7 +131,9 @@ pub fn emit_committing(
 
 pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
     let line = normalize_progress_line(line);
-    parse_template_progress_line(&line).or_else(|| parse_classic_progress_line(&line))
+    parse_template_progress_line(&line)
+        .or_else(|| parse_template_progress_line(&format!("download:{line}")))
+        .or_else(|| parse_classic_progress_line(&line))
 }
 
 fn parse_template_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
@@ -355,6 +357,7 @@ pub fn build_download_args(
     let mut args = vec![
         "--no-playlist".into(),
         "--newline".into(),
+        "--progress".into(),
         "--format".into(),
         "bv*+ba/b".into(),
         "--merge-output-format".into(),
@@ -364,7 +367,7 @@ pub fn build_download_args(
         "--output".into(),
         output_template.into(),
         "--progress-template".into(),
-        "download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress._percent_str)s\t%(progress.status)s".into(),
+        "download:download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress._percent_str)s\t%(progress.status)s".into(),
         "--print".into(),
         "after_move:filepath:%(filepath)s".into(),
     ];
