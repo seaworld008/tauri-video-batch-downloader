@@ -10,7 +10,7 @@ import type { AppConfig } from '../../types';
 type ConfigChangeHandler = (section: keyof AppConfig, key: string, value: any) => void;
 
 const inputClass =
-  'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+  'w-full h-10 min-w-0 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 const buttonFocusClass =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
@@ -29,8 +29,8 @@ export const DownloadSettingsSection: React.FC<
       <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>下载设置</h2>
     </div>
 
-    <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
-      <div>
+    <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
+      <div className='min-w-0'>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
           并发下载数
         </label>
@@ -48,7 +48,7 @@ export const DownloadSettingsSection: React.FC<
         <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>建议值：3-8</p>
       </div>
 
-      <div>
+      <div className='min-w-0'>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
           重试次数
         </label>
@@ -140,8 +140,8 @@ export const UiSettingsSection: React.FC<SettingsSectionProps> = ({
       <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>界面设置</h2>
     </div>
 
-    <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
-      <div>
+    <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
+      <div className='min-w-0'>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
           主题
         </label>
@@ -158,7 +158,7 @@ export const UiSettingsSection: React.FC<SettingsSectionProps> = ({
         </select>
       </div>
 
-      <div>
+      <div className='min-w-0'>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
           语言
         </label>
@@ -206,8 +206,8 @@ export const AdvancedSettingsSection: React.FC<SettingsSectionProps> = ({
       <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>高级设置</h2>
     </div>
 
-    <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
-      <div>
+    <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
+      <div className='min-w-0'>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
           日志级别
         </label>
@@ -229,7 +229,7 @@ export const AdvancedSettingsSection: React.FC<SettingsSectionProps> = ({
         </select>
       </div>
 
-      <div>
+      <div className='min-w-0'>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
           最大日志文件数
         </label>

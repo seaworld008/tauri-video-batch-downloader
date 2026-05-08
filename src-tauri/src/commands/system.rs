@@ -3,7 +3,7 @@
 //! This module provides commands for system monitoring, file operations,
 //! and system utilities like opening folders and checking tool availability.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 use tracing::{error, info};
 
@@ -85,6 +85,20 @@ pub async fn open_download_folder(
         }
         Err(e) => {
             error!("❌ Failed to open download folder: {}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Reveal a downloaded file in the platform file manager.
+#[tauri::command]
+pub async fn reveal_path_in_folder(path: String) -> Result<(), String> {
+    info!("📁 Revealing path in folder: {}", path);
+
+    match reveal_path_impl(&path).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            error!("❌ Failed to reveal path: {}", e);
             Err(e.to_string())
         }
     }
@@ -216,6 +230,88 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     {
         hidden_command("xdg-open")
             .arg(folder_path)
+            .spawn()
+            .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RevealTarget {
+    File(PathBuf),
+    Directory(PathBuf),
+}
+
+fn resolve_reveal_target(path: &str) -> AppResult<RevealTarget> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::System("Path cannot be empty".to_string()));
+    }
+
+    let target = PathBuf::from(trimmed);
+    if target.is_file() {
+        return Ok(RevealTarget::File(target));
+    }
+
+    if target.is_dir() {
+        return Ok(RevealTarget::Directory(target));
+    }
+
+    Err(AppError::System(format!("Path not found: {}", trimmed)))
+}
+
+async fn reveal_path_impl(path: &str) -> AppResult<()> {
+    let target = resolve_reveal_target(path)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        match target {
+            RevealTarget::File(path) => {
+                hidden_command("explorer.exe")
+                    .arg(format!("/select,{}", path.to_string_lossy()))
+                    .spawn()
+                    .map_err(|e| AppError::System(format!("Failed to reveal file: {}", e)))?;
+            }
+            RevealTarget::Directory(path) => {
+                hidden_command("explorer.exe")
+                    .arg(path)
+                    .spawn()
+                    .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        match target {
+            RevealTarget::File(path) => {
+                hidden_command("open")
+                    .arg("-R")
+                    .arg(path)
+                    .spawn()
+                    .map_err(|e| AppError::System(format!("Failed to reveal file: {}", e)))?;
+            }
+            RevealTarget::Directory(path) => {
+                hidden_command("open")
+                    .arg(path)
+                    .spawn()
+                    .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let path = match target {
+            RevealTarget::File(path) => path
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| AppError::System("File parent directory not found".to_string()))?,
+            RevealTarget::Directory(path) => path,
+        };
+        hidden_command("xdg-open")
+            .arg(path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
     }
@@ -398,5 +494,32 @@ mod tests {
         let result = check_tool_availability("nonexistent_tool_12345", &["--version"]).await;
         assert!(result.is_ok());
         assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn test_resolve_reveal_target_accepts_files_and_directories() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let file_path = temp_dir.path().join("video.mp4");
+        std::fs::write(&file_path, b"video").expect("write file");
+
+        assert_eq!(
+            resolve_reveal_target(file_path.to_str().expect("file path")).expect("file target"),
+            RevealTarget::File(file_path)
+        );
+        assert_eq!(
+            resolve_reveal_target(temp_dir.path().to_str().expect("dir path")).expect("dir target"),
+            RevealTarget::Directory(temp_dir.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn test_resolve_reveal_target_rejects_missing_paths() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let missing = temp_dir.path().join("missing.mp4");
+
+        let error = resolve_reveal_target(missing.to_str().expect("missing path"))
+            .expect_err("missing target should fail");
+
+        assert!(error.to_string().contains("Path not found"));
     }
 }

@@ -31,6 +31,7 @@ pub struct ParsedYtDlpProgress {
     pub total_bytes: Option<u64>,
     pub speed: f64,
     pub eta: Option<u64>,
+    pub progress: Option<f64>,
     pub status_hint: Option<TaskStatus>,
 }
 
@@ -76,19 +77,41 @@ pub fn emit_progress(
     started: Instant,
     tx: Option<&mpsc::UnboundedSender<(String, DownloadStats)>>,
 ) {
+    let previous_downloaded = task.stats.downloaded_bytes;
+    let previous_update = task.stats.last_update;
+    let now = chrono::Utc::now();
+    let elapsed_since_last = now
+        .signed_duration_since(previous_update)
+        .num_milliseconds()
+        .max(0) as f64
+        / 1000.0;
+    let delta_bytes = progress
+        .downloaded_bytes
+        .saturating_sub(previous_downloaded);
+    let fallback_speed = if progress.speed > 0.0 {
+        progress.speed
+    } else if delta_bytes > 0 && elapsed_since_last > 0.0 {
+        delta_bytes as f64 / elapsed_since_last
+    } else {
+        task.stats.speed
+    };
+
     task.stats.downloaded_bytes = progress.downloaded_bytes;
     task.stats.total_bytes = progress.total_bytes;
-    task.stats.speed = progress.speed;
+    task.stats.speed = fallback_speed;
     task.stats.eta = progress.eta;
     task.stats.progress = progress
-        .total_bytes
-        .map(|total| progress.downloaded_bytes as f64 / total as f64)
+        .progress
+        .or_else(|| {
+            progress
+                .total_bytes
+                .map(|total| progress.downloaded_bytes as f64 / total as f64)
+        })
         .unwrap_or(0.0)
         .clamp(0.0, 0.999);
     task.stats.status_hint = progress.status_hint.clone();
-    task.stats.last_update = chrono::Utc::now();
-    task.stats.start_time =
-        chrono::Utc::now() - chrono::Duration::from_std(started.elapsed()).unwrap_or_default();
+    task.stats.last_update = now;
+    task.stats.start_time = now - chrono::Duration::from_std(started.elapsed()).unwrap_or_default();
     if let Some(tx) = tx {
         let _ = tx.send((task.id.clone(), task.stats.clone()));
     }
@@ -112,11 +135,29 @@ pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
     if parts.len() < 5 {
         return None;
     }
+
     let downloaded_bytes = parse_u64(parts[0])?;
-    let total_bytes = parse_u64(parts[1]);
-    let speed = parse_f64(parts[2]).unwrap_or(0.0);
-    let eta = parse_u64(parts[3]);
-    let status_hint = if parts[4].contains("finished") || parts[4].contains("post_process") {
+    let total_bytes = if parts.len() >= 7 {
+        parse_u64(parts[1]).or_else(|| parse_u64(parts[2]))
+    } else {
+        parse_u64(parts[1])
+    };
+    let speed_index = if parts.len() >= 7 { 3 } else { 2 };
+    let eta_index = if parts.len() >= 7 { 4 } else { 3 };
+    let percent_index = if parts.len() >= 7 { Some(5) } else { None };
+    let status_index = if parts.len() >= 7 { 6 } else { 4 };
+    let speed = parse_f64(parts[speed_index]).unwrap_or(0.0);
+    let eta = parse_u64(parts[eta_index]);
+    let progress = percent_index
+        .and_then(|index| parse_percent(parts[index]))
+        .or_else(|| {
+            total_bytes
+                .filter(|total| *total > 0)
+                .map(|total| downloaded_bytes as f64 / total as f64)
+        });
+    let status_hint = if parts[status_index].contains("finished")
+        || parts[status_index].contains("post_process")
+    {
         Some(TaskStatus::Committing)
     } else {
         None
@@ -126,6 +167,7 @@ pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
         total_bytes,
         speed,
         eta,
+        progress,
         status_hint,
     })
 }
@@ -214,7 +256,7 @@ pub fn build_download_args(
         "--output".into(),
         output_template.into(),
         "--progress-template".into(),
-        "download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress.status)s".into(),
+        "download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress._percent_str)s\t%(progress.status)s".into(),
         "--print".into(),
         "after_move:filepath:%(filepath)s".into(),
     ];
@@ -337,4 +379,10 @@ fn parse_u64(value: &str) -> Option<u64> {
 
 fn parse_f64(value: &str) -> Option<f64> {
     value.trim().parse::<f64>().ok()
+}
+
+fn parse_percent(value: &str) -> Option<f64> {
+    let trimmed = value.trim().trim_end_matches('%').trim();
+    let percent = parse_f64(trimmed)?;
+    Some((percent / 100.0).clamp(0.0, 0.999))
 }
