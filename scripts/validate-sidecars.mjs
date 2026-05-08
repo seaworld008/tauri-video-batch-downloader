@@ -9,7 +9,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_CONFIG = 'src-tauri/tauri.conf.json';
 const DEFAULT_CAPABILITY = 'src-tauri/capabilities/migrated.json';
 const DEFAULT_BINARIES_DIR = 'src-tauri/binaries';
-const SIDECARS = ['yt-dlp', 'ffmpeg'];
+const SIDECARS = ['yt-dlp', 'ffmpeg', 'deno'];
 const RELEASE_TARGETS = [
   'x86_64-pc-windows-msvc',
   'x86_64-apple-darwin',
@@ -20,6 +20,7 @@ const RELEASE_TARGETS = [
 const MIN_REAL_BINARY_BYTES = {
   'yt-dlp': 1024 * 1024,
   ffmpeg: 1024 * 1024,
+  deno: 1024 * 1024,
 };
 
 const PLACEHOLDER_MARKERS = ['sidecar placeholder', 'replace with the real', 'replace with real'];

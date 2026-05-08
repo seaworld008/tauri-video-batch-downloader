@@ -2,9 +2,7 @@
   "identifier": "migrated",
   "description": "permissions that were migrated from v1",
   "local": true,
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:default",
@@ -20,6 +18,11 @@
           "name": "binaries/ffmpeg",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "binaries/deno",
+          "sidecar": true,
+          "args": true
         }
       ]
     },
@@ -33,6 +36,11 @@
         },
         {
           "name": "binaries/ffmpeg",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "binaries/deno",
           "sidecar": true,
           "args": true
         }

@@ -16,7 +16,7 @@ use crate::core::downloader::{DownloadStats, DownloadTask};
 use crate::core::models::{ExternalVideoInfo, SourcePlatform};
 use crate::core::ytdlp_support::{
     build_download_args, build_probe_args, classify_error, detect_platform, emit_committing,
-    emit_progress, env_path, exe_name, external_info_from_json, sanitize_filename, sidecar_path,
+    emit_progress, env_path, external_info_from_json, sanitize_filename, sidecar_path,
     spawn_line_reader,
 };
 pub use crate::core::ytdlp_support::{parse_progress_line, YtDlpDownloaderConfig};
@@ -44,7 +44,7 @@ impl YtDlpDownloader {
     }
 
     pub fn build_probe_args(url: &str) -> Vec<String> {
-        build_probe_args(url)
+        build_probe_args(url, None)
     }
 
     pub fn build_download_args(
@@ -53,14 +53,15 @@ impl YtDlpDownloader {
         output_template: &str,
         ffmpeg_path: Option<&Path>,
     ) -> Vec<String> {
-        build_download_args(url, output_dir, output_template, ffmpeg_path)
+        build_download_args(url, output_dir, output_template, ffmpeg_path, None)
     }
 
     pub async fn probe_video_info(&self, url: &str) -> Result<ExternalVideoInfo> {
         crate::utils::validation::assert_http_url(url)?;
         let tool = self.resolve_ytdlp_command();
+        let js_runtime = self.resolve_deno_command();
         let output = hidden_command(&tool)
-            .args(Self::build_probe_args(url))
+            .args(build_probe_args(url, js_runtime.as_deref()))
             .output()
             .await;
         let output = match output {
@@ -88,6 +89,7 @@ impl YtDlpDownloader {
     ) -> Result<()> {
         let ytdlp = self.resolve_ytdlp_command();
         let ffmpeg = self.resolve_ffmpeg_command().await?;
+        let js_runtime = self.resolve_deno_command();
         tokio::fs::create_dir_all(&task.output_path).await?;
 
         let safe_name = sanitize_filename(
@@ -96,14 +98,20 @@ impl YtDlpDownloader {
                 .and_then(|s| s.to_str())
                 .unwrap_or("video"),
         );
-        let args = Self::build_download_args(
+        let args = build_download_args(
             &task.url,
             Path::new(&task.output_path),
             &format!("{}.%(ext)s", safe_name),
             Some(&ffmpeg),
+            js_runtime.as_deref(),
         );
 
-        let mut child = hidden_command(&ytdlp)
+        let mut command = hidden_command(&ytdlp);
+        #[cfg(unix)]
+        {
+            command.process_group(0);
+        }
+        let mut child = command
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -146,7 +154,7 @@ impl YtDlpDownloader {
                 }
                 _ = sleep(Duration::from_millis(150)) => {
                     if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-                        let _ = child.kill().await;
+                        terminate_external_child(&mut child).await;
                         return Err(if cancel_flag.load(Ordering::Relaxed) {
                             anyhow::anyhow!("download_cancelled")
                         } else {
@@ -201,7 +209,16 @@ impl YtDlpDownloader {
             .clone()
             .or_else(|| env_path("VDP_YTDLP_PATH"))
             .or_else(|| sidecar_path("yt-dlp"))
-            .unwrap_or_else(|| PathBuf::from(exe_name("yt-dlp")))
+            .unwrap_or_else(|| PathBuf::from(crate::core::ytdlp_support::exe_name("yt-dlp")))
+    }
+
+    fn resolve_deno_command(&self) -> Option<PathBuf> {
+        self.config
+            .deno_path
+            .clone()
+            .or_else(|| env_path("VDP_DENO_PATH"))
+            .or_else(|| sidecar_path("deno"))
+            .filter(|path| path.exists())
     }
 
     async fn resolve_ffmpeg_command(&self) -> Result<PathBuf> {
@@ -211,7 +228,7 @@ impl YtDlpDownloader {
             .clone()
             .or_else(|| env_path("VDP_FFMPEG_PATH"))
             .or_else(|| sidecar_path("ffmpeg"))
-            .unwrap_or_else(|| PathBuf::from(exe_name("ffmpeg")));
+            .unwrap_or_else(|| PathBuf::from(crate::core::ytdlp_support::exe_name("ffmpeg")));
         match hidden_command(&path).arg("-version").output().await {
             Ok(output) if output.status.success() => Ok(path),
             Ok(_) => Err(anyhow::anyhow!(
@@ -250,4 +267,37 @@ fn discover_output_file(output_dir: &Path, safe_name: &str) -> Option<PathBuf> {
 
     matches.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
     matches.into_iter().map(|(path, _)| path).next()
+}
+
+async fn terminate_external_child(child: &mut tokio::process::Child) {
+    let Some(pid) = child.id() else {
+        let _ = child.kill().await;
+        return;
+    };
+
+    #[cfg(windows)]
+    {
+        let _ = hidden_command("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output()
+            .await;
+    }
+
+    #[cfg(unix)]
+    {
+        let process_group = format!("-{}", pid);
+        let _ = hidden_command("kill")
+            .args(["-TERM", &process_group])
+            .output()
+            .await;
+        if timeout(Duration::from_secs(2), child.wait()).await.is_ok() {
+            return;
+        }
+        let _ = hidden_command("kill")
+            .args(["-KILL", &process_group])
+            .output()
+            .await;
+    }
+
+    let _ = child.kill().await;
 }

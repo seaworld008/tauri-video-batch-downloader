@@ -66,11 +66,12 @@ pnpm sidecars:check:local
 
 ## sidecar 外部工具
 
-当前 Tauri 配置声明了两个随包 sidecar：
+当前 Tauri 配置声明了三个随包 sidecar：
 
 ```text
 src-tauri/binaries/yt-dlp-$TARGET_TRIPLE
 src-tauri/binaries/ffmpeg-$TARGET_TRIPLE
+src-tauri/binaries/deno-$TARGET_TRIPLE
 ```
 
 Windows 目标文件需要 `.exe`
@@ -78,7 +79,8 @@ Windows 目标文件需要 `.exe`
 
 - 文件名与 Tauri target triple 完全匹配。
 - macOS/Linux 文件具有可执行权限。
-- `yt-dlp --version`、`yt-dlp --help`、`ffmpeg -version` 在打包后可执行。
+- `yt-dlp --version`、`yt-dlp --help`、`ffmpeg -version`、`deno --version`
+  在打包后可执行。
 - `yt-dlp` release 下载源必须校验 checksum。
 - `ffmpeg` 暂不做 App 内自动下载，发布包应使用项目选择的可信构建来源。
 
@@ -118,7 +120,10 @@ node scripts/validate-sidecars.mjs --target x86_64-pc-windows-msvc
 - `ffmpeg` 默认从 `ffmpeg-static`
   当前 runner 二进制复制；如果项目选择了其他可信来源，可设置 `VDP_FFMPEG_BINARY`
   指向本地二进制。
+- `deno` 从 Deno 官方 GitHub latest release 下载对应平台 zip，并校验
+  `.sha256sum`，用于 yt-dlp 的 YouTube EJS 解密/挑战脚本执行。
 - 如需使用已审计的 `yt-dlp` 二进制，可设置 `VDP_YTDLP_BINARY`。
+- 如需使用已审计的 `deno` 二进制，可设置 `VDP_DENO_BINARY`。
 - `src-tauri/binaries/` 下真实二进制不入库；release
   workflow 会在每个平台 runner 上按目标准备。
 

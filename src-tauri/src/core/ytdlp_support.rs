@@ -21,6 +21,7 @@ pub enum ToolCapabilityStatus {
 pub struct YtDlpDownloaderConfig {
     pub yt_dlp_path: Option<PathBuf>,
     pub ffmpeg_path: Option<PathBuf>,
+    pub deno_path: Option<PathBuf>,
     pub user_agent: String,
 }
 
@@ -63,6 +64,7 @@ impl Default for YtDlpDownloaderConfig {
         Self {
             yt_dlp_path: None,
             ffmpeg_path: None,
+            deno_path: None,
             user_agent: "VideoDownloaderPro/1.0.0".to_string(),
         }
     }
@@ -182,13 +184,15 @@ pub fn is_direct_media_url(url: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn build_probe_args(url: &str) -> Vec<String> {
-    vec![
+pub fn build_probe_args(url: &str, js_runtime_path: Option<&Path>) -> Vec<String> {
+    let mut args = vec![
         "--no-playlist".into(),
         "--newline".into(),
         "--dump-single-json".into(),
-        url.into(),
-    ]
+    ];
+    append_js_runtime_args(&mut args, js_runtime_path);
+    args.push(url.into());
+    args
 }
 
 pub fn build_download_args(
@@ -196,6 +200,7 @@ pub fn build_download_args(
     output_dir: &Path,
     output_template: &str,
     ffmpeg_path: Option<&Path>,
+    js_runtime_path: Option<&Path>,
 ) -> Vec<String> {
     let mut args = vec![
         "--no-playlist".into(),
@@ -217,8 +222,16 @@ pub fn build_download_args(
         args.push("--ffmpeg-location".into());
         args.push(path.to_string_lossy().to_string());
     }
+    append_js_runtime_args(&mut args, js_runtime_path);
     args.push(url.into());
     args
+}
+
+fn append_js_runtime_args(args: &mut Vec<String>, js_runtime_path: Option<&Path>) {
+    if let Some(path) = js_runtime_path {
+        args.push("--js-runtimes".into());
+        args.push(format!("deno:{}", path.to_string_lossy()));
+    }
 }
 
 pub fn external_info_from_json(json: &Value, original_url: &str) -> ExternalVideoInfo {
@@ -285,6 +298,11 @@ pub fn classify_error(message: &str) -> String {
         "rate_limited: source is rate limiting yt-dlp".into()
     } else if normalized.contains("update") && normalized.contains("yt-dlp") {
         "ytdlp_update_recommended: bundled yt-dlp may be too old for this site".into()
+    } else if normalized.contains("no supported javascript runtime")
+        || normalized.contains("--js-runtimes")
+        || normalized.contains("youtube extraction without a js runtime")
+    {
+        "js_runtime_missing: YouTube extraction requires the bundled Deno JavaScript runtime".into()
     } else {
         format!("external_tool_failed: {}", message.trim())
     }

@@ -7,12 +7,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg",
-      "msi",
-      "nsis"
-    ],
+    "targets": ["app", "dmg", "msi", "nsis"],
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
@@ -22,17 +17,8 @@
         "silent": true
       }
     },
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/yt-dlp",
-      "binaries/ffmpeg"
-    ],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "externalBin": ["binaries/yt-dlp", "binaries/ffmpeg", "binaries/deno"],
     "resources": [],
     "copyright": "© 2024 Video Downloader Pro Team",
     "category": "Productivity",
@@ -45,17 +31,13 @@
     },
     "linux": {
       "deb": {
-        "depends": [
-          "libwebkit2gtk-4.0-37",
-          "libgtk-3-0",
-          "libayatana-appindicator3-1"
-        ]
+        "depends": ["libwebkit2gtk-4.0-37", "libgtk-3-0", "libayatana-appindicator3-1"]
       }
     }
   },
   "productName": "Video Downloader Pro",
   "mainBinaryName": "Video Downloader Pro",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "identifier": "com.videodownloader.pro",
   "plugins": {},
   "app": {

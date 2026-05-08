@@ -2,7 +2,10 @@ use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use crate::core::models::{SourcePlatform, TaskStatus};
 use crate::core::{
@@ -109,6 +112,10 @@ fn classifies_external_tool_errors() {
         .starts_with("unsupported_extractor"));
     assert!(YtDlpDownloader::classify_error("ffmpeg not found").starts_with("ffmpeg_missing"));
     assert!(YtDlpDownloader::classify_error("HTTP Error 429").starts_with("rate_limited"));
+    assert!(YtDlpDownloader::classify_error(
+        "WARNING: [youtube] No supported JavaScript runtime could be found"
+    )
+    .starts_with("js_runtime_missing"));
 }
 
 #[test]
@@ -173,6 +180,7 @@ echo "ffmpeg fake"
     let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
         yt_dlp_path: Some(ytdlp),
         ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
         user_agent: "test".to_string(),
     });
     let mut task = DownloadTask::new(
@@ -239,6 +247,7 @@ echo "ffmpeg fake"
     let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
         yt_dlp_path: Some(ytdlp),
         ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
         user_agent: "test".to_string(),
     });
     let mut task = DownloadTask::new(
@@ -261,6 +270,180 @@ echo "ffmpeg fake"
     assert!(PathBuf::from(&task.output_path)
         .join(&task.filename)
         .exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fake_sidecar_download_passes_bundled_deno_runtime() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().expect("temp dir");
+    let bin_dir = temp_dir.path().join("bin");
+    let out_dir = temp_dir.path().join("out");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let ytdlp = bin_dir.join("yt-dlp");
+    let ffmpeg = bin_dir.join("ffmpeg");
+    let deno = bin_dir.join("deno");
+    write_executable(
+        &ytdlp,
+        r#"#!/usr/bin/env sh
+outdir=""
+runtime=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paths) shift; outdir="$1" ;;
+    --js-runtimes) shift; runtime="$1" ;;
+  esac
+  shift
+done
+case "$runtime" in
+  deno:*) ;;
+  *) echo "missing deno runtime" >&2; exit 9 ;;
+esac
+mkdir -p "$outdir"
+outfile="$outdir/Deno Runtime Video.mp4"
+printf "0123456789" > "$outfile"
+echo "download:10	10	0	0	finished"
+echo "filepath:$outfile"
+"#,
+    );
+    write_executable(
+        &ffmpeg,
+        r#"#!/usr/bin/env sh
+echo "ffmpeg fake"
+"#,
+    );
+    write_executable(
+        &deno,
+        r#"#!/usr/bin/env sh
+echo "deno fake"
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: Some(ffmpeg),
+        deno_path: Some(deno),
+        user_agent: "test".to_string(),
+    });
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        out_dir.to_string_lossy().to_string(),
+        "Deno Runtime Video.mp4".to_string(),
+    );
+
+    downloader
+        .download(
+            &mut task,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            None,
+        )
+        .await
+        .expect("fake sidecar download should receive deno runtime");
+
+    assert_eq!(task.filename, "Deno Runtime Video.mp4");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fake_sidecar_pause_terminates_child_process_group() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().expect("temp dir");
+    let bin_dir = temp_dir.path().join("bin");
+    let out_dir = temp_dir.path().join("out");
+    let ytdlp_pid_file = temp_dir.path().join("ytdlp.pid");
+    let child_pid_file = temp_dir.path().join("child.pid");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let ytdlp = bin_dir.join("yt-dlp");
+    let ffmpeg = bin_dir.join("ffmpeg");
+    write_executable(
+        &ytdlp,
+        &format!(
+            r#"#!/usr/bin/env sh
+printf '%s\n' "$$" > "{}"
+sleep 30 &
+printf '%s\n' "$!" > "{}"
+wait
+"#,
+            ytdlp_pid_file.display(),
+            child_pid_file.display()
+        ),
+    );
+    write_executable(
+        &ffmpeg,
+        r#"#!/usr/bin/env sh
+echo "ffmpeg fake"
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
+        user_agent: "test".to_string(),
+    });
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        out_dir.to_string_lossy().to_string(),
+        "Pause Video.mp4".to_string(),
+    );
+    let pause_flag = Arc::new(AtomicBool::new(false));
+    let pause_signal = Arc::clone(&pause_flag);
+    let ytdlp_pid_probe = ytdlp_pid_file.clone();
+
+    tokio::spawn(async move {
+        for _ in 0..200 {
+            if ytdlp_pid_probe.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        pause_signal.store(true, Ordering::Relaxed);
+    });
+
+    let result = downloader
+        .download(
+            &mut task,
+            Arc::new(AtomicBool::new(false)),
+            pause_flag,
+            None,
+        )
+        .await;
+
+    assert_eq!(result.unwrap_err().to_string(), "download_paused");
+    let ytdlp_pid = std::fs::read_to_string(&ytdlp_pid_file)
+        .expect("yt-dlp pid")
+        .trim()
+        .to_string();
+    let child_pid = std::fs::read_to_string(&child_pid_file)
+        .expect("child pid")
+        .trim()
+        .to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !process_exists(&ytdlp_pid),
+        "yt-dlp process should be terminated"
+    );
+    assert!(
+        !process_exists(&child_pid),
+        "yt-dlp descendant process should be terminated"
+    );
+}
+
+#[cfg(unix)]
+fn process_exists(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]

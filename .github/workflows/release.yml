@@ -171,7 +171,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/binaries
-          for name in yt-dlp ffmpeg; do
+          for name in yt-dlp ffmpeg deno; do
             path="src-tauri/binaries/${name}-x86_64-unknown-linux-gnu"
             if [ ! -f "$path" ]; then
               printf '#!/usr/bin/env sh\nexit 0\n' > "$path"
@@ -246,7 +246,7 @@ jobs:
             pnpm sidecars:prepare --target "$target"
           done
           if [[ "${{ matrix.platform.build_target }}" == "universal-apple-darwin" ]]; then
-            for name in yt-dlp ffmpeg; do
+            for name in yt-dlp ffmpeg deno; do
               x64="src-tauri/binaries/${name}-x86_64-apple-darwin"
               arm64="src-tauri/binaries/${name}-aarch64-apple-darwin"
               universal="src-tauri/binaries/${name}-universal-apple-darwin"
