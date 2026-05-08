@@ -2670,6 +2670,12 @@ impl DownloadManager {
         }
 
         self.update_stats().await;
+        if let Err(err) = self.persist_state().await {
+            warn!(
+                "Failed to persist state after finalizing task state: {}",
+                err
+            );
+        }
         Ok(())
     }
 
@@ -3803,6 +3809,45 @@ mod tests {
         );
         assert_eq!(task.downloaded_size, 5);
         assert_eq!(task.progress, 100.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_completion_event_persists_final_state() -> AppResult<()> {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state_path = temp_dir.path().join("download_state.json");
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new_with_state_path(config.clone(), state_path.clone())?;
+        let final_path = temp_dir.path().join("final-ytdlp-name.mp4");
+        fs::write(&final_path, b"video")
+            .await
+            .map_err(AppError::Io)?;
+
+        let task_id = manager
+            .add_task(
+                "https://www.youtube.com/watch?v=abc".to_string(),
+                temp_dir.path().to_string_lossy().to_string(),
+            )
+            .await?;
+
+        manager
+            .apply_event_side_effects(&DownloadEvent::TaskCompleted {
+                task_id: task_id.clone(),
+                file_path: final_path.to_string_lossy().to_string(),
+            })
+            .await?;
+        drop(manager);
+
+        let manager = DownloadManager::new_with_state_path(config, state_path)?;
+        let task = manager.tasks.get(&task_id).expect("task must exist");
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert_eq!(task.progress, 100.0);
+        assert_eq!(task.downloaded_size, 5);
+        assert_eq!(
+            task.resolved_path.as_deref(),
+            Some(final_path.to_string_lossy().as_ref())
+        );
 
         Ok(())
     }

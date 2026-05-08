@@ -1,7 +1,11 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use crate::utils::process::hidden_command;
+
+const TOOL_CONTRACT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const YTDLP_REQUIRED_FLAGS: &[&str] = &[
     "--dump-single-json",
@@ -21,7 +25,18 @@ pub(crate) async fn validate_tool_contract(path: &Path, tool_id: &str) -> Result
 }
 
 async fn validate_ytdlp_contract(path: &Path) -> Result<()> {
-    let output = hidden_command(path).arg("--help").output().await?;
+    validate_ytdlp_contract_with_timeout(path, TOOL_CONTRACT_TIMEOUT).await
+}
+
+async fn validate_ytdlp_contract_with_timeout(
+    path: &Path,
+    contract_timeout: Duration,
+) -> Result<()> {
+    let mut command = hidden_command(path);
+    command.arg("--help").kill_on_drop(true);
+    let output = timeout(contract_timeout, command.output())
+        .await
+        .map_err(|_| anyhow!("version_unsupported: yt-dlp compatibility probe timed out"))??;
     if !output.status.success() {
         return Err(anyhow!(
             "version_unsupported: yt-dlp compatibility probe failed"
@@ -37,7 +52,11 @@ async fn validate_ytdlp_contract(path: &Path) -> Result<()> {
 }
 
 async fn validate_ffmpeg_contract(path: &Path) -> Result<()> {
-    let output = hidden_command(path).arg("-version").output().await?;
+    let mut command = hidden_command(path);
+    command.arg("-version").kill_on_drop(true);
+    let output = timeout(TOOL_CONTRACT_TIMEOUT, command.output())
+        .await
+        .map_err(|_| anyhow!("version_unsupported: ffmpeg compatibility probe timed out"))??;
     if !output.status.success() {
         return Err(anyhow!(
             "version_unsupported: ffmpeg compatibility probe failed"
@@ -91,5 +110,30 @@ mod tests {
         assert!(err.to_string().contains("version_unsupported"));
         assert!(err.to_string().contains("--dump-single-json"));
         assert!(err.to_string().contains("--progress-template"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_hanging_ytdlp_contract_probe() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let ytdlp = temp.path().join("yt-dlp");
+        std::fs::write(
+            &ytdlp,
+            r#"#!/usr/bin/env sh
+exec sleep 30
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&ytdlp).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&ytdlp, permissions).unwrap();
+
+        let err = validate_ytdlp_contract_with_timeout(&ytdlp, Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("timed out"));
     }
 }

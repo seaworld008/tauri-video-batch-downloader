@@ -79,15 +79,14 @@ pub fn emit_progress(
 ) {
     let previous_downloaded = task.stats.downloaded_bytes;
     let previous_update = task.stats.last_update;
+    let downloaded_bytes = progress.downloaded_bytes.max(previous_downloaded);
     let now = chrono::Utc::now();
     let elapsed_since_last = now
         .signed_duration_since(previous_update)
         .num_milliseconds()
         .max(0) as f64
         / 1000.0;
-    let delta_bytes = progress
-        .downloaded_bytes
-        .saturating_sub(previous_downloaded);
+    let delta_bytes = downloaded_bytes.saturating_sub(previous_downloaded);
     let fallback_speed = if progress.speed > 0.0 {
         progress.speed
     } else if delta_bytes > 0 && elapsed_since_last > 0.0 {
@@ -96,8 +95,8 @@ pub fn emit_progress(
         task.stats.speed
     };
 
-    task.stats.downloaded_bytes = progress.downloaded_bytes;
-    task.stats.total_bytes = progress.total_bytes;
+    task.stats.downloaded_bytes = downloaded_bytes;
+    task.stats.total_bytes = progress.total_bytes.or(task.stats.total_bytes);
     task.stats.speed = fallback_speed;
     task.stats.eta = progress.eta;
     task.stats.progress = progress
@@ -105,7 +104,8 @@ pub fn emit_progress(
         .or_else(|| {
             progress
                 .total_bytes
-                .map(|total| progress.downloaded_bytes as f64 / total as f64)
+                .or(task.stats.total_bytes)
+                .map(|total| downloaded_bytes as f64 / total as f64)
         })
         .unwrap_or(0.0)
         .clamp(0.0, 0.999);
@@ -368,6 +368,8 @@ pub fn build_download_args(
         output_template.into(),
         "--progress-template".into(),
         "download:download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress._percent_str)s\t%(progress.status)s".into(),
+        "--print".into(),
+        "before_dl:filesize:%(filesize)s\t%(filesize_approx)s".into(),
         "--print".into(),
         "after_move:filepath:%(filepath)s".into(),
     ];

@@ -89,6 +89,11 @@ fn builds_safe_probe_and_download_args() {
     assert!(progress_template.starts_with("download:download:"));
     assert!(progress_template.contains("%(progress.total_bytes_estimate)s"));
     assert!(progress_template.contains("%(progress._percent_str)s"));
+    assert!(download.windows(2).any(|pair| pair
+        == [
+            "--print",
+            "before_dl:filesize:%(filesize)s\t%(filesize_approx)s"
+        ]));
 }
 
 #[test]
@@ -217,6 +222,264 @@ fn maps_probe_json_to_external_info() {
     assert_eq!(info.title.as_deref(), Some("Example"));
     assert_eq!(info.duration_seconds, Some(12.5));
     assert!(!info.requires_auth);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fake_sidecar_probe_times_out() {
+    use tempfile::tempdir;
+    use tokio::time::Duration;
+
+    let temp = tempdir().unwrap();
+    let ytdlp = temp.path().join("yt-dlp");
+    write_executable(
+        &ytdlp,
+        r#"#!/usr/bin/env sh
+exec sleep 30
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: None,
+        deno_path: None,
+        user_agent: "test".to_string(),
+    });
+
+    let result = downloader
+        .probe_video_info_with_timeout(
+            "https://www.youtube.com/watch?v=abc",
+            Duration::from_secs(1),
+        )
+        .await;
+
+    assert!(result.unwrap_err().to_string().contains("probe_timeout"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fake_sidecar_reports_live_progress_from_part_file_before_stdout_progress() {
+    use tempfile::tempdir;
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+
+    let temp_dir = tempdir().expect("temp dir");
+    let bin_dir = temp_dir.path().join("bin");
+    let out_dir = temp_dir.path().join("out");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let ytdlp = bin_dir.join("yt-dlp");
+    let ffmpeg = bin_dir.join("ffmpeg");
+    write_executable(
+        &ytdlp,
+        r#"#!/usr/bin/env sh
+outdir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paths) shift; outdir="$1" ;;
+  esac
+  shift
+done
+mkdir -p "$outdir"
+part="$outdir/Filesystem Video.f399.mp4.part"
+outfile="$outdir/Filesystem Video.mp4"
+echo "filesize:NA	100"
+sleep 1
+printf "01234567890123456789" > "$part"
+sleep 1
+mv "$part" "$outfile"
+echo "filepath:$outfile"
+"#,
+    );
+    write_executable(
+        &ffmpeg,
+        r#"#!/usr/bin/env sh
+echo "ffmpeg fake"
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
+        user_agent: "test".to_string(),
+    });
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        out_dir.to_string_lossy().to_string(),
+        "Filesystem Video.mp4".to_string(),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    downloader
+        .download(
+            &mut task,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Some(tx),
+        )
+        .await
+        .expect("fake sidecar download");
+
+    let mut saw_filesystem_progress = false;
+    while let Ok(Some((_task_id, stats))) = timeout(Duration::from_millis(100), rx.recv()).await {
+        if stats.downloaded_bytes >= 20 && stats.total_bytes == Some(100) {
+            saw_filesystem_progress = true;
+            break;
+        }
+    }
+
+    assert!(saw_filesystem_progress);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fake_sidecar_samples_part_file_while_stdout_is_busy() {
+    use tempfile::tempdir;
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+
+    let temp_dir = tempdir().expect("temp dir");
+    let bin_dir = temp_dir.path().join("bin");
+    let out_dir = temp_dir.path().join("out");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let ytdlp = bin_dir.join("yt-dlp");
+    let ffmpeg = bin_dir.join("ffmpeg");
+    write_executable(
+        &ytdlp,
+        r#"#!/usr/bin/env sh
+outdir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paths) shift; outdir="$1" ;;
+  esac
+  shift
+done
+mkdir -p "$outdir"
+part="$outdir/Busy Stdout Video.f399.mp4.part"
+outfile="$outdir/Busy Stdout Video.mp4"
+echo "filesize:NA	10000"
+: > "$part"
+i=0
+while [ "$i" -lt 600 ]; do
+  printf "0123456789" >> "$part"
+  echo "noise:$i"
+  if [ $((i % 10)) -eq 0 ]; then
+    sleep 0.02
+  fi
+  i=$((i + 1))
+done
+mv "$part" "$outfile"
+echo "filepath:$outfile"
+"#,
+    );
+    write_executable(
+        &ffmpeg,
+        r#"#!/usr/bin/env sh
+echo "ffmpeg fake"
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
+        user_agent: "test".to_string(),
+    });
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        out_dir.to_string_lossy().to_string(),
+        "Busy Stdout Video.mp4".to_string(),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    downloader
+        .download(
+            &mut task,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Some(tx),
+        )
+        .await
+        .expect("fake sidecar download");
+
+    let mut saw_filesystem_progress = false;
+    while let Ok(Some((_task_id, stats))) = timeout(Duration::from_millis(100), rx.recv()).await {
+        if stats.downloaded_bytes > 0 && stats.total_bytes == Some(10000) {
+            saw_filesystem_progress = true;
+            break;
+        }
+    }
+
+    assert!(saw_filesystem_progress);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fake_sidecar_completes_after_output_streams_close() {
+    use tempfile::tempdir;
+    use tokio::time::{timeout, Duration};
+
+    let temp_dir = tempdir().expect("temp dir");
+    let bin_dir = temp_dir.path().join("bin");
+    let out_dir = temp_dir.path().join("out");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let ytdlp = bin_dir.join("yt-dlp");
+    let ffmpeg = bin_dir.join("ffmpeg");
+    write_executable(
+        &ytdlp,
+        r#"#!/usr/bin/env sh
+outdir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paths) shift; outdir="$1" ;;
+  esac
+  shift
+done
+mkdir -p "$outdir"
+outfile="$outdir/Closed Streams Video.mp4"
+printf "0123456789" > "$outfile"
+echo "filepath:$outfile"
+"#,
+    );
+    write_executable(
+        &ffmpeg,
+        r#"#!/usr/bin/env sh
+echo "ffmpeg fake"
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
+        user_agent: "test".to_string(),
+    });
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        out_dir.to_string_lossy().to_string(),
+        "Closed Streams Video.mp4".to_string(),
+    );
+
+    timeout(
+        Duration::from_secs(10),
+        downloader.download(
+            &mut task,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            None,
+        ),
+    )
+    .await
+    .expect("download should not spin after output closes")
+    .expect("fake sidecar download");
+
+    assert_eq!(task.filename, "Closed Streams Video.mp4");
 }
 
 #[cfg(unix)]
