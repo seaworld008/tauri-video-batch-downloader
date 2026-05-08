@@ -625,6 +625,84 @@ echo "ffmpeg fake"
 
 #[cfg(unix)]
 #[tokio::test]
+async fn fake_sidecar_samples_title_named_part_file_for_manual_placeholder() {
+    use tempfile::tempdir;
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+
+    let temp_dir = tempdir().expect("temp dir");
+    let bin_dir = temp_dir.path().join("bin");
+    let out_dir = temp_dir.path().join("out");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let ytdlp = bin_dir.join("yt-dlp");
+    let ffmpeg = bin_dir.join("ffmpeg");
+    write_executable(
+        &ytdlp,
+        r#"#!/usr/bin/env sh
+outdir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paths) shift; outdir="$1" ;;
+  esac
+  shift
+done
+mkdir -p "$outdir"
+outfile="$outdir/Real YouTube Title.f399.mp4"
+echo "[download] Destination: $outfile"
+dd if=/dev/zero of="$outfile.part" bs=1024 count=4 >/dev/null 2>&1
+sleep 1
+mv "$outfile.part" "$outfile"
+echo "filepath:$outfile"
+"#,
+    );
+    write_executable(
+        &ffmpeg,
+        r#"#!/usr/bin/env sh
+echo "ffmpeg fake"
+"#,
+    );
+
+    let downloader = YtDlpDownloader::new(YtDlpDownloaderConfig {
+        yt_dlp_path: Some(ytdlp),
+        ffmpeg_path: Some(ffmpeg),
+        deno_path: None,
+        user_agent: "test".to_string(),
+    });
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        out_dir.to_string_lossy().to_string(),
+        "任务_1.mp4".to_string(),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    downloader
+        .download(
+            &mut task,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Some(tx),
+        )
+        .await
+        .expect("fake sidecar download");
+
+    let mut saw_part_progress = false;
+    while let Ok(Some((_task_id, stats))) = timeout(Duration::from_millis(100), rx.recv()).await {
+        if stats.downloaded_bytes >= 4096 {
+            saw_part_progress = true;
+            break;
+        }
+    }
+    assert!(
+        saw_part_progress,
+        "title-named .part file should be sampled"
+    );
+    assert_eq!(task.filename, "Real YouTube Title.f399.mp4");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn fake_sidecar_download_discovers_file_when_final_path_is_not_printed() {
     use tempfile::tempdir;
 

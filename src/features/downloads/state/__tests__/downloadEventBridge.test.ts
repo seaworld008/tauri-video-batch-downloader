@@ -56,8 +56,10 @@ describe('downloadEventBridge', () => {
     const { initializeDownloadEventBridge } = await import('../downloadEventBridge');
     const { useDownloadStore } = await import('../../../../stores/downloadStore');
 
+    const refreshTasks = vi.fn().mockResolvedValue(undefined);
     useDownloadStore.setState({
       tasks: [buildTask('task-1', 'downloading')],
+      refreshTasks,
       stats: {
         ...useDownloadStore.getState().stats,
         total_tasks: 1,
@@ -88,6 +90,7 @@ describe('downloadEventBridge', () => {
     expect(state.stats.total_tasks).toBe(1);
     expect(state.stats.completed_tasks).toBe(1);
     expect(state.stats.active_downloads).toBe(0);
+    expect(refreshTasks).toHaveBeenCalledTimes(1);
   });
 
   it('uses polling only as a runtime sync compensator when work is active', async () => {

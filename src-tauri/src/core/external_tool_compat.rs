@@ -5,7 +5,7 @@ use tokio::time::timeout;
 
 use crate::utils::process::hidden_command;
 
-const TOOL_CONTRACT_TIMEOUT: Duration = Duration::from_secs(30);
+const TOOL_CONTRACT_TIMEOUT: Duration = Duration::from_secs(60);
 
 const YTDLP_REQUIRED_FLAGS: &[&str] = &[
     "--dump-single-json",

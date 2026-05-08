@@ -187,32 +187,7 @@ impl YtDlpDownloader {
         let started = Instant::now();
         let mut stderr = String::new();
         let mut final_path: Option<PathBuf> = None;
-        let mut handle_line = |line: String, task: &mut DownloadTask| {
-            if let Some(path_start) = line.find("filepath:") {
-                let path = &line[path_start + "filepath:".len()..];
-                final_path = Some(PathBuf::from(path.trim()));
-            } else if let Some(total_bytes) = parse_filesize_line(&line) {
-                emit_progress(
-                    task,
-                    &crate::core::ytdlp_support::ParsedYtDlpProgress {
-                        downloaded_bytes: task.stats.downloaded_bytes,
-                        total_bytes: Some(total_bytes),
-                        speed: task.stats.speed,
-                        eta: task.stats.eta,
-                        progress: (task.stats.downloaded_bytes > 0)
-                            .then_some(task.stats.downloaded_bytes as f64 / total_bytes as f64),
-                        status_hint: None,
-                    },
-                    started,
-                    progress_tx.as_ref(),
-                );
-            } else if let Some(progress) = parse_progress_line(&line) {
-                emit_progress(task, &progress, started, progress_tx.as_ref());
-            } else if !line.trim().is_empty() {
-                stderr.push_str(&line);
-                stderr.push('\n');
-            }
-        };
+        let mut partial_name_prefix = (!use_extractor_title_template).then(|| safe_name.clone());
         let mut progress_tick = interval(Duration::from_millis(150));
         progress_tick.tick().await;
         let mut output_closed = false;
@@ -224,13 +199,23 @@ impl YtDlpDownloader {
             tokio::select! {
                 maybe_line = line_rx.recv(), if !output_closed => {
                     if let Some(line) = maybe_line {
-                        handle_line(line, task);
+                        handle_ytdlp_line(
+                            line,
+                            task,
+                            started,
+                            progress_tx.as_ref(),
+                            &mut final_path,
+                            &mut partial_name_prefix,
+                            &mut stderr,
+                        );
                     } else {
                         output_closed = true;
                     }
                 }
                 _ = progress_tick.tick() => {
-                    emit_filesystem_progress(task, &safe_name, started, progress_tx.as_ref());
+                    if let Some(prefix) = partial_name_prefix.as_deref() {
+                        emit_filesystem_progress(task, prefix, started, progress_tx.as_ref());
+                    }
                     if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
                         terminate_external_child(&mut child).await;
                         return Err(if cancel_flag.load(Ordering::Relaxed) {
@@ -243,10 +228,26 @@ impl YtDlpDownloader {
             }
         };
         while let Ok(line) = line_rx.try_recv() {
-            handle_line(line, task);
+            handle_ytdlp_line(
+                line,
+                task,
+                started,
+                progress_tx.as_ref(),
+                &mut final_path,
+                &mut partial_name_prefix,
+                &mut stderr,
+            );
         }
         while let Ok(Some(line)) = timeout(Duration::from_secs(1), line_rx.recv()).await {
-            handle_line(line, task);
+            handle_ytdlp_line(
+                line,
+                task,
+                started,
+                progress_tx.as_ref(),
+                &mut final_path,
+                &mut partial_name_prefix,
+                &mut stderr,
+            );
         }
 
         if !exit_status.success() {
@@ -379,9 +380,54 @@ fn discover_latest_output_file(output_dir: &Path) -> Option<PathBuf> {
     matches.into_iter().map(|(path, _)| path).next()
 }
 
+fn handle_ytdlp_line(
+    line: String,
+    task: &mut DownloadTask,
+    started: Instant,
+    progress_tx: Option<&mpsc::UnboundedSender<(String, DownloadStats)>>,
+    final_path: &mut Option<PathBuf>,
+    partial_name_prefix: &mut Option<String>,
+    stderr: &mut String,
+) {
+    if let Some(path_start) = line.find("filepath:") {
+        let path = &line[path_start + "filepath:".len()..];
+        *final_path = Some(PathBuf::from(path.trim()));
+    } else if let Some(destination) = parse_destination_line(&line) {
+        if let Some(file_name) = destination.file_name().and_then(|name| name.to_str()) {
+            *partial_name_prefix = Some(file_name.to_string());
+        }
+    } else if let Some(total_bytes) = parse_filesize_line(&line) {
+        emit_progress(
+            task,
+            &crate::core::ytdlp_support::ParsedYtDlpProgress {
+                downloaded_bytes: task.stats.downloaded_bytes,
+                total_bytes: Some(total_bytes),
+                speed: task.stats.speed,
+                eta: task.stats.eta,
+                progress: (task.stats.downloaded_bytes > 0)
+                    .then_some(task.stats.downloaded_bytes as f64 / total_bytes as f64),
+                status_hint: None,
+            },
+            started,
+            progress_tx,
+        );
+    } else if let Some(progress) = parse_progress_line(&line) {
+        emit_progress(task, &progress, started, progress_tx);
+    } else if !line.trim().is_empty() {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
+}
+
 fn parse_filesize_line(line: &str) -> Option<u64> {
     let payload = line.trim().strip_prefix("filesize:")?;
     payload.split('\t').find_map(parse_size_field)
+}
+
+fn parse_destination_line(line: &str) -> Option<PathBuf> {
+    let (_, raw_path) = line.split_once("Destination:")?;
+    let path = raw_path.trim().trim_matches('"');
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 fn parse_size_field(value: &str) -> Option<u64> {

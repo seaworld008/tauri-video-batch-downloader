@@ -62,6 +62,23 @@ export const initializeDownloadEventBridge = async () => {
             }),
           };
         });
+
+        if (
+          payload.status === 'completed' ||
+          payload.status === 'failed' ||
+          payload.status === 'cancelled'
+        ) {
+          void useDownloadStore
+            .getState()
+            .refreshTasks()
+            .catch(error => {
+              reportFrontendDiagnosticIfEnabled(
+                'warn',
+                '[download-events] 终态任务刷新失败',
+                error
+              );
+            });
+        }
       };
 
       const updateTaskProgress = (update: ProgressEventPayload) => {

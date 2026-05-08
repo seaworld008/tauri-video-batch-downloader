@@ -2645,6 +2645,18 @@ impl DownloadManager {
 
             if let Some(path) = file_path {
                 task.resolved_path = Some(path.to_string());
+                if matches!(task.status, TaskStatus::Completed)
+                    && Self::is_generated_placeholder_title(&task.title, &task.url)
+                {
+                    if let Some(stem) = Path::new(path)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .map(str::trim)
+                        .filter(|stem| !stem.is_empty())
+                    {
+                        task.title = stem.to_string();
+                    }
+                }
                 match fs::metadata(path).await {
                     Ok(metadata) => {
                         let size = metadata.len();
@@ -3793,6 +3805,11 @@ mod tests {
                 temp_dir.path().to_string_lossy().to_string(),
             )
             .await?;
+        manager
+            .tasks
+            .get_mut(&task_id)
+            .expect("task must exist")
+            .title = "任务_1".to_string();
 
         manager
             .apply_event_side_effects(&DownloadEvent::TaskCompleted {
@@ -3807,6 +3824,7 @@ mod tests {
             task.resolved_path.as_deref(),
             Some(final_path.to_string_lossy().as_ref())
         );
+        assert_eq!(task.title, "final-ytdlp-name");
         assert_eq!(task.downloaded_size, 5);
         assert_eq!(task.progress, 100.0);
 
@@ -3830,6 +3848,11 @@ mod tests {
                 temp_dir.path().to_string_lossy().to_string(),
             )
             .await?;
+        manager
+            .tasks
+            .get_mut(&task_id)
+            .expect("task must exist")
+            .title = "任务_1".to_string();
 
         manager
             .apply_event_side_effects(&DownloadEvent::TaskCompleted {
@@ -3842,6 +3865,7 @@ mod tests {
         let manager = DownloadManager::new_with_state_path(config, state_path)?;
         let task = manager.tasks.get(&task_id).expect("task must exist");
         assert_eq!(task.status, TaskStatus::Completed);
+        assert_eq!(task.title, "final-ytdlp-name");
         assert_eq!(task.progress, 100.0);
         assert_eq!(task.downloaded_size, 5);
         assert_eq!(
