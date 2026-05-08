@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::core::downloader::{DownloadStats, DownloadTask};
 use crate::core::models::{ExternalVideoInfo, SourcePlatform, TaskStatus};
+pub use crate::utils::file_utils::sanitize_filename;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -138,26 +139,6 @@ where
                 let _ = tx.send(line);
             }
         });
-    }
-}
-
-pub fn sanitize_filename(name: &str) -> String {
-    let sanitized: String = name
-        .chars()
-        .map(|ch| {
-            if matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-                '_'
-            } else {
-                ch
-            }
-        })
-        .collect();
-    let trimmed = sanitized.trim().trim_matches('.');
-    let bounded = trimmed.chars().take(160).collect::<String>();
-    if bounded.is_empty() {
-        "video".to_string()
-    } else {
-        bounded
     }
 }
 

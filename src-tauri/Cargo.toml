@@ -1,6 +1,6 @@
 [package]
 name = "video-downloader-pro"
-version = "1.0.0"
+version = "1.0.19"
 description = "Professional batch video downloader"
 authors = ["Video Downloader Team"]
 edition = "2021"

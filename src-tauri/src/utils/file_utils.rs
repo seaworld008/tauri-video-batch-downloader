@@ -4,6 +4,8 @@ use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 
+const MAX_SAFE_FILENAME_CHARS: usize = 120;
+
 /// Ensure directory exists
 pub fn ensure_dir_exists(path: &Path) -> Result<()> {
     if !path.exists() {
@@ -20,7 +22,8 @@ pub fn get_file_extension(filename: &str) -> Option<&str> {
 
 /// Sanitize filename for filesystem
 pub fn sanitize_filename(filename: &str) -> String {
-    let sanitized: String = filename
+    let without_hashtags = strip_hashtag_suffix(filename);
+    let sanitized: String = without_hashtags
         .chars()
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '|' | '?' | '*' => '_',
@@ -29,7 +32,8 @@ pub fn sanitize_filename(filename: &str) -> String {
             c => c,
         })
         .collect();
-    let trimmed = sanitized.trim().trim_matches('.').trim();
+    let collapsed = collapse_whitespace(&sanitized);
+    let trimmed = collapsed.trim().trim_matches('.').trim();
     let fallback = if trimmed.is_empty() {
         "download"
     } else {
@@ -41,7 +45,30 @@ pub fn sanitize_filename(filename: &str) -> String {
         fallback.to_string()
     };
 
-    truncate_filename_chars(&reserved_safe, 180)
+    truncate_filename_preserving_extension(&reserved_safe, MAX_SAFE_FILENAME_CHARS)
+}
+
+fn strip_hashtag_suffix(filename: &str) -> &str {
+    filename.split(['#', '＃']).next().unwrap_or(filename)
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut previous_was_whitespace = false;
+
+    for ch in value.chars() {
+        if ch.is_whitespace() {
+            if !previous_was_whitespace {
+                result.push(' ');
+                previous_was_whitespace = true;
+            }
+        } else {
+            result.push(ch);
+            previous_was_whitespace = false;
+        }
+    }
+
+    result
 }
 
 fn is_windows_reserved_filename(filename: &str) -> bool {
@@ -78,12 +105,39 @@ fn is_windows_reserved_filename(filename: &str) -> bool {
     )
 }
 
-fn truncate_filename_chars(filename: &str, max_chars: usize) -> String {
+fn truncate_filename_preserving_extension(filename: &str, max_chars: usize) -> String {
     if filename.chars().count() <= max_chars {
         return filename.to_string();
     }
 
-    filename.chars().take(max_chars).collect()
+    let path = Path::new(filename);
+    let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+        return filename.chars().take(max_chars).collect();
+    };
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return filename.chars().take(max_chars).collect();
+    };
+
+    let extension_with_dot = format!(".{extension}");
+    let extension_len = extension_with_dot.chars().count();
+    if extension_len + 1 >= max_chars {
+        return filename.chars().take(max_chars).collect();
+    }
+
+    let stem_limit = max_chars - extension_len;
+    let truncated_stem = stem
+        .chars()
+        .take(stem_limit)
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string();
+
+    if truncated_stem.is_empty() {
+        filename.chars().take(max_chars).collect()
+    } else {
+        format!("{truncated_stem}{extension_with_dot}")
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +169,22 @@ mod tests {
     fn sanitize_filename_caps_extreme_lengths() {
         let long_name = "视".repeat(240);
         let sanitized = sanitize_filename(&long_name);
-        assert_eq!(sanitized.chars().count(), 180);
+        assert_eq!(sanitized.chars().count(), 120);
         assert!(sanitized.chars().all(|ch| ch == '视'));
+    }
+
+    #[test]
+    fn sanitize_filename_removes_hashtag_suffix() {
+        assert_eq!(sanitize_filename("Video title #tag #more"), "Video title");
+        assert_eq!(sanitize_filename("视频标题＃科技分享"), "视频标题");
+    }
+
+    #[test]
+    fn sanitize_filename_collapses_whitespace_and_preserves_extension() {
+        let long_name = format!("{}   .mp4", "a".repeat(180));
+        let sanitized = sanitize_filename(&long_name);
+        assert_eq!(sanitized.chars().count(), 120);
+        assert!(sanitized.ends_with(".mp4"));
+        assert!(!sanitized.contains("   "));
     }
 }

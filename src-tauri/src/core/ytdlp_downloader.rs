@@ -167,13 +167,16 @@ impl YtDlpDownloader {
             return Err(anyhow::anyhow!(classify_error(&stderr)));
         }
 
-        let final_path =
-            final_path.unwrap_or_else(|| Path::new(&task.output_path).join(&task.filename));
-        if !final_path.exists() {
+        let expected_path = Path::new(&task.output_path).join(&task.filename);
+        let final_path = final_path
+            .filter(|path| path.exists())
+            .or_else(|| discover_output_file(Path::new(&task.output_path), &safe_name))
+            .or_else(|| expected_path.exists().then_some(expected_path));
+        let Some(final_path) = final_path else {
             return Err(anyhow::anyhow!(
                 "external_tool_failed: yt-dlp exited without final file"
             ));
-        }
+        };
         if let Some(parent) = final_path.parent() {
             task.output_path = parent.to_string_lossy().to_string();
         }
@@ -220,4 +223,31 @@ impl YtDlpDownloader {
             Err(err) => Err(anyhow::anyhow!("external_tool_failed: {}", err)),
         }
     }
+}
+
+fn discover_output_file(output_dir: &Path, safe_name: &str) -> Option<PathBuf> {
+    let prefix = format!("{safe_name}.");
+    let mut matches = std::fs::read_dir(output_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let file_name = path.file_name()?.to_string_lossy();
+            if file_name == safe_name || file_name.starts_with(&prefix) {
+                let ignored = [".part", ".ytdl", ".tmp", ".temp"];
+                if ignored.iter().any(|suffix| file_name.ends_with(suffix)) {
+                    return None;
+                }
+                return Some((path, metadata.modified().ok()));
+            }
+            None
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
+    matches.into_iter().map(|(path, _)| path).next()
 }

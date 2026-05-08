@@ -13,6 +13,8 @@ mod queue;
 mod runtime_state_tests;
 mod state;
 mod stats;
+#[cfg(test)]
+mod ytdlp_target_tests;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -32,8 +34,8 @@ use crate::core::integrity_checker::{
     HashAlgorithm, IntegrityChecker, IntegrityConfig, IntegrityResult,
 };
 use crate::core::models::{
-    AppError, AppResult, DownloadConfig, DownloadStats as ModelsDownloadStats, ProgressUpdate,
-    TaskStatus, VideoTask,
+    AppError, AppResult, DownloadConfig, DownloadStats as ModelsDownloadStats, DownloaderType,
+    ProgressUpdate, TaskStatus, VideoTask,
 };
 
 use self::state::{
@@ -137,6 +139,12 @@ enum DownloadOutcome {
     Completed(String),
     Paused,
     Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveDownloadTarget {
+    output_path: String,
+    preferred_title: Option<String>,
 }
 
 const QUEUE_PRIORITY_DEFAULT: u8 = 5;
@@ -267,6 +275,60 @@ struct DownloadLifecycleMetrics {
 }
 
 impl DownloadManager {
+    fn preferred_task_title(task: &VideoTask) -> Option<String> {
+        let task_title = task.title.trim();
+        if !task_title.is_empty() && !Self::is_generated_placeholder_title(task_title, &task.url) {
+            return Some(task_title.to_string());
+        }
+
+        task.external_info
+            .as_ref()
+            .and_then(|info| info.title.as_deref())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                Some(task.title.trim())
+                    .filter(|title| !title.is_empty())
+                    .map(str::to_string)
+            })
+    }
+
+    fn is_generated_placeholder_title(title: &str, url: &str) -> bool {
+        let trimmed = title.trim();
+        trimmed.eq_ignore_ascii_case(url.trim())
+            || trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || Self::matches_numbered_placeholder(trimmed, "任务_")
+            || Self::matches_numbered_placeholder(trimmed, "视频_")
+            || Self::matches_numbered_placeholder(trimmed, "task_")
+            || Self::matches_numbered_placeholder(trimmed, "video_")
+    }
+
+    fn matches_numbered_placeholder(title: &str, prefix: &str) -> bool {
+        title.strip_prefix(prefix).is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+        })
+    }
+
+    fn effective_download_target(task: &VideoTask) -> EffectiveDownloadTarget {
+        let preferred_title = Self::preferred_task_title(task);
+        if matches!(task.downloader_type, Some(DownloaderType::YtDlp)) {
+            return EffectiveDownloadTarget {
+                output_path: task.output_path.clone(),
+                preferred_title,
+            };
+        }
+
+        EffectiveDownloadTarget {
+            output_path: task
+                .resolved_path
+                .clone()
+                .unwrap_or_else(|| task.output_path.clone()),
+            preferred_title,
+        }
+    }
+
     /// Create a new download manager with the given configuration
     pub fn new(config: DownloadConfig) -> AppResult<Self> {
         let state_path = Self::default_state_path()?;
@@ -660,10 +722,11 @@ impl DownloadManager {
             normalized_task.output_path = Self::normalize_output_path(&dir);
             normalized_task.resolved_path = Some(resolved);
         } else {
+            let preferred_title = Self::preferred_task_title(&normalized_task);
             let (output_dir, filename) = Self::split_output_path(
                 &normalized_task.url,
                 &normalized_task.output_path,
-                Some(&normalized_task.title),
+                preferred_title.as_deref(),
             );
             normalized_task.output_path = output_dir.clone();
             normalized_task.resolved_path = if output_dir.trim().is_empty() {
@@ -732,10 +795,11 @@ impl DownloadManager {
             normalized_task.output_path = Self::normalize_output_path(&dir);
             normalized_task.resolved_path = Some(resolved);
         } else {
+            let preferred_title = Self::preferred_task_title(&normalized_task);
             let (output_dir, filename) = Self::split_output_path(
                 &normalized_task.url,
                 &normalized_task.output_path,
-                Some(&normalized_task.title),
+                preferred_title.as_deref(),
             );
             normalized_task.output_path = output_dir.clone();
             normalized_task.resolved_path = if output_dir.trim().is_empty() {
@@ -990,10 +1054,9 @@ impl DownloadManager {
         // Create download task
         let task_id_clone = task_id.to_string();
         let url = task.url.clone();
-        let output_path = task
-            .resolved_path
-            .clone()
-            .unwrap_or_else(|| task.output_path.clone());
+        let target = Self::effective_download_target(&task);
+        let output_path = target.output_path;
+        let preferred_title = target.preferred_title;
         let initial_downloaded_size = task.downloaded_size;
         let initial_file_size = task.file_size;
         let event_sender = self
@@ -1019,6 +1082,7 @@ impl DownloadManager {
                 &task_id_clone,
                 &url,
                 &output_path,
+                preferred_title,
                 initial_downloaded_size,
                 initial_file_size,
                 downloader,
@@ -1423,7 +1487,7 @@ impl DownloadManager {
     async fn runtime_start_with_permit(
         manager: &Arc<RwLock<Self>>,
         task_id: &str,
-        task: VideoTask,
+        _task: VideoTask,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> AppResult<()> {
         let (
@@ -1435,59 +1499,65 @@ impl DownloadManager {
             download_config,
             url,
             output_path,
+            preferred_title,
             initial_downloaded_size,
             initial_file_size,
-        ) = {
-            let mut guard = manager.write().await;
-            let (effective_output_path, current_downloaded_size, current_file_size, current_url) = {
-                let task_mut = guard
-                    .tasks
-                    .get_mut(task_id)
-                    .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
+        ) =
+            {
+                let mut guard = manager.write().await;
+                let (
+                    effective_output_path,
+                    effective_preferred_title,
+                    current_downloaded_size,
+                    current_file_size,
+                    current_url,
+                ) = {
+                    let task_mut = guard.tasks.get_mut(task_id).ok_or_else(|| {
+                        AppError::Download(format!("Task not found: {}", task_id))
+                    })?;
 
-                task_mut.error_message = None;
-                task_mut.paused_at = None;
-                task_mut.paused_from_active = false;
-                task_mut.status = TaskStatus::Downloading;
-                task_mut.updated_at = chrono::Utc::now();
-                task_mut.speed = 0.0;
-                if task_mut.downloaded_size == 0 {
-                    task_mut.progress = 0.0;
+                    task_mut.error_message = None;
+                    task_mut.paused_at = None;
+                    task_mut.paused_from_active = false;
+                    task_mut.status = TaskStatus::Downloading;
+                    task_mut.updated_at = chrono::Utc::now();
                     task_mut.speed = 0.0;
-                    task_mut.eta = None;
-                }
+                    if task_mut.downloaded_size == 0 {
+                        task_mut.progress = 0.0;
+                        task_mut.speed = 0.0;
+                        task_mut.eta = None;
+                    }
+
+                    let target = Self::effective_download_target(task_mut);
+                    (
+                        target.output_path,
+                        target.preferred_title,
+                        task_mut.downloaded_size,
+                        task_mut.file_size,
+                        task_mut.url.clone(),
+                    )
+                };
+
+                guard.recompute_stats();
+
+                let sender = guard.event_sender.clone().ok_or_else(|| {
+                    AppError::Download("Event sender not initialized".to_string())
+                })?;
 
                 (
-                    task_mut
-                        .resolved_path
-                        .clone()
-                        .unwrap_or_else(|| task.output_path.clone()),
-                    task_mut.downloaded_size,
-                    task_mut.file_size,
-                    task_mut.url.clone(),
+                    guard.http_downloader.clone(),
+                    sender,
+                    Arc::clone(&guard.progress_tracker),
+                    Arc::clone(&guard.integrity_checker),
+                    Arc::clone(&guard.retry_executor),
+                    guard.config.clone(),
+                    current_url,
+                    effective_output_path,
+                    effective_preferred_title,
+                    current_downloaded_size,
+                    current_file_size,
                 )
             };
-
-            guard.recompute_stats();
-
-            let sender = guard
-                .event_sender
-                .clone()
-                .ok_or_else(|| AppError::Download("Event sender not initialized".to_string()))?;
-
-            (
-                guard.http_downloader.clone(),
-                sender,
-                Arc::clone(&guard.progress_tracker),
-                Arc::clone(&guard.integrity_checker),
-                Arc::clone(&guard.retry_executor),
-                guard.config.clone(),
-                current_url,
-                effective_output_path,
-                current_downloaded_size,
-                current_file_size,
-            )
-        };
 
         progress_tracker
             .start_tracking(task_id.to_string(), initial_file_size)
@@ -1505,6 +1575,7 @@ impl DownloadManager {
                 &task_id_clone,
                 &url,
                 &output_path,
+                preferred_title,
                 initial_downloaded_size,
                 initial_file_size,
                 downloader,
@@ -2616,6 +2687,7 @@ impl DownloadManager {
         task_id: &str,
         url: &str,
         output_path: &str,
+        preferred_title: Option<String>,
         initial_downloaded_size: u64,
         initial_file_size: Option<u64>,
         downloader: Arc<HttpDownloader>,
@@ -2634,6 +2706,7 @@ impl DownloadManager {
         let task_id = task_id.to_string();
         let url = url.to_string();
         let output_path = output_path.to_string();
+        let preferred_title = preferred_title.filter(|title| !title.trim().is_empty());
 
         // Execute download with retry mechanism
         let result = retry_executor
@@ -2641,6 +2714,7 @@ impl DownloadManager {
                 let task_id = task_id.clone();
                 let url = url.clone();
                 let output_path = output_path.clone();
+                let preferred_title = preferred_title.clone();
                 let downloader = Arc::clone(&downloader);
                 let event_sender = event_sender.clone();
                 let progress_tracker = Arc::clone(&progress_tracker);
@@ -2658,6 +2732,7 @@ impl DownloadManager {
                         &task_id,
                         &url,
                         &output_path,
+                        preferred_title,
                         initial_downloaded_size,
                         initial_file_size,
                         downloader,
@@ -2715,6 +2790,7 @@ impl DownloadManager {
         task_id: &str,
         url: &str,
         output_path: &str,
+        preferred_title: Option<String>,
         initial_downloaded_size: u64,
         initial_file_size: Option<u64>,
         downloader: Arc<HttpDownloader>,
@@ -2726,7 +2802,8 @@ impl DownloadManager {
         debug!("🔄 Attempting download: {} -> {}", url, output_path);
 
         // Resolve output directory and filename (supports full file path inputs).
-        let (output_dir, filename) = Self::split_output_path(url, output_path, None);
+        let (output_dir, filename) =
+            Self::split_output_path(url, output_path, preferred_title.as_deref());
 
         // Create download task and ensure IDs match the manager task ID so progress events line up.
         let mut download_task =
