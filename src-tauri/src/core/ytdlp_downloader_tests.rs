@@ -11,7 +11,7 @@ use crate::core::models::{SourcePlatform, TaskStatus};
 use crate::core::{
     downloader::DownloadTask,
     ytdlp_downloader::{parse_progress_line, YtDlpDownloader, YtDlpDownloaderConfig},
-    ytdlp_support::platform_host_rules,
+    ytdlp_support::{emit_progress, platform_host_rules, ParsedYtDlpProgress},
 };
 
 #[test]
@@ -81,6 +81,12 @@ fn builds_safe_probe_and_download_args() {
     assert!(download
         .windows(2)
         .any(|pair| pair == ["--ffmpeg-location", "/tmp/ffmpeg"]));
+    let progress_template = download
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--progress-template").then_some(pair[1].as_str()))
+        .expect("progress template");
+    assert!(progress_template.contains("%(progress.total_bytes_estimate)s"));
+    assert!(progress_template.contains("%(progress._percent_str)s"));
 }
 
 #[test]
@@ -91,11 +97,50 @@ fn parses_ytdlp_progress_template_lines() {
     assert_eq!(parsed.total_bytes, Some(2048));
     assert_eq!(parsed.speed, 512.5);
     assert_eq!(parsed.eta, Some(2));
+    assert_eq!(parsed.progress, Some(0.5));
     assert_eq!(parsed.status_hint, None);
+
+    let estimated = parse_progress_line("download:1024\tNA\t4096\tNA\t12\t 25.0%\tdownloading")
+        .expect("estimated progress");
+    assert_eq!(estimated.total_bytes, Some(4096));
+    assert_eq!(estimated.speed, 0.0);
+    assert_eq!(estimated.eta, Some(12));
+    assert_eq!(estimated.progress, Some(0.25));
 
     let committing =
         parse_progress_line("download:2048\t2048\t0\tNA\tfinished").expect("finished progress");
     assert_eq!(committing.status_hint, Some(TaskStatus::Committing));
+}
+
+#[test]
+fn emits_ytdlp_progress_with_percent_and_fallback_speed() {
+    let mut task = DownloadTask::new(
+        "https://www.youtube.com/watch?v=abc".to_string(),
+        "/tmp".to_string(),
+        "video.mp4".to_string(),
+    );
+    task.stats.downloaded_bytes = 512;
+    task.stats.speed = 1.0;
+    task.stats.last_update = chrono::Utc::now() - chrono::Duration::seconds(1);
+
+    emit_progress(
+        &mut task,
+        &ParsedYtDlpProgress {
+            downloaded_bytes: 1536,
+            total_bytes: Some(4096),
+            speed: 0.0,
+            eta: Some(3),
+            progress: Some(0.375),
+            status_hint: None,
+        },
+        std::time::Instant::now(),
+        None,
+    );
+
+    assert_eq!(task.stats.downloaded_bytes, 1536);
+    assert_eq!(task.stats.total_bytes, Some(4096));
+    assert_eq!(task.stats.progress, 0.375);
+    assert!(task.stats.speed > 900.0);
 }
 
 #[test]
