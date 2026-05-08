@@ -148,10 +148,16 @@ impl YtDlpDownloader {
                 .and_then(|s| s.to_str())
                 .unwrap_or("video"),
         );
+        let use_extractor_title_template = should_use_extractor_title_template(&safe_name);
+        let output_template = if use_extractor_title_template {
+            "%(title).200B.%(ext)s".to_string()
+        } else {
+            format!("{}.%(ext)s", safe_name)
+        };
         let args = build_download_args(
             &task.url,
             Path::new(&task.output_path),
-            &format!("{}.%(ext)s", safe_name),
+            &output_template,
             Some(&ffmpeg),
             js_runtime.as_deref(),
         );
@@ -251,6 +257,10 @@ impl YtDlpDownloader {
         let final_path = final_path
             .filter(|path| path.exists())
             .or_else(|| discover_output_file(Path::new(&task.output_path), &safe_name))
+            .or_else(|| {
+                use_extractor_title_template
+                    .then(|| discover_latest_output_file(Path::new(&task.output_path)))?
+            })
             .or_else(|| expected_path.exists().then_some(expected_path));
         let Some(final_path) = final_path else {
             return Err(anyhow::anyhow!(
@@ -314,6 +324,11 @@ impl YtDlpDownloader {
     }
 }
 
+fn should_use_extractor_title_template(safe_name: &str) -> bool {
+    let normalized = safe_name.trim();
+    normalized.starts_with("任务_") || normalized.starts_with("任务-")
+}
+
 fn discover_output_file(output_dir: &Path, safe_name: &str) -> Option<PathBuf> {
     let prefix = format!("{safe_name}.");
     let mut matches = std::fs::read_dir(output_dir)
@@ -334,6 +349,29 @@ fn discover_output_file(output_dir: &Path, safe_name: &str) -> Option<PathBuf> {
                 return Some((path, metadata.modified().ok()));
             }
             None
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
+    matches.into_iter().map(|(path, _)| path).next()
+}
+
+fn discover_latest_output_file(output_dir: &Path) -> Option<PathBuf> {
+    let mut matches = std::fs::read_dir(output_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let file_name = path.file_name()?.to_string_lossy();
+            let ignored = [".part", ".ytdl", ".tmp", ".temp", ".vdstate"];
+            if ignored.iter().any(|suffix| file_name.ends_with(suffix)) {
+                return None;
+            }
+            Some((path, metadata.modified().ok()))
         })
         .collect::<Vec<_>>();
 
