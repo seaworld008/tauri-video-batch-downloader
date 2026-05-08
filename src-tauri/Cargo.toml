@@ -84,6 +84,7 @@ directories = "5.0"
 
 # 系统监控
 sysinfo = "0.29"
+libc = "0.2"
 
 # 并发和同步
 parking_lot = "0.12"
