@@ -79,15 +79,14 @@ pub fn emit_progress(
 ) {
     let previous_downloaded = task.stats.downloaded_bytes;
     let previous_update = task.stats.last_update;
+    let downloaded_bytes = progress.downloaded_bytes.max(previous_downloaded);
     let now = chrono::Utc::now();
     let elapsed_since_last = now
         .signed_duration_since(previous_update)
         .num_milliseconds()
         .max(0) as f64
         / 1000.0;
-    let delta_bytes = progress
-        .downloaded_bytes
-        .saturating_sub(previous_downloaded);
+    let delta_bytes = downloaded_bytes.saturating_sub(previous_downloaded);
     let fallback_speed = if progress.speed > 0.0 {
         progress.speed
     } else if delta_bytes > 0 && elapsed_since_last > 0.0 {
@@ -96,8 +95,8 @@ pub fn emit_progress(
         task.stats.speed
     };
 
-    task.stats.downloaded_bytes = progress.downloaded_bytes;
-    task.stats.total_bytes = progress.total_bytes;
+    task.stats.downloaded_bytes = downloaded_bytes;
+    task.stats.total_bytes = progress.total_bytes.or(task.stats.total_bytes);
     task.stats.speed = fallback_speed;
     task.stats.eta = progress.eta;
     task.stats.progress = progress
@@ -105,7 +104,8 @@ pub fn emit_progress(
         .or_else(|| {
             progress
                 .total_bytes
-                .map(|total| progress.downloaded_bytes as f64 / total as f64)
+                .or(task.stats.total_bytes)
+                .map(|total| downloaded_bytes as f64 / total as f64)
         })
         .unwrap_or(0.0)
         .clamp(0.0, 0.999);
@@ -130,7 +130,16 @@ pub fn emit_committing(
 }
 
 pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
-    let payload = line.strip_prefix("download:")?;
+    let line = normalize_progress_line(line);
+    parse_template_progress_line(&line)
+        .or_else(|| parse_template_progress_line(&format!("download:{line}")))
+        .or_else(|| parse_classic_progress_line(&line))
+}
+
+fn parse_template_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
+    let marker = "download:";
+    let marker_start = line.find(marker)?;
+    let payload = &line[marker_start + marker.len()..];
     let parts: Vec<&str> = payload.split('\t').collect();
     if parts.len() < 5 {
         return None;
@@ -170,6 +179,107 @@ pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
         progress,
         status_hint,
     })
+}
+
+fn parse_classic_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
+    if !line.contains("[download]") {
+        return None;
+    }
+
+    let re = regex::Regex::new(
+        r"(?i)\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%\s+of\s+~?\s*(?P<total>\d+(?:\.\d+)?)\s*(?P<unit>[kmgtp]?i?b)(?:\s+at\s+(?P<speed>\d+(?:\.\d+)?)\s*(?P<speed_unit>[kmgtp]?i?b)/s)?(?:\s+ETA\s+(?P<eta>\d{1,2}:\d{2}(?::\d{2})?))?",
+    )
+    .ok()?;
+    let captures = re.captures(line)?;
+    let percent = parse_f64(captures.name("percent")?.as_str())?;
+    let progress = (percent / 100.0).clamp(0.0, 1.0);
+    let total_bytes = parse_byte_size(
+        captures.name("total")?.as_str(),
+        captures.name("unit")?.as_str(),
+    );
+    let downloaded_bytes = total_bytes
+        .map(|total| ((total as f64) * progress).round() as u64)
+        .unwrap_or(0);
+    let speed = captures
+        .name("speed")
+        .zip(captures.name("speed_unit"))
+        .and_then(|(value, unit)| parse_byte_size(value.as_str(), unit.as_str()))
+        .map(|speed| speed as f64)
+        .unwrap_or(0.0);
+    let eta = captures
+        .name("eta")
+        .and_then(|eta| parse_eta_seconds(eta.as_str()));
+    let status_hint = if progress >= 1.0 {
+        Some(TaskStatus::Committing)
+    } else {
+        None
+    };
+
+    Some(ParsedYtDlpProgress {
+        downloaded_bytes,
+        total_bytes,
+        speed,
+        eta,
+        progress: Some(progress),
+        status_hint,
+    })
+}
+
+fn normalize_progress_line(line: &str) -> String {
+    let mut normalized = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if ch != '\r' {
+            normalized.push(ch);
+        }
+    }
+
+    normalized.trim().to_string()
+}
+
+fn parse_byte_size(value: &str, unit: &str) -> Option<u64> {
+    let value = parse_f64(value)?;
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "b" => 1.0,
+        "kb" => 1_000.0,
+        "kib" => 1_024.0,
+        "mb" => 1_000_000.0,
+        "mib" => 1_048_576.0,
+        "gb" => 1_000_000_000.0,
+        "gib" => 1_073_741_824.0,
+        "tb" => 1_000_000_000_000.0,
+        "tib" => 1_099_511_627_776.0,
+        "pb" => 1_000_000_000_000_000.0,
+        "pib" => 1_125_899_906_842_624.0,
+        _ => return None,
+    };
+
+    Some((value * multiplier).round() as u64)
+}
+
+fn parse_eta_seconds(value: &str) -> Option<u64> {
+    let parts: Vec<u64> = value
+        .split(':')
+        .map(str::parse::<u64>)
+        .collect::<Result<_, _>>()
+        .ok()?;
+
+    match parts.as_slice() {
+        [minutes, seconds] => Some(minutes * 60 + seconds),
+        [hours, minutes, seconds] => Some(hours * 3600 + minutes * 60 + seconds),
+        _ => None,
+    }
 }
 
 pub fn spawn_line_reader<R>(reader: Option<R>, tx: mpsc::UnboundedSender<String>)
@@ -247,6 +357,7 @@ pub fn build_download_args(
     let mut args = vec![
         "--no-playlist".into(),
         "--newline".into(),
+        "--progress".into(),
         "--format".into(),
         "bv*+ba/b".into(),
         "--merge-output-format".into(),
@@ -256,7 +367,9 @@ pub fn build_download_args(
         "--output".into(),
         output_template.into(),
         "--progress-template".into(),
-        "download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress._percent_str)s\t%(progress.status)s".into(),
+        "download:download:%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s\t%(progress._percent_str)s\t%(progress.status)s".into(),
+        "--print".into(),
+        "before_dl:filesize:%(filesize)s\t%(filesize_approx)s".into(),
         "--print".into(),
         "after_move:filepath:%(filepath)s".into(),
     ];

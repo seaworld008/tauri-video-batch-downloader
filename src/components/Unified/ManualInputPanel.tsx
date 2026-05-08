@@ -100,11 +100,31 @@ const platformLabel = (platform?: SourcePlatform) => {
   }
 };
 
+const AUTO_INFO_PROBE_TIMEOUT_MS = 6000;
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error('视频信息识别超时'));
+    }, timeoutMs);
+
+    promise
+      .then(value => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(error => {
+        window.clearTimeout(timer);
+        reject(error);
+      });
+  });
+
 export const ManualInputPanel: React.FC = () => {
   const [manualUrls, setManualUrls] = useState<ManualUrlEntry[]>([]);
   const [newUrlInput, setNewUrlInput] = useState('');
   const [outputDir, setOutputDir] = useState<string>('');
   const [isValidatingUrls, setIsValidatingUrls] = useState(false);
+  const [isPreparingDownload, setIsPreparingDownload] = useState(false);
 
   const addTasks = useDownloadStore(state => state.addTasks);
   const enqueueDownloads = useDownloadStore(state => state.enqueueDownloads);
@@ -163,6 +183,46 @@ export const ManualInputPanel: React.FC = () => {
     setManualUrls(manualUrls.map(entry => (entry.id === id ? { ...entry, ...updates } : entry)));
   };
 
+  const resolveUrlEntryInfo = async (
+    entry: ManualUrlEntry,
+    options: { strictYtdlpProbe?: boolean } = {}
+  ): Promise<ManualUrlEntry> => {
+    const isValidUrl = /^https?:\/\//.test(entry.url);
+    let title = entry.title;
+    let platform = entry.platform ?? detectSourcePlatform(entry.url);
+    let externalInfo = entry.externalInfo;
+
+    if (
+      isValidUrl &&
+      (!entry.title || !entry.externalInfo) &&
+      inferDownloaderType(entry.url) === 'ytdlp'
+    ) {
+      try {
+        const infoProbe = getVideoInfoCommand<any>({ url: entry.url });
+        const videoInfo = await (options.strictYtdlpProbe
+          ? infoProbe
+          : withTimeout(infoProbe, AUTO_INFO_PROBE_TIMEOUT_MS));
+        title = (videoInfo as any).title || title;
+        externalInfo = (videoInfo as any).external_info ?? externalInfo;
+        platform = externalInfo?.source_platform ?? platform;
+      } catch (error) {
+        if (options.strictYtdlpProbe) {
+          throw error;
+        }
+      }
+    }
+
+    return {
+      ...entry,
+      isValid: isValidUrl,
+      title,
+      platform,
+      externalInfo,
+      isProcessing: false,
+      error: isValidUrl ? undefined : '无效的URL格式',
+    };
+  };
+
   const validateUrls = async () => {
     if (manualUrls.length === 0) return;
 
@@ -172,32 +232,7 @@ export const ManualInputPanel: React.FC = () => {
       updateUrlEntry(entry.id, { isProcessing: true });
 
       try {
-        const isValidUrl = /^https?:\/\//.test(entry.url);
-        let title = entry.url;
-        let platform = detectSourcePlatform(entry.url);
-        let externalInfo: ExternalVideoInfo | undefined;
-
-        if (isValidUrl) {
-          try {
-            const videoInfo = await getVideoInfoCommand<any>({ url: entry.url });
-            title = (videoInfo as any).title || entry.url;
-            externalInfo = (videoInfo as any).external_info;
-            platform = externalInfo?.source_platform ?? platform;
-          } catch {
-            if (inferDownloaderType(entry.url) === 'ytdlp') {
-              throw new Error('公开内容探测失败，请确认链接可公开访问且 yt-dlp 可用');
-            }
-          }
-        }
-
-        updateUrlEntry(entry.id, {
-          isValid: isValidUrl,
-          title: title,
-          platform,
-          externalInfo,
-          isProcessing: false,
-          error: isValidUrl ? undefined : '无效的URL格式',
-        });
+        updateUrlEntry(entry.id, await resolveUrlEntryInfo(entry, { strictYtdlpProbe: true }));
       } catch (error) {
         updateUrlEntry(entry.id, {
           isValid: false,
@@ -232,7 +267,19 @@ export const ManualInputPanel: React.FC = () => {
     const targetDir = outputDir || defaultOutputDirFromConfig || './downloads';
 
     try {
-      const videoTasks: VideoTask[] = validUrls.map((entry, index) => ({
+      setIsPreparingDownload(true);
+      const resolvedUrls = await Promise.all(
+        validUrls.map(async entry => {
+          if (entry.title && entry.externalInfo) return entry;
+          return resolveUrlEntryInfo({ ...entry, isProcessing: true });
+        })
+      );
+
+      setManualUrls(current =>
+        current.map(entry => resolvedUrls.find(resolved => resolved.id === entry.id) ?? entry)
+      );
+
+      const videoTasks: VideoTask[] = resolvedUrls.map((entry, index) => ({
         id: `manual_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`,
         url: entry.url,
         title: entry.title || `任务_${index + 1}`,
@@ -278,6 +325,8 @@ export const ManualInputPanel: React.FC = () => {
       setManualUrls([]);
     } catch (error) {
       notify.error('启动下载失败', String(error));
+    } finally {
+      setIsPreparingDownload(false);
     }
   };
 
@@ -402,11 +451,16 @@ export const ManualInputPanel: React.FC = () => {
             </div>
             <button
               onClick={startDownload}
+              disabled={isPreparingDownload}
               data-testid='confirm-import'
-              className='w-full sm:w-auto px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium shadow-sm transition-colors flex items-center justify-center'
+              className='w-full sm:w-auto px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg font-medium shadow-sm transition-colors flex items-center justify-center'
             >
-              <ArrowDownTrayIcon className='w-5 h-5 mr-2' />
-              立即下载
+              {isPreparingDownload ? (
+                <ArrowPathIcon className='w-5 h-5 mr-2 animate-spin' />
+              ) : (
+                <ArrowDownTrayIcon className='w-5 h-5 mr-2' />
+              )}
+              {isPreparingDownload ? '识别中' : '立即下载'}
             </button>
           </div>
         </div>

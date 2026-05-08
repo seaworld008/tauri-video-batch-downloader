@@ -329,6 +329,40 @@ impl DownloadManager {
         }
     }
 
+    fn progress_update_from_download_stats(
+        task_id: &str,
+        download_stats: &DownloadStats,
+        enhanced_stats: Option<&EnhancedProgressStats>,
+    ) -> ProgressUpdate {
+        let is_committing = matches!(download_stats.status_hint, Some(TaskStatus::Committing));
+        let display_speed_bps = if is_committing {
+            0
+        } else if let Some(enhanced_stats) =
+            enhanced_stats.filter(|stats| stats.smoothed_speed > 0.0)
+        {
+            enhanced_stats.smoothed_speed.round() as u64
+        } else {
+            download_stats.speed.max(0.0).round() as u64
+        };
+        let eta = if is_committing {
+            None
+        } else {
+            enhanced_stats
+                .and_then(|stats| stats.eta_seconds)
+                .or(download_stats.eta)
+        };
+
+        ProgressUpdate {
+            task_id: task_id.to_string(),
+            downloaded_size: download_stats.downloaded_bytes,
+            total_size: download_stats.total_bytes,
+            speed: download_stats.speed,
+            display_speed_bps,
+            eta,
+            progress: download_stats.progress,
+        }
+    }
+
     /// Create a new download manager with the given configuration
     pub fn new(config: DownloadConfig) -> AppResult<Self> {
         let state_path = Self::default_state_path()?;
@@ -2611,6 +2645,18 @@ impl DownloadManager {
 
             if let Some(path) = file_path {
                 task.resolved_path = Some(path.to_string());
+                if matches!(task.status, TaskStatus::Completed)
+                    && Self::is_generated_placeholder_title(&task.title, &task.url)
+                {
+                    if let Some(stem) = Path::new(path)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .map(str::trim)
+                        .filter(|stem| !stem.is_empty())
+                    {
+                        task.title = stem.to_string();
+                    }
+                }
                 match fs::metadata(path).await {
                     Ok(metadata) => {
                         let size = metadata.len();
@@ -2636,6 +2682,12 @@ impl DownloadManager {
         }
 
         self.update_stats().await;
+        if let Err(err) = self.persist_state().await {
+            warn!(
+                "Failed to persist state after finalizing task state: {}",
+                err
+            );
+        }
         Ok(())
     }
 
@@ -2841,6 +2893,7 @@ impl DownloadManager {
                         });
                         committing_emitted = true;
                     }
+                    let mut enhanced_stats_for_event = None;
                     if let Err(e) = progress_tracker_clone
                         .update_progress(&task_id_clone, download_stats.downloaded_bytes)
                         .await
@@ -2850,42 +2903,25 @@ impl DownloadManager {
                             task_id_clone, e
                         );
                     } else {
-                        // Emit enhanced progress event
-                        if let Some(enhanced_stats) =
-                            progress_tracker_clone.get_progress(&task_id_clone).await
-                        {
-                            let is_committing =
-                                matches!(download_stats.status_hint, Some(TaskStatus::Committing));
-                            let progress_event = ProgressUpdate {
-                                task_id: task_id_clone.clone(),
-                                downloaded_size: download_stats.downloaded_bytes,
-                                total_size: download_stats.total_bytes,
-                                speed: download_stats.speed,
-                                display_speed_bps: if is_committing {
-                                    0
-                                } else if enhanced_stats.smoothed_speed > 0.0 {
-                                    enhanced_stats.smoothed_speed.round() as u64
-                                } else {
-                                    download_stats.speed.max(0.0).round() as u64
-                                },
-                                eta: if is_committing {
-                                    None
-                                } else {
-                                    enhanced_stats.eta_seconds.or(download_stats.eta)
-                                },
-                                progress: download_stats.progress,
-                            };
+                        enhanced_stats_for_event =
+                            progress_tracker_clone.get_progress(&task_id_clone).await;
+                    }
 
-                            let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
-                                task_id: task_id_clone.clone(),
-                                progress: progress_event,
-                            });
+                    let progress_event = Self::progress_update_from_download_stats(
+                        &task_id_clone,
+                        &download_stats,
+                        enhanced_stats_for_event.as_ref(),
+                    );
+                    let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
+                        task_id: task_id_clone.clone(),
+                        progress: progress_event,
+                    });
 
-                            let _ = event_sender_clone.send(DownloadEvent::EnhancedProgress {
-                                task_id: task_id_clone.clone(),
-                                progress: enhanced_stats,
-                            });
-                        }
+                    if let Some(enhanced_stats) = enhanced_stats_for_event {
+                        let _ = event_sender_clone.send(DownloadEvent::EnhancedProgress {
+                            task_id: task_id_clone.clone(),
+                            progress: enhanced_stats,
+                        });
                     }
                 }
             }
@@ -3733,6 +3769,26 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_ytdlp_progress_fallback_does_not_require_enhanced_stats() {
+        let mut stats = DownloadStats::default();
+        stats.downloaded_bytes = 7_900_000;
+        stats.total_bytes = Some(23_561_576);
+        stats.speed = 1_250_000.0;
+        stats.eta = Some(13);
+        stats.progress = 0.335;
+
+        let progress =
+            DownloadManager::progress_update_from_download_stats("task-ytdlp", &stats, None);
+
+        assert_eq!(progress.task_id, "task-ytdlp");
+        assert_eq!(progress.downloaded_size, 7_900_000);
+        assert_eq!(progress.total_size, Some(23_561_576));
+        assert_eq!(progress.display_speed_bps, 1_250_000);
+        assert_eq!(progress.eta, Some(13));
+        assert_eq!(progress.progress, 0.335);
+    }
+
     #[tokio::test]
     async fn test_completion_event_records_final_resolved_path() -> AppResult<()> {
         let config = DownloadConfig::default();
@@ -3749,6 +3805,11 @@ mod tests {
                 temp_dir.path().to_string_lossy().to_string(),
             )
             .await?;
+        manager
+            .tasks
+            .get_mut(&task_id)
+            .expect("task must exist")
+            .title = "任务_1".to_string();
 
         manager
             .apply_event_side_effects(&DownloadEvent::TaskCompleted {
@@ -3763,8 +3824,54 @@ mod tests {
             task.resolved_path.as_deref(),
             Some(final_path.to_string_lossy().as_ref())
         );
+        assert_eq!(task.title, "final-ytdlp-name");
         assert_eq!(task.downloaded_size, 5);
         assert_eq!(task.progress, 100.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_completion_event_persists_final_state() -> AppResult<()> {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state_path = temp_dir.path().join("download_state.json");
+        let config = DownloadConfig::default();
+        let mut manager = DownloadManager::new_with_state_path(config.clone(), state_path.clone())?;
+        let final_path = temp_dir.path().join("final-ytdlp-name.mp4");
+        fs::write(&final_path, b"video")
+            .await
+            .map_err(AppError::Io)?;
+
+        let task_id = manager
+            .add_task(
+                "https://www.youtube.com/watch?v=abc".to_string(),
+                temp_dir.path().to_string_lossy().to_string(),
+            )
+            .await?;
+        manager
+            .tasks
+            .get_mut(&task_id)
+            .expect("task must exist")
+            .title = "任务_1".to_string();
+
+        manager
+            .apply_event_side_effects(&DownloadEvent::TaskCompleted {
+                task_id: task_id.clone(),
+                file_path: final_path.to_string_lossy().to_string(),
+            })
+            .await?;
+        drop(manager);
+
+        let manager = DownloadManager::new_with_state_path(config, state_path)?;
+        let task = manager.tasks.get(&task_id).expect("task must exist");
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert_eq!(task.title, "final-ytdlp-name");
+        assert_eq!(task.progress, 100.0);
+        assert_eq!(task.downloaded_size, 5);
+        assert_eq!(
+            task.resolved_path.as_deref(),
+            Some(final_path.to_string_lossy().as_ref())
+        );
 
         Ok(())
     }
