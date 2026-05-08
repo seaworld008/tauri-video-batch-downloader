@@ -132,7 +132,8 @@ impl YtDlpDownloader {
         let mut stderr = String::new();
         let mut final_path: Option<PathBuf> = None;
         let mut handle_line = |line: String, task: &mut DownloadTask| {
-            if let Some(path) = line.strip_prefix("filepath:") {
+            if let Some(path_start) = line.find("filepath:") {
+                let path = &line[path_start + "filepath:".len()..];
                 final_path = Some(PathBuf::from(path.trim()));
             } else if let Some(progress) = parse_progress_line(&line) {
                 emit_progress(task, &progress, started, progress_tx.as_ref());

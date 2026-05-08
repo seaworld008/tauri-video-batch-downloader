@@ -130,7 +130,14 @@ pub fn emit_committing(
 }
 
 pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
-    let payload = line.strip_prefix("download:")?;
+    let line = normalize_progress_line(line);
+    parse_template_progress_line(&line).or_else(|| parse_classic_progress_line(&line))
+}
+
+fn parse_template_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
+    let marker = "download:";
+    let marker_start = line.find(marker)?;
+    let payload = &line[marker_start + marker.len()..];
     let parts: Vec<&str> = payload.split('\t').collect();
     if parts.len() < 5 {
         return None;
@@ -170,6 +177,107 @@ pub fn parse_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
         progress,
         status_hint,
     })
+}
+
+fn parse_classic_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
+    if !line.contains("[download]") {
+        return None;
+    }
+
+    let re = regex::Regex::new(
+        r"(?i)\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%\s+of\s+~?\s*(?P<total>\d+(?:\.\d+)?)\s*(?P<unit>[kmgtp]?i?b)(?:\s+at\s+(?P<speed>\d+(?:\.\d+)?)\s*(?P<speed_unit>[kmgtp]?i?b)/s)?(?:\s+ETA\s+(?P<eta>\d{1,2}:\d{2}(?::\d{2})?))?",
+    )
+    .ok()?;
+    let captures = re.captures(line)?;
+    let percent = parse_f64(captures.name("percent")?.as_str())?;
+    let progress = (percent / 100.0).clamp(0.0, 1.0);
+    let total_bytes = parse_byte_size(
+        captures.name("total")?.as_str(),
+        captures.name("unit")?.as_str(),
+    );
+    let downloaded_bytes = total_bytes
+        .map(|total| ((total as f64) * progress).round() as u64)
+        .unwrap_or(0);
+    let speed = captures
+        .name("speed")
+        .zip(captures.name("speed_unit"))
+        .and_then(|(value, unit)| parse_byte_size(value.as_str(), unit.as_str()))
+        .map(|speed| speed as f64)
+        .unwrap_or(0.0);
+    let eta = captures
+        .name("eta")
+        .and_then(|eta| parse_eta_seconds(eta.as_str()));
+    let status_hint = if progress >= 1.0 {
+        Some(TaskStatus::Committing)
+    } else {
+        None
+    };
+
+    Some(ParsedYtDlpProgress {
+        downloaded_bytes,
+        total_bytes,
+        speed,
+        eta,
+        progress: Some(progress),
+        status_hint,
+    })
+}
+
+fn normalize_progress_line(line: &str) -> String {
+    let mut normalized = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if ch != '\r' {
+            normalized.push(ch);
+        }
+    }
+
+    normalized.trim().to_string()
+}
+
+fn parse_byte_size(value: &str, unit: &str) -> Option<u64> {
+    let value = parse_f64(value)?;
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "b" => 1.0,
+        "kb" => 1_000.0,
+        "kib" => 1_024.0,
+        "mb" => 1_000_000.0,
+        "mib" => 1_048_576.0,
+        "gb" => 1_000_000_000.0,
+        "gib" => 1_073_741_824.0,
+        "tb" => 1_000_000_000_000.0,
+        "tib" => 1_099_511_627_776.0,
+        "pb" => 1_000_000_000_000_000.0,
+        "pib" => 1_125_899_906_842_624.0,
+        _ => return None,
+    };
+
+    Some((value * multiplier).round() as u64)
+}
+
+fn parse_eta_seconds(value: &str) -> Option<u64> {
+    let parts: Vec<u64> = value
+        .split(':')
+        .map(str::parse::<u64>)
+        .collect::<Result<_, _>>()
+        .ok()?;
+
+    match parts.as_slice() {
+        [minutes, seconds] => Some(minutes * 60 + seconds),
+        [hours, minutes, seconds] => Some(hours * 3600 + minutes * 60 + seconds),
+        _ => None,
+    }
 }
 
 pub fn spawn_line_reader<R>(reader: Option<R>, tx: mpsc::UnboundedSender<String>)

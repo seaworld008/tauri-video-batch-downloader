@@ -107,8 +107,37 @@ fn parses_ytdlp_progress_template_lines() {
     assert_eq!(estimated.eta, Some(12));
     assert_eq!(estimated.progress, Some(0.25));
 
+    let decorated =
+        parse_progress_line("\u{1b}[K\rdownload:1024\tNA\t4096\tNA\t12\t 25.0%\tdownloading")
+            .expect("decorated progress");
+    assert_eq!(decorated.total_bytes, Some(4096));
+    assert_eq!(decorated.progress, Some(0.25));
+
+    let prefixed =
+        parse_progress_line("[debug] download:1024\tNA\t4096\tNA\t12\t 25.0%\tdownloading")
+            .expect("prefixed progress");
+    assert_eq!(prefixed.total_bytes, Some(4096));
+    assert_eq!(prefixed.progress, Some(0.25));
+
     let committing =
         parse_progress_line("download:2048\t2048\t0\tNA\tfinished").expect("finished progress");
+    assert_eq!(committing.status_hint, Some(TaskStatus::Committing));
+}
+
+#[test]
+fn parses_classic_ytdlp_progress_lines() {
+    let parsed = parse_progress_line("[download]  25.0% of ~  40.00MiB at  2.00MiB/s ETA 00:15")
+        .expect("classic progress");
+
+    assert_eq!(parsed.total_bytes, Some(40 * 1024 * 1024));
+    assert_eq!(parsed.downloaded_bytes, 10 * 1024 * 1024);
+    assert_eq!(parsed.speed, 2.0 * 1024.0 * 1024.0);
+    assert_eq!(parsed.eta, Some(15));
+    assert_eq!(parsed.progress, Some(0.25));
+    assert_eq!(parsed.status_hint, None);
+
+    let committing =
+        parse_progress_line("\r[download] 100.0% of 23.56MiB in 00:02").expect("100 percent");
     assert_eq!(committing.status_hint, Some(TaskStatus::Committing));
 }
 

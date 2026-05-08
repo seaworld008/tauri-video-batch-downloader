@@ -329,6 +329,40 @@ impl DownloadManager {
         }
     }
 
+    fn progress_update_from_download_stats(
+        task_id: &str,
+        download_stats: &DownloadStats,
+        enhanced_stats: Option<&EnhancedProgressStats>,
+    ) -> ProgressUpdate {
+        let is_committing = matches!(download_stats.status_hint, Some(TaskStatus::Committing));
+        let display_speed_bps = if is_committing {
+            0
+        } else if let Some(enhanced_stats) =
+            enhanced_stats.filter(|stats| stats.smoothed_speed > 0.0)
+        {
+            enhanced_stats.smoothed_speed.round() as u64
+        } else {
+            download_stats.speed.max(0.0).round() as u64
+        };
+        let eta = if is_committing {
+            None
+        } else {
+            enhanced_stats
+                .and_then(|stats| stats.eta_seconds)
+                .or(download_stats.eta)
+        };
+
+        ProgressUpdate {
+            task_id: task_id.to_string(),
+            downloaded_size: download_stats.downloaded_bytes,
+            total_size: download_stats.total_bytes,
+            speed: download_stats.speed,
+            display_speed_bps,
+            eta,
+            progress: download_stats.progress,
+        }
+    }
+
     /// Create a new download manager with the given configuration
     pub fn new(config: DownloadConfig) -> AppResult<Self> {
         let state_path = Self::default_state_path()?;
@@ -2841,6 +2875,7 @@ impl DownloadManager {
                         });
                         committing_emitted = true;
                     }
+                    let mut enhanced_stats_for_event = None;
                     if let Err(e) = progress_tracker_clone
                         .update_progress(&task_id_clone, download_stats.downloaded_bytes)
                         .await
@@ -2850,42 +2885,25 @@ impl DownloadManager {
                             task_id_clone, e
                         );
                     } else {
-                        // Emit enhanced progress event
-                        if let Some(enhanced_stats) =
-                            progress_tracker_clone.get_progress(&task_id_clone).await
-                        {
-                            let is_committing =
-                                matches!(download_stats.status_hint, Some(TaskStatus::Committing));
-                            let progress_event = ProgressUpdate {
-                                task_id: task_id_clone.clone(),
-                                downloaded_size: download_stats.downloaded_bytes,
-                                total_size: download_stats.total_bytes,
-                                speed: download_stats.speed,
-                                display_speed_bps: if is_committing {
-                                    0
-                                } else if enhanced_stats.smoothed_speed > 0.0 {
-                                    enhanced_stats.smoothed_speed.round() as u64
-                                } else {
-                                    download_stats.speed.max(0.0).round() as u64
-                                },
-                                eta: if is_committing {
-                                    None
-                                } else {
-                                    enhanced_stats.eta_seconds.or(download_stats.eta)
-                                },
-                                progress: download_stats.progress,
-                            };
+                        enhanced_stats_for_event =
+                            progress_tracker_clone.get_progress(&task_id_clone).await;
+                    }
 
-                            let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
-                                task_id: task_id_clone.clone(),
-                                progress: progress_event,
-                            });
+                    let progress_event = Self::progress_update_from_download_stats(
+                        &task_id_clone,
+                        &download_stats,
+                        enhanced_stats_for_event.as_ref(),
+                    );
+                    let _ = event_sender_clone.send(DownloadEvent::TaskProgress {
+                        task_id: task_id_clone.clone(),
+                        progress: progress_event,
+                    });
 
-                            let _ = event_sender_clone.send(DownloadEvent::EnhancedProgress {
-                                task_id: task_id_clone.clone(),
-                                progress: enhanced_stats,
-                            });
-                        }
+                    if let Some(enhanced_stats) = enhanced_stats_for_event {
+                        let _ = event_sender_clone.send(DownloadEvent::EnhancedProgress {
+                            task_id: task_id_clone.clone(),
+                            progress: enhanced_stats,
+                        });
                     }
                 }
             }
@@ -3731,6 +3749,26 @@ mod tests {
         assert!(task.progress < 100.0);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_ytdlp_progress_fallback_does_not_require_enhanced_stats() {
+        let mut stats = DownloadStats::default();
+        stats.downloaded_bytes = 7_900_000;
+        stats.total_bytes = Some(23_561_576);
+        stats.speed = 1_250_000.0;
+        stats.eta = Some(13);
+        stats.progress = 0.335;
+
+        let progress =
+            DownloadManager::progress_update_from_download_stats("task-ytdlp", &stats, None);
+
+        assert_eq!(progress.task_id, "task-ytdlp");
+        assert_eq!(progress.downloaded_size, 7_900_000);
+        assert_eq!(progress.total_size, Some(23_561_576));
+        assert_eq!(progress.display_speed_bps, 1_250_000);
+        assert_eq!(progress.eta, Some(13));
+        assert_eq!(progress.progress, 0.335);
     }
 
     #[tokio::test]

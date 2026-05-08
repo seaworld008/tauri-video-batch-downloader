@@ -1,6 +1,6 @@
 {
   "name": "video-downloader-pro",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "description": "Professional batch video downloader with modern UI",
   "type": "module",
   "scripts": {
