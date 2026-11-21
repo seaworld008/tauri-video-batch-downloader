@@ -1,31 +1,33 @@
 use super::*;
 
 impl DownloadManager {
-    pub(super) async fn enqueue_task(&self, task_id: &str, priority: u8) -> bool {
+    pub(super) async fn enqueue_task_without_persist(&self, task_id: &str, priority: u8) -> bool {
         let effective_priority = self.queue_priority_for_task_id(task_id, priority);
-        let changed = {
-            let mut queue = self.task_queue.lock().await;
-            if queue.iter().any(|item| item.task_id == task_id) {
-                let mut items = Vec::with_capacity(queue.len());
-                let mut upgraded = false;
-                while let Some(mut item) = queue.pop() {
-                    if item.task_id == task_id && item.priority < effective_priority {
-                        item.priority = effective_priority;
-                        upgraded = true;
-                    }
-                    items.push(item);
+        let mut queue = self.task_queue.lock().await;
+        if queue.iter().any(|item| item.task_id == task_id) {
+            let mut items = Vec::with_capacity(queue.len());
+            let mut upgraded = false;
+            while let Some(mut item) = queue.pop() {
+                if item.task_id == task_id && item.priority < effective_priority {
+                    item.priority = effective_priority;
+                    upgraded = true;
                 }
-                *queue = items.into_iter().collect();
-                return upgraded;
+                items.push(item);
             }
+            *queue = items.into_iter().collect();
+            return upgraded;
+        }
 
-            queue.push(TaskPriority {
-                task_id: task_id.to_string(),
-                priority: effective_priority,
-                created_at: chrono::Utc::now(),
-            });
-            true
-        };
+        queue.push(TaskPriority {
+            task_id: task_id.to_string(),
+            priority: effective_priority,
+            created_at: chrono::Utc::now(),
+        });
+        true
+    }
+
+    pub(super) async fn enqueue_task(&self, task_id: &str, priority: u8) -> bool {
+        let changed = self.enqueue_task_without_persist(task_id, priority).await;
 
         if changed {
             if let Err(err) = self.persist_state().await {
@@ -35,25 +37,27 @@ impl DownloadManager {
         changed
     }
 
+    pub(super) async fn remove_task_from_queue_without_persist(&self, task_id: &str) -> bool {
+        let mut queue = self.task_queue.lock().await;
+        if queue.is_empty() {
+            return false;
+        }
+
+        let mut items = Vec::with_capacity(queue.len());
+        while let Some(item) = queue.pop() {
+            items.push(item);
+        }
+
+        let before = items.len();
+        items.retain(|item| item.task_id != task_id);
+        let removed = items.len() != before;
+
+        *queue = items.into_iter().collect();
+        removed
+    }
+
     pub(super) async fn remove_task_from_queue(&self, task_id: &str) -> bool {
-        let removed = {
-            let mut queue = self.task_queue.lock().await;
-            if queue.is_empty() {
-                return false;
-            }
-
-            let mut items = Vec::with_capacity(queue.len());
-            while let Some(item) = queue.pop() {
-                items.push(item);
-            }
-
-            let before = items.len();
-            items.retain(|item| item.task_id != task_id);
-            let removed = items.len() != before;
-
-            *queue = items.into_iter().collect();
-            removed
-        };
+        let removed = self.remove_task_from_queue_without_persist(task_id).await;
 
         if removed {
             if let Err(err) = self.persist_state().await {

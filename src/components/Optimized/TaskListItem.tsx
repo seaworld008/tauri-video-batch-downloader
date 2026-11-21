@@ -42,15 +42,25 @@ const getRevealPath = (task: VideoTask): string =>
 
 export const TaskItem = React.memo<{
   task: VideoTask;
-  style: React.CSSProperties;
+  top: number;
+  height: number;
   isSelected: boolean;
-  onSelect: (selected: boolean) => void;
+  onSelect: (taskId: string, selected: boolean) => void;
   index: number;
-}>(({ task, style, isSelected, onSelect, index }) => {
+}>(({ task, top, height, isSelected, onSelect, index }) => {
   const displaySpeed = task.display_speed_bps ?? 0;
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const canReveal = task.status === 'completed' && getRevealPath(task).length > 0;
+  const itemStyle = useMemo<React.CSSProperties>(
+    () => ({
+      top,
+      height,
+      left: 0,
+      right: 0,
+    }),
+    [top, height]
+  );
 
   useEffect(() => {
     if (!menuPosition) return;
@@ -74,7 +84,7 @@ export const TaskItem = React.memo<{
   }, [menuPosition]);
 
   const handleSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onSelect(e.target.checked);
+    onSelect(task.id, e.target.checked);
   };
 
   const handleCopyDiagnostic = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -131,7 +141,7 @@ export const TaskItem = React.memo<{
 
   return (
     <div
-      style={style}
+      style={itemStyle}
       className={`absolute flex items-center px-4 py-3 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors duration-150 ${
         isSelected ? 'bg-blue-50 dark:bg-blue-900/10' : ''
       }`}
@@ -187,7 +197,9 @@ export const TaskItem = React.memo<{
                         ? '失败'
                         : task.status === 'paused'
                           ? '暂停'
-                          : task.status}
+                          : task.status === 'cancelled'
+                            ? '已取消'
+                            : task.status}
             </span>
           </div>
         </div>

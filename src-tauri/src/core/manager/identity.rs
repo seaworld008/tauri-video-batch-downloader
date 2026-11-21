@@ -185,7 +185,15 @@ impl DownloadManager {
             return format!("{title}.{extension}");
         }
 
-        fallback
+        let sanitized_fallback = sanitize_filename(&fallback)
+            .trim()
+            .trim_matches('.')
+            .to_string();
+        if sanitized_fallback.is_empty() {
+            "video".to_string()
+        } else {
+            sanitized_fallback
+        }
     }
 
     pub(super) fn build_resume_key(&self, task: &VideoTask) -> Option<String> {

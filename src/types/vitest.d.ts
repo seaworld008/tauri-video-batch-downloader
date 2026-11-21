@@ -15,6 +15,7 @@ declare global {
   const afterAll: typeof import('vitest').afterAll;
   const beforeEach: typeof import('vitest').beforeEach;
   const afterEach: typeof import('vitest').afterEach;
+  const __APP_VERSION__: string;
 
   interface ImportMetaEnv {
     readonly VITE_APP_TITLE: string;

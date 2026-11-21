@@ -65,6 +65,9 @@ fn builds_safe_probe_and_download_args() {
     let probe = YtDlpDownloader::build_probe_args("https://youtu.be/abc");
     assert!(probe.contains(&"--dump-single-json".to_string()));
     assert!(probe.contains(&"--no-playlist".to_string()));
+    assert!(probe
+        .windows(2)
+        .any(|pair| pair == ["--", "https://youtu.be/abc"]));
 
     let download = YtDlpDownloader::build_download_args(
         "https://youtu.be/abc",
@@ -72,6 +75,9 @@ fn builds_safe_probe_and_download_args() {
         "video.%(ext)s",
         Some(Path::new("/tmp/ffmpeg")),
     );
+    assert!(download
+        .windows(2)
+        .any(|pair| pair == ["--", "https://youtu.be/abc"]));
     assert!(download
         .windows(2)
         .any(|pair| pair == ["--format", "bv*+ba/b"]));

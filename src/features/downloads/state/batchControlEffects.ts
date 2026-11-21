@@ -1,12 +1,14 @@
 import type { VideoTask } from '../../../schemas';
 import { reportFrontendDiagnosticIfEnabled } from '../../../utils/frontendLogging';
+import { runWithDeferredRuntimeSync } from './commandControlEffects';
 
 export const selectStartableTasks = (
   tasks: VideoTask[],
   selectedTaskIds: string[]
 ): VideoTask[] => {
+  const selectedSet = new Set(selectedTaskIds);
   const targetTasks =
-    selectedTaskIds.length > 0 ? tasks.filter(task => selectedTaskIds.includes(task.id)) : tasks;
+    selectedTaskIds.length > 0 ? tasks.filter(task => selectedSet.has(task.id)) : tasks;
 
   return targetTasks.filter(task => ['pending', 'paused', 'failed'].includes(task.status));
 };
@@ -18,10 +20,25 @@ export const startTasksSequentially = async (
     options?: {
       suppressConcurrencyToast?: boolean;
     }
-  ) => Promise<unknown>
+  ) => Promise<unknown>,
+  syncRuntimeState?: (source: string) => Promise<unknown>
 ): Promise<void> => {
-  for (const task of tasks) {
-    await startDownload(task.id, { suppressConcurrencyToast: true });
+  await runWithDeferredRuntimeSync(async () => {
+    for (const task of tasks) {
+      try {
+        await startDownload(task.id, { suppressConcurrencyToast: true });
+      } catch (error) {
+        reportFrontendDiagnosticIfEnabled(
+          'warn',
+          '[batchControl] startTasksSequentially task failed',
+          { taskId: task.id, error }
+        );
+      }
+    }
+  });
+
+  if (syncRuntimeState) {
+    syncRuntimeAfterBatchControl(syncRuntimeState, 'startTasksSequentially');
   }
 };
 

@@ -107,10 +107,28 @@ impl TaskEngineHandle {
     }
 }
 
+const MAX_SEEN_REQUEST_IDS: usize = 4096;
+
 #[derive(Default)]
 struct TaskEngineState {
     pending_queue: VecDeque<String>,
     seen_request_ids: HashSet<String>,
+    seen_request_order: VecDeque<String>,
+}
+
+impl TaskEngineState {
+    fn record_request_id(&mut self, request_id: String) -> bool {
+        if !self.seen_request_ids.insert(request_id.clone()) {
+            return false;
+        }
+        self.seen_request_order.push_back(request_id);
+        while self.seen_request_order.len() > MAX_SEEN_REQUEST_IDS {
+            if let Some(oldest) = self.seen_request_order.pop_front() {
+                self.seen_request_ids.remove(&oldest);
+            }
+        }
+        true
+    }
 }
 
 pub fn spawn_task_engine(runtime: Arc<dyn TaskRuntimeExecutor>) -> TaskEngineHandle {
@@ -130,7 +148,7 @@ pub fn spawn_task_engine(runtime: Arc<dyn TaskRuntimeExecutor>) -> TaskEngineHan
                     request_id,
                     respond_to,
                 } => {
-                    if !state.seen_request_ids.insert(request_id.clone()) {
+                    if !state.record_request_id(request_id.clone()) {
                         let _ = respond_to.send(CommandAck::rejected(
                             format!("Duplicate request_id: {}", request_id),
                             Some(action.as_str()),

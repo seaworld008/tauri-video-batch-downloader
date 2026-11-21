@@ -222,6 +222,8 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       }
 
       await pendingStartActionRef.current();
+    } catch {
+      // Store action already handles error toast & reporting.
     } finally {
       closeStartConfirm();
     }
@@ -241,6 +243,8 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
     setDeleteConfirmWorking(true);
     try {
       await pendingDeleteActionRef.current();
+    } catch {
+      // Store action already handles error toast & reporting.
     } finally {
       closeDeleteConfirm();
     }
@@ -272,58 +276,63 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
 
   const handleBatchAction = React.useCallback(
     async (action: 'start' | 'pause' | 'delete') => {
-      if (!hasSelection) {
-        const startableTaskIds = tasks
+      try {
+        if (!hasSelection) {
+          const startableTaskIds = tasks
+            .filter(task => ['pending', 'paused', 'failed'].includes(task.status))
+            .map(task => task.id);
+
+          switch (action) {
+            case 'start':
+              openStartConfirm(async () => {
+                await startAllDownloads();
+              }, startableTaskIds);
+              break;
+            case 'pause':
+              await pauseAllDownloads();
+              break;
+            default:
+              break;
+          }
+          return;
+        }
+
+        const selectedSet = new Set(selectedTasks);
+        const selectedItems = tasks.filter(task => selectedSet.has(task.id));
+        const startableSelectedTaskIds = selectedItems
           .filter(task => ['pending', 'paused', 'failed'].includes(task.status))
           .map(task => task.id);
 
         switch (action) {
           case 'start':
             openStartConfirm(async () => {
-              await startAllDownloads();
-            }, startableTaskIds);
+              await startTasksSequentially(
+                selectedItems.filter(task => ['pending', 'paused', 'failed'].includes(task.status)),
+                startDownload
+              );
+            }, startableSelectedTaskIds);
             break;
           case 'pause':
-            await pauseAllDownloads();
+            await Promise.all(
+              selectedItems
+                .filter(task => task.status === 'downloading')
+                .map(task => pauseDownload(task.id).catch(() => undefined))
+            );
             break;
-          default:
+          case 'delete':
+            openDeleteConfirm(
+              selectedTasks,
+              '确认删除选中任务',
+              `即将删除 ${selectedTasks.length} 个已选任务。只有在你点击“确认清理”后才会执行。`,
+              async () => {
+                await removeTasks(selectedTasks);
+                clearSelection();
+              }
+            );
             break;
         }
-        return;
-      }
-
-      const selectedItems = tasks.filter(task => selectedTasks.includes(task.id));
-      const startableSelectedTaskIds = selectedItems
-        .filter(task => ['pending', 'paused', 'failed'].includes(task.status))
-        .map(task => task.id);
-
-      switch (action) {
-        case 'start':
-          openStartConfirm(async () => {
-            await startTasksSequentially(
-              selectedItems.filter(task => ['pending', 'paused', 'failed'].includes(task.status)),
-              startDownload
-            );
-          }, startableSelectedTaskIds);
-          break;
-        case 'pause':
-          await Promise.all(
-            selectedItems
-              .filter(task => task.status === 'downloading')
-              .map(task => pauseDownload(task.id))
-          );
-          break;
-        case 'delete':
-          openDeleteConfirm(
-            selectedTasks,
-            '确认删除选中任务',
-            `即将删除 ${selectedTasks.length} 个已选任务。只有在你点击“确认清理”后才会执行。`,
-            async () => {
-              await removeTasks(selectedTasks);
-              clearSelection();
-            }
-          );
-          break;
+      } catch {
+        // Store action already handles toast notification & error reporting.
       }
     },
     [

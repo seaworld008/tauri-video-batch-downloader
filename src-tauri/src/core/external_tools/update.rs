@@ -205,7 +205,9 @@ async fn verify_asset_checksum(
     Ok(())
 }
 
-async fn make_executable(path: &Path) -> Result<()> {
+async fn make_executable(
+    #[cfg_attr(not(unix), allow(unused_variables))] path: &Path,
+) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -277,7 +279,12 @@ mod tests {
             .await
             .expect_err("missing temp should fail final replace");
 
-        assert!(err.to_string().contains("No such file") || err.to_string().contains("not found"));
+        assert!(
+            err.downcast_ref::<std::io::Error>()
+                .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound)
+                || err.to_string().contains("No such file")
+                || err.to_string().contains("not found")
+        );
         assert_eq!(
             tokio::fs::read_to_string(&target).await.unwrap(),
             "previous-version"

@@ -174,13 +174,17 @@ fn main() {
     // 创建应用状态 - 现在更安全了
     let app_state = AppState::new();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_mcp_bridge::init())
+        .plugin(tauri_plugin_process::init());
+
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+
+    builder
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // 下载相关命令
@@ -294,16 +298,21 @@ fn main() {
             // 后台维持并发数：持续填充空槽位（仅后端调度）
             Ok(())
         })
-        .on_window_event(|_window, event| {
+        .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event {
                 info!("📦 Application closing requested");
+
+                let download_manager = window.state::<AppState>().download_manager.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut manager = download_manager.write().await;
+                    if let Err(err) = manager.stop().await {
+                        warn!("Failed to stop download manager on close: {}", err);
+                    }
+                });
 
                 // 移除 prevent_close() 调用，允许直接关闭
                 // 如果需要确认对话框，可以在前端处理
                 info!("🔚 Application closing normally");
-
-                // 可选：执行清理操作但不阻止关闭
-                // 这里可以添加异步清理逻辑
             }
         })
         .run(tauri::generate_context!())

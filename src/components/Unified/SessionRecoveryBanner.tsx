@@ -49,6 +49,8 @@ export const SessionRecoveryBanner: React.FC = () => {
     setBusyAction(action);
     try {
       await callback();
+    } catch {
+      // Store action already handles toast notification & error reporting.
     } finally {
       setBusyAction(null);
     }

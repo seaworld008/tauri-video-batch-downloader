@@ -1,5 +1,49 @@
 import '@testing-library/jest-dom';
 
+// Node 25/26+ exposes a global `localStorage` getter that returns `undefined` unless
+// `--localstorage-file` is provided, shadowing jsdom's Storage implementation.
+if (
+  typeof globalThis.localStorage === 'undefined' ||
+  typeof globalThis.localStorage?.getItem !== 'function'
+) {
+  const store = new Map<string, string>();
+  const memoryStorage: Storage = {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      const k = String(key);
+      return store.has(k) ? (store.get(k) ?? null) : null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(String(key));
+    },
+    setItem(key: string, value: string) {
+      store.set(String(key), String(value));
+    },
+  };
+
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    writable: true,
+    value: memoryStorage,
+  });
+
+  if (typeof window !== 'undefined') {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: memoryStorage,
+    });
+  }
+}
+
 // Mock Tauri APIs that are used in the application
 vi.mock('@tauri-apps/api/core', async () => {
   const actual =

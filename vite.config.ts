@@ -17,7 +17,7 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: '0.0.0.0',
+    host: process.env.TAURI_DEV_HOST || '127.0.0.1',
     hmr: {
       port: 1421,
     },
@@ -25,11 +25,10 @@ export default defineConfig({
 
   // Build options
   build: {
-    sourcemap: true,
+    sourcemap: process.env.TAURI_DEBUG === 'true',
     target: 'esnext',
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     rollupOptions: {
-      external: ['@tauri-apps/api'],
       output: {
         manualChunks(id) {
           return id.includes('node_modules') ? 'vendor' : undefined;

@@ -476,6 +476,20 @@ impl DownloadManager {
             ))
         })?;
         let mut state: PersistedManagerState = serde_json::from_str(&content).map_err(|e| {
+            let backup_path = self
+                .state_path
+                .with_extension(format!("json.corrupt.{}", chrono::Utc::now().timestamp()));
+            if let Err(backup_err) = std::fs::copy(&self.state_path, &backup_path) {
+                warn!(
+                    "Failed to back up corrupt state file {:?} to {:?}: {}",
+                    self.state_path, backup_path, backup_err
+                );
+            } else {
+                warn!(
+                    "Backed up corrupt persisted state file {:?} to {:?}",
+                    self.state_path, backup_path
+                );
+            }
             AppError::System(format!(
                 "Failed to parse persisted state {:?}: {}",
                 self.state_path, e
@@ -568,12 +582,23 @@ impl DownloadManager {
             queue_paused: self.queue_paused,
         };
 
-        let json = serde_json::to_string_pretty(&state)
+        let json = serde_json::to_string(&state)
             .map_err(|e| AppError::System(format!("Failed to serialize persisted state: {}", e)))?;
 
-        fs::write(&self.state_path, json)
-            .await
-            .map_err(|e| AppError::System(format!("Failed to write persisted state: {}", e)))
+        let tmp_path = self
+            .state_path
+            .with_extension(format!("json.tmp.{}", Uuid::new_v4()));
+        fs::write(&tmp_path, json).await.map_err(|e| {
+            AppError::System(format!("Failed to write persisted state temp file: {}", e))
+        })?;
+        if let Err(e) = fs::rename(&tmp_path, &self.state_path).await {
+            let _ = fs::remove_file(&tmp_path).await;
+            return Err(AppError::System(format!(
+                "Failed to atomically replace persisted state: {}",
+                e
+            )));
+        }
+        Ok(())
     }
 
     /// Start the download manager
@@ -710,9 +735,19 @@ impl DownloadManager {
         let mut manager = manager.write().await;
 
         let mut stored_tasks = Vec::with_capacity(tasks.len());
+        let mut added_any = false;
         for task in tasks {
-            let result = manager.add_video_task(task).await?;
+            let result = manager.add_video_task_internal(task, false).await?;
+            if result.created {
+                added_any = true;
+            }
             stored_tasks.push(result.task);
+        }
+
+        if added_any {
+            if let Err(err) = manager.persist_state().await {
+                warn!("Failed to persist state after batch add tasks: {}", err);
+            }
         }
 
         Ok(stored_tasks)
@@ -732,13 +767,36 @@ impl DownloadManager {
     ) -> AppResult<usize> {
         let mut manager = manager.write().await;
         let mut removed = 0usize;
+        let mut errors = Vec::new();
 
         for task_id in task_ids {
             if manager.is_task_active(&task_id).await {
-                manager.cancel_download(&task_id).await?;
+                if let Err(err) = manager.cancel_download_internal(&task_id, false).await {
+                    errors.push(format!("{}: {}", task_id, err));
+                    continue;
+                }
+                if let Some(handle) = manager.active_downloads.remove(&task_id) {
+                    handle.abort();
+                }
+                let _ = manager.progress_tracker.stop_tracking(&task_id).await;
             }
-            manager.remove_task(&task_id).await?;
-            removed += 1;
+            match manager.remove_task_internal(&task_id, false).await {
+                Ok(()) => removed += 1,
+                Err(err) => errors.push(format!("{}: {}", task_id, err)),
+            }
+        }
+
+        if removed > 0 {
+            if let Err(err) = manager.persist_state().await {
+                warn!("Failed to persist state after batch remove tasks: {}", err);
+            }
+        }
+
+        if !errors.is_empty() && removed == 0 {
+            return Err(AppError::Download(errors.join("; ")));
+        }
+        if !errors.is_empty() {
+            warn!("Some tasks failed to remove: {}", errors.join("; "));
         }
 
         Ok(removed)
@@ -746,6 +804,14 @@ impl DownloadManager {
 
     /// Add a complete VideoTask directly to storage and return the stored record (after hydration)
     pub async fn add_video_task(&mut self, task: VideoTask) -> AppResult<AddVideoTaskResult> {
+        self.add_video_task_internal(task, true).await
+    }
+
+    async fn add_video_task_internal(
+        &mut self,
+        task: VideoTask,
+        persist: bool,
+    ) -> AppResult<AddVideoTaskResult> {
         let mut normalized_task = task.clone();
         if let Some(resolved) = normalized_task.resolved_path.clone() {
             let resolved_path = Path::new(&resolved);
@@ -793,8 +859,10 @@ impl DownloadManager {
         self.tasks
             .insert(stored_task.id.clone(), stored_task.clone());
 
-        if let Err(err) = self.persist_state().await {
-            warn!("Failed to persist state after adding task: {}", err);
+        if persist {
+            if let Err(err) = self.persist_state().await {
+                warn!("Failed to persist state after adding task: {}", err);
+            }
         }
 
         tracing::info!(
@@ -1060,6 +1128,23 @@ impl DownloadManager {
         task: VideoTask,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> AppResult<()> {
+        let event_sender = self
+            .event_sender
+            .as_ref()
+            .ok_or_else(|| {
+                AppError::Download(
+                    "event_sender not initialised: call set_event_sender before start_download"
+                        .to_string(),
+                )
+            })?
+            .clone();
+
+        let previous_status = self
+            .tasks
+            .get(task_id)
+            .map(|existing| existing.status.clone())
+            .ok_or_else(|| AppError::Download(format!("Task not found: {}", task_id)))?;
+
         if let Some(task) = self.tasks.get_mut(task_id) {
             task.error_message = None;
             task.paused_at = None;
@@ -1075,15 +1160,19 @@ impl DownloadManager {
             .await?;
 
         // Start enhanced progress tracking
-        self.start_enhanced_tracking(task_id, task.file_size)
-            .await?;
+        if let Err(err) = self.start_enhanced_tracking(task_id, task.file_size).await {
+            if let Some(task_mut) = self.tasks.get_mut(task_id) {
+                task_mut.status = previous_status;
+                task_mut.updated_at = chrono::Utc::now();
+            }
+            self.recompute_stats();
+            return Err(err);
+        }
 
         // Emit task started event
-        if let Some(sender) = &self.event_sender {
-            let _ = sender.send(DownloadEvent::TaskStarted {
-                task_id: task_id.to_string(),
-            });
-        }
+        let _ = event_sender.send(DownloadEvent::TaskStarted {
+            task_id: task_id.to_string(),
+        });
 
         // Create download task
         let task_id_clone = task_id.to_string();
@@ -1093,16 +1182,6 @@ impl DownloadManager {
         let preferred_title = target.preferred_title;
         let initial_downloaded_size = task.downloaded_size;
         let initial_file_size = task.file_size;
-        let event_sender = self
-            .event_sender
-            .as_ref()
-            .ok_or_else(|| {
-                AppError::Download(
-                    "event_sender not initialised: call set_event_sender before start_download"
-                        .to_string(),
-                )
-            })?
-            .clone();
         let downloader = Arc::clone(&self.http_downloader);
         let progress_tracker = Arc::clone(&self.progress_tracker);
         let integrity_checker = Arc::clone(&self.integrity_checker);
@@ -1214,12 +1293,23 @@ impl DownloadManager {
         let _ = self.remove_task_from_queue(task_id).await;
 
         if self.active_downloads.contains_key(task_id) {
-            let _ = self.http_downloader.resume_task(task_id).await;
-            self.update_task_status(task_id, TaskStatus::Downloading)
-                .await?;
-            if let Some(task) = self.tasks.get_mut(task_id) {
-                task.paused_at = None;
-                task.paused_from_active = false;
+            if matches!(self.http_downloader.resume_task(task_id).await, Ok(true)) {
+                self.update_task_status(task_id, TaskStatus::Downloading)
+                    .await?;
+                if let Some(task) = self.tasks.get_mut(task_id) {
+                    task.paused_at = None;
+                    task.paused_from_active = false;
+                }
+            } else {
+                self.drop_active_handle(task_id);
+                self.start_download(task_id).await?;
+                if let Some(task) = self.tasks.get_mut(task_id) {
+                    task.paused_at = None;
+                    task.paused_from_active = false;
+                }
+                if let Err(err) = self.persist_state().await {
+                    warn!("Failed to persist state after resume download: {}", err);
+                }
             }
         } else {
             // Resume is essentially the same as starting
@@ -1246,14 +1336,26 @@ impl DownloadManager {
 
     /// Cancel a download task
     pub async fn cancel_download(&mut self, task_id: &str) -> AppResult<()> {
+        self.cancel_download_internal(task_id, true).await
+    }
+
+    async fn cancel_download_internal(&mut self, task_id: &str, persist: bool) -> AppResult<()> {
         let downloader = Arc::clone(&self.http_downloader);
         let is_active = self.active_downloads.contains_key(task_id);
         // 发信号给 HttpDownloader，确保底层任务尽快停止
         let _ = downloader.cancel_download(task_id).await;
-        let _ = self.remove_task_from_queue(task_id).await;
-
-        self.update_task_status(task_id, TaskStatus::Cancelled)
-            .await?;
+        if persist {
+            let _ = self.remove_task_from_queue(task_id).await;
+            self.update_task_status(task_id, TaskStatus::Cancelled)
+                .await?;
+        } else {
+            let _ = self.remove_task_from_queue_without_persist(task_id).await;
+            if let Some(task) = self.tasks.get_mut(task_id) {
+                task.status = TaskStatus::Cancelled;
+                task.updated_at = chrono::Utc::now();
+            }
+            self.recompute_stats();
+        }
 
         // Emit task cancelled event only if there is no active worker to emit it.
         if !is_active {
@@ -1282,9 +1384,11 @@ impl DownloadManager {
                 // 使用同一批次时间戳，避免 HashMap 遍历顺序导致恢复顺序随机。
                 task.paused_at = Some(pause_moment);
                 task.paused_from_active = true;
+                task.status = TaskStatus::Paused;
+                task.updated_at = pause_moment;
             }
-            let _ = self.update_task_status(task_id, TaskStatus::Paused).await;
         }
+        self.update_stats().await;
 
         info!(
             "Paused {} active downloads (queue remains pending)",
@@ -1373,7 +1477,7 @@ impl DownloadManager {
                             }
                         }
                         if self
-                            .enqueue_task(remaining_id, QUEUE_PRIORITY_DEFAULT)
+                            .enqueue_task_without_persist(remaining_id, QUEUE_PRIORITY_DEFAULT)
                             .await
                         {
                             queued += 1;
@@ -1536,19 +1640,26 @@ impl DownloadManager {
             preferred_title,
             initial_downloaded_size,
             initial_file_size,
+            previous_status,
         ) =
             {
                 let mut guard = manager.write().await;
+                let sender = guard.event_sender.clone().ok_or_else(|| {
+                    AppError::Download("Event sender not initialized".to_string())
+                })?;
+
                 let (
                     effective_output_path,
                     effective_preferred_title,
                     current_downloaded_size,
                     current_file_size,
                     current_url,
+                    prior_status,
                 ) = {
                     let task_mut = guard.tasks.get_mut(task_id).ok_or_else(|| {
                         AppError::Download(format!("Task not found: {}", task_id))
                     })?;
+                    let prior_status = task_mut.status.clone();
 
                     task_mut.error_message = None;
                     task_mut.paused_at = None;
@@ -1569,14 +1680,11 @@ impl DownloadManager {
                         task_mut.downloaded_size,
                         task_mut.file_size,
                         task_mut.url.clone(),
+                        prior_status,
                     )
                 };
 
                 guard.recompute_stats();
-
-                let sender = guard.event_sender.clone().ok_or_else(|| {
-                    AppError::Download("Event sender not initialized".to_string())
-                })?;
 
                 (
                     guard.http_downloader.clone(),
@@ -1590,12 +1698,22 @@ impl DownloadManager {
                     effective_preferred_title,
                     current_downloaded_size,
                     current_file_size,
+                    prior_status,
                 )
             };
 
-        progress_tracker
+        if let Err(err) = progress_tracker
             .start_tracking(task_id.to_string(), initial_file_size)
-            .await?;
+            .await
+        {
+            let mut guard = manager.write().await;
+            if let Some(task_mut) = guard.tasks.get_mut(task_id) {
+                task_mut.status = previous_status;
+                task_mut.updated_at = chrono::Utc::now();
+            }
+            guard.recompute_stats();
+            return Err(err);
+        }
 
         let _ = event_sender.send(DownloadEvent::TaskStarted {
             task_id: task_id.to_string(),
@@ -1704,28 +1822,61 @@ impl DownloadManager {
         };
 
         if let Some(downloader) = active_paused_downloader {
-            downloader
+            let resumed = downloader
                 .resume_task(task_id)
                 .await
                 .map_err(|err| AppError::Download(format!("Failed to resume task: {}", err)))?;
 
-            {
-                let mut guard = manager.write().await;
-                if let Some(task_mut) = guard.tasks.get_mut(task_id) {
-                    mark_resumed_active(task_mut, chrono::Utc::now());
+            if resumed {
+                {
+                    let mut guard = manager.write().await;
+                    if let Some(task_mut) = guard.tasks.get_mut(task_id) {
+                        mark_resumed_active(task_mut, chrono::Utc::now());
+                    }
+                    guard.recompute_stats();
                 }
-                guard.recompute_stats();
-            }
-            Self::runtime_persist_state_best_effort(manager, "runtime_start_resume_active").await;
+                Self::runtime_persist_state_best_effort(manager, "runtime_start_resume_active")
+                    .await;
 
-            if let Some(sender) = Self::runtime_event_sender(manager).await {
-                let _ = sender.send(DownloadEvent::TaskResumed {
-                    task_id: task_id.to_string(),
-                });
+                if let Some(sender) = Self::runtime_event_sender(manager).await {
+                    let _ = sender.send(DownloadEvent::TaskResumed {
+                        task_id: task_id.to_string(),
+                    });
+                }
+
+                info!("▶️ Resumed active paused download via start: {}", task_id);
+                return Ok(());
             }
 
-            info!("▶️ Resumed active paused download via start: {}", task_id);
-            return Ok(());
+            let refreshed_admission = {
+                let mut guard = manager.write().await;
+                guard.drop_active_handle(task_id);
+                guard.settle_pending_semaphore_reduction();
+                guard.reap_finished_active_downloads();
+                decide_queue_admission(
+                    guard.active_downloads.len(),
+                    guard.config.concurrent_downloads,
+                )
+            };
+
+            if refreshed_admission == QueueAdmissionResult::QueueForConcurrency {
+                let _ = Self::runtime_enqueue_task(manager, task_id, QUEUE_PRIORITY_MANUAL).await;
+                {
+                    let mut guard = manager.write().await;
+                    if let Some(task) = guard.tasks.get_mut(task_id) {
+                        mark_queued_start_side_effect(task, chrono::Utc::now());
+                    }
+                    guard.recompute_stats();
+                }
+                Self::runtime_persist_state_best_effort(
+                    manager,
+                    "persist state after queueing stale active task (runtime start limit)",
+                )
+                .await;
+                return Err(AppError::Download(
+                    "Maximum concurrent downloads reached".to_string(),
+                ));
+            }
         }
 
         if queue_admission == QueueAdmissionResult::QueueForConcurrency {
@@ -1865,10 +2016,18 @@ impl DownloadManager {
                 let guard = manager.read().await;
                 guard.http_downloader.clone()
             };
-            downloader
+            let resumed = downloader
                 .resume_task(task_id)
                 .await
                 .map_err(|err| AppError::Download(format!("Failed to resume task: {}", err)))?;
+
+            if !resumed {
+                {
+                    let mut guard = manager.write().await;
+                    guard.drop_active_handle(task_id);
+                }
+                return Self::runtime_start_download(manager, task_id).await;
+            }
 
             {
                 let mut guard = manager.write().await;
@@ -2097,6 +2256,10 @@ impl DownloadManager {
 
     /// Remove a completed or failed task
     pub async fn remove_task(&mut self, task_id: &str) -> AppResult<()> {
+        self.remove_task_internal(task_id, true).await
+    }
+
+    async fn remove_task_internal(&mut self, task_id: &str, persist: bool) -> AppResult<()> {
         let task = self
             .tasks
             .get(task_id)
@@ -2113,11 +2276,17 @@ impl DownloadManager {
                 "Cannot remove active download".to_string(),
             )),
             _ => {
-                let _ = self.remove_task_from_queue(task_id).await;
+                if persist {
+                    let _ = self.remove_task_from_queue(task_id).await;
+                } else {
+                    let _ = self.remove_task_from_queue_without_persist(task_id).await;
+                }
                 self.tasks.remove(task_id);
                 self.update_stats().await;
-                if let Err(err) = self.persist_state().await {
-                    warn!("Failed to persist state after removing task: {}", err);
+                if persist {
+                    if let Err(err) = self.persist_state().await {
+                        warn!("Failed to persist state after removing task: {}", err);
+                    }
                 }
                 info!("🗑️ Removed task: {}", task_id);
                 Ok(())
@@ -2167,6 +2336,8 @@ impl DownloadManager {
                 self.pending_semaphore_reduction.saturating_add(reduce_by);
             self.settle_pending_semaphore_reduction();
         }
+
+        self.http_downloader.update_max_concurrent(new_target);
 
         info!(
             "🔧 Updated concurrent downloads: target {} -> {}, capacity={}, pending_reduction={}",
@@ -2831,8 +3002,13 @@ impl DownloadManager {
                 Ok(outcome)
             }
             Err(e) => {
-                error!("❌ Download failed after all retries: {}", e);
-                Err(AppError::Download(e.to_string()))
+                let error_msg = e.to_string();
+                let _ = event_sender.send(DownloadEvent::TaskFailed {
+                    task_id: task_id.to_string(),
+                    error: error_msg.clone(),
+                });
+                error!("❌ Download failed after all retries: {}", error_msg);
+                Err(AppError::Download(error_msg))
             }
         }
     }
@@ -3069,15 +3245,11 @@ impl DownloadManager {
                         .error_message
                         .unwrap_or_else(|| "Unknown download error".to_string());
 
-                    // Stop enhanced progress tracking
+                    // Stop enhanced progress tracking without emitting terminal TaskFailed yet;
+                    // retry executor may retry this task before execute_download finalizes failure.
                     let _ = progress_tracker.stop_tracking(task_id).await;
 
-                    let _ = event_sender.send(DownloadEvent::TaskFailed {
-                        task_id: task_id.to_string(),
-                        error: error_msg.clone(),
-                    });
-
-                    error!("❌ Download failed: {}", error_msg);
+                    error!("❌ Download attempt failed: {}", error_msg);
                     Err(AppError::Download(error_msg))
                 }
                 _ => {
@@ -3086,21 +3258,14 @@ impl DownloadManager {
                     // Stop enhanced progress tracking
                     let _ = progress_tracker.stop_tracking(task_id).await;
 
-                    let _ = event_sender.send(DownloadEvent::TaskFailed {
-                        task_id: task_id.to_string(),
-                        error: error_msg.clone(),
-                    });
                     Err(AppError::Download(error_msg))
                 }
             },
             Err(e) => {
                 let error_msg = e.to_string();
-                let _ = event_sender.send(DownloadEvent::TaskFailed {
-                    task_id: task_id.to_string(),
-                    error: error_msg.clone(),
-                });
+                let _ = progress_tracker.stop_tracking(task_id).await;
 
-                error!("❌ Download error: {}", error_msg);
+                error!("❌ Download attempt error: {}", error_msg);
                 Err(AppError::Download(error_msg))
             }
         }
@@ -4358,5 +4523,117 @@ mod tests {
         assert_eq!(queue.pop().unwrap().task_id, "high");
         assert_eq!(queue.pop().unwrap().task_id, "medium");
         assert_eq!(queue.pop().unwrap().task_id, "low");
+    }
+
+    #[tokio::test]
+    async fn test_execute_download_emits_task_failed_only_once_after_retries() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+
+        let mut downloader_config = DownloaderConfig::default();
+        downloader_config.timeout = 2;
+        downloader_config.retry_attempts = 0;
+        let downloader = Arc::new(HttpDownloader::new(downloader_config).expect("http downloader"));
+
+        let retry_policy = RetryPolicy {
+            max_attempts: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+            backoff_multiplier: 1.0,
+            jitter_enabled: false,
+            jitter_factor: 0.0,
+            category_policies: HashMap::new(),
+        };
+        let retry_executor = Arc::new(RetryExecutor::new(retry_policy));
+        let progress_tracker = Arc::new(ProgressTrackingManager::new());
+        let integrity_checker = Arc::new(IntegrityChecker::new());
+        let (event_sender, mut event_rx) = mpsc::unbounded_channel();
+
+        let result = DownloadManager::execute_download(
+            "retry-task-1",
+            &format!("http://127.0.0.1:{}/video.mp4", port),
+            &temp_dir.path().to_string_lossy(),
+            Some("retry-video".to_string()),
+            0,
+            None,
+            downloader,
+            event_sender,
+            progress_tracker,
+            integrity_checker,
+            retry_executor,
+            DownloadConfig::default(),
+        )
+        .await;
+
+        assert!(result.is_err());
+
+        let mut retry_attempts = 0usize;
+        let mut task_failed_events = 0usize;
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                DownloadEvent::RetryAttemptStarted { .. } => retry_attempts += 1,
+                DownloadEvent::TaskFailed { .. } => task_failed_events += 1,
+                _ => {}
+            }
+        }
+
+        assert!(
+            retry_attempts >= 2,
+            "expected at least 2 retry attempts, got {}",
+            retry_attempts
+        );
+        assert_eq!(
+            task_failed_events, 1,
+            "TaskFailed must be emitted once after all retries finish"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_runtime_remove_tasks_removes_active_task_without_failing_batch() -> AppResult<()>
+    {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state_path = temp_dir.path().join("download_state.json");
+        let mut manager =
+            DownloadManager::new_with_state_path(DownloadConfig::default(), state_path)?;
+
+        let active_id = manager
+            .add_task(
+                "https://example.com/active-remove.mp4".to_string(),
+                temp_dir.path().to_string_lossy().to_string(),
+            )
+            .await?;
+        let idle_id = manager
+            .add_task(
+                "https://example.com/idle-remove.mp4".to_string(),
+                temp_dir.path().to_string_lossy().to_string(),
+            )
+            .await?;
+
+        manager
+            .update_task_status(&active_id, TaskStatus::Downloading)
+            .await?;
+        manager.active_downloads.insert(
+            active_id.clone(),
+            tokio::spawn(async {
+                std::future::pending::<()>().await;
+            }),
+        );
+
+        let manager = Arc::new(RwLock::new(manager));
+        let removed = DownloadManager::runtime_remove_tasks(
+            &manager,
+            vec![active_id.clone(), "missing-id".to_string(), idle_id.clone()],
+        )
+        .await?;
+
+        assert_eq!(removed, 2);
+        let guard = manager.read().await;
+        assert!(!guard.tasks.contains_key(&active_id));
+        assert!(!guard.tasks.contains_key(&idle_id));
+        assert!(!guard.active_downloads.contains_key(&active_id));
+
+        Ok(())
     }
 }

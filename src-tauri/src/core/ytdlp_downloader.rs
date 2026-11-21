@@ -74,6 +74,7 @@ impl YtDlpDownloader {
         let tool = self.resolve_ytdlp_command();
         let js_runtime = self.resolve_deno_command();
         let mut command = hidden_command(&tool);
+        command.kill_on_drop(true);
         #[cfg(unix)]
         {
             command.process_group(0);
@@ -137,6 +138,7 @@ impl YtDlpDownloader {
         pause_flag: Arc<AtomicBool>,
         progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
     ) -> Result<()> {
+        crate::utils::validation::assert_http_url(&task.url)?;
         let ytdlp = self.resolve_ytdlp_command();
         let ffmpeg = self.resolve_ffmpeg_command().await?;
         let js_runtime = self.resolve_deno_command();
@@ -163,6 +165,7 @@ impl YtDlpDownloader {
         );
 
         let mut command = hidden_command(&ytdlp);
+        command.kill_on_drop(true);
         #[cfg(unix)]
         {
             command.process_group(0);

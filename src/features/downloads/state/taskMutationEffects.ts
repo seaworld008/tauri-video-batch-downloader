@@ -8,10 +8,13 @@ export const buildRemoveTasksPatch = (
 ): {
   tasks: VideoTask[];
   selectedTasks: string[];
-} => ({
-  tasks: currentTasks.filter(task => !removedTaskIds.includes(task.id)),
-  selectedTasks: selectedTaskIds.filter(id => !removedTaskIds.includes(id)),
-});
+} => {
+  const removedIdSet = new Set(removedTaskIds);
+  return {
+    tasks: currentTasks.filter(task => !removedIdSet.has(task.id)),
+    selectedTasks: selectedTaskIds.filter(id => !removedIdSet.has(id)),
+  };
+};
 
 export const buildClearCompletedTasksPatch = (
   currentTasks: VideoTask[],

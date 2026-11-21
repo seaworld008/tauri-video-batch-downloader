@@ -143,7 +143,7 @@ export const ManualInputPanel: React.FC = () => {
         isValid: undefined,
         isProcessing: false,
       };
-      setManualUrls([...manualUrls, newEntry]);
+      setManualUrls(prev => [...prev, newEntry]);
       setNewUrlInput('');
     }
   };
@@ -168,7 +168,7 @@ export const ManualInputPanel: React.FC = () => {
         isProcessing: false,
       }));
 
-      setManualUrls([...manualUrls, ...newEntries]);
+      setManualUrls(prev => [...prev, ...newEntries]);
       notify.success('添加成功', `从剪贴板添加了 ${urls.length} 个链接`);
     } catch (error) {
       notify.error('读取剪贴板失败', '请检查系统剪贴板是否可用');
@@ -176,11 +176,11 @@ export const ManualInputPanel: React.FC = () => {
   };
 
   const removeUrlEntry = (id: string) => {
-    setManualUrls(manualUrls.filter(entry => entry.id !== id));
+    setManualUrls(prev => prev.filter(entry => entry.id !== id));
   };
 
   const updateUrlEntry = (id: string, updates: Partial<ManualUrlEntry>) => {
-    setManualUrls(manualUrls.map(entry => (entry.id === id ? { ...entry, ...updates } : entry)));
+    setManualUrls(prev => prev.map(entry => (entry.id === id ? { ...entry, ...updates } : entry)));
   };
 
   const resolveUrlEntryInfo = async (
@@ -307,21 +307,24 @@ export const ManualInputPanel: React.FC = () => {
       }));
 
       const addedTasks = await addTasks(videoTasks);
-      const resolvedTasks = addedTasks.length > 0 ? addedTasks : videoTasks;
+      if (addedTasks.length === 0) {
+        notify.error('添加任务失败', '未能添加任务，请检查链接或重试');
+        return;
+      }
 
       // Update recent imports for list highlighting
       recordRecentImport(
-        resolvedTasks.map(t => t.id),
-        resolvedTasks
+        addedTasks.map(t => t.id),
+        addedTasks
       );
 
       setFilterStatus('all');
       setSearchQuery('');
 
       // Enqueue
-      enqueueDownloads(resolvedTasks.map(task => task.id));
+      enqueueDownloads(addedTasks.map(task => task.id));
 
-      notify.success('任务已添加', `成功添加 ${resolvedTasks.length} 个任务到队列`);
+      notify.success('任务已添加', `成功添加 ${addedTasks.length} 个任务到队列`);
       setManualUrls([]);
     } catch (error) {
       notify.error('启动下载失败', String(error));
