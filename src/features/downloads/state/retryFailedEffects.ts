@@ -1,4 +1,6 @@
 import type { VideoTask } from '../../../schemas';
+import { reportFrontendDiagnosticIfEnabled } from '../../../utils/frontendLogging';
+import { runWithDeferredRuntimeSync } from './commandControlEffects';
 
 export const selectFailedTaskIds = (tasks: VideoTask[]): string[] =>
   tasks.filter(task => task.status === 'failed').map(task => task.id);
@@ -11,15 +13,30 @@ export const retryFailedTaskIds = async (
       suppressConcurrencyToast?: boolean;
     }
   ) => Promise<unknown>
-): Promise<void> => {
-  for (const taskId of taskIds) {
-    await startDownload(taskId, { suppressConcurrencyToast: true });
-  }
+): Promise<number> => {
+  let submittedCount = 0;
+
+  await runWithDeferredRuntimeSync(async () => {
+    for (const taskId of taskIds) {
+      try {
+        await startDownload(taskId, { suppressConcurrencyToast: true });
+        submittedCount += 1;
+      } catch (error) {
+        reportFrontendDiagnosticIfEnabled('warn', '[retryFailed] task retry failed', {
+          taskId,
+          error,
+        });
+      }
+    }
+  });
+
+  return submittedCount;
 };
 
 export const executeRetryFailedTasks = async ({
   tasks,
   startDownload,
+  syncRuntimeState,
   toastApi,
 }: {
   tasks: VideoTask[];
@@ -29,6 +46,7 @@ export const executeRetryFailedTasks = async ({
       suppressConcurrencyToast?: boolean;
     }
   ) => Promise<unknown>;
+  syncRuntimeState?: (source: string) => Promise<unknown>;
   toastApi: ((message: string) => void) & {
     success: (message: string) => void;
   };
@@ -40,8 +58,13 @@ export const executeRetryFailedTasks = async ({
     return;
   }
 
-  await retryFailedTaskIds(failedTaskIds, startDownload);
-  toastApi.success(buildRetryFailedSuccessMessage(failedTaskIds.length));
+  const submittedCount = await retryFailedTaskIds(failedTaskIds, startDownload);
+  if (syncRuntimeState) {
+    void syncRuntimeState('retryFailedTasks').catch(err =>
+      reportFrontendDiagnosticIfEnabled('warn', '[retryFailedTasks] runtime sync failed', err)
+    );
+  }
+  toastApi.success(buildRetryFailedSuccessMessage(submittedCount));
 };
 
 export const buildNoFailedTasksMessage = (): string => '没有可重试的失败任务';

@@ -7,15 +7,30 @@ export const isConcurrencyError = (error: unknown) => {
 
 const CONCURRENCY_NOTICE_INTERVAL = 4000;
 let lastConcurrencyNotice = 0;
+let batchSyncSuppressionDepth = 0;
 
 export const __resetConcurrencyNoticeForTests = () => {
   lastConcurrencyNotice = 0;
+};
+
+export const runWithDeferredRuntimeSync = async <TResult>(
+  fn: () => Promise<TResult>
+): Promise<TResult> => {
+  batchSyncSuppressionDepth += 1;
+  try {
+    return await fn();
+  } finally {
+    batchSyncSuppressionDepth = Math.max(0, batchSyncSuppressionDepth - 1);
+  }
 };
 
 export const syncRuntimeAfterControl = (
   syncRuntimeState: (source: string) => Promise<unknown>,
   source: string
 ): void => {
+  if (batchSyncSuppressionDepth > 0) {
+    return;
+  }
   void syncRuntimeState(source).catch(err =>
     reportFrontendDiagnosticIfEnabled('warn', `[${source}] runtime sync failed`, err)
   );

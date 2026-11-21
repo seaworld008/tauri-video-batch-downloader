@@ -136,22 +136,21 @@ function validateTauriConfig(config) {
 
 function validateCapability(capability) {
   const permissions = capability?.permissions ?? [];
-  const expectedIdentifiers = ['shell:allow-execute', 'shell:allow-spawn'];
+  const restrictedIdentifiers = ['shell:allow-execute', 'shell:allow-spawn'];
   const issues = [];
 
-  for (const identifier of expectedIdentifiers) {
+  for (const identifier of restrictedIdentifiers) {
     const permission = permissions.find(entry => entry?.identifier === identifier);
     if (!permission) {
-      issues.push(`capability is missing ${identifier}`);
       continue;
     }
 
-    for (const name of SIDECARS) {
-      const scoped = permission.allow?.some(
-        entry => entry.name === `binaries/${name}` && entry.sidecar === true && entry.args === true
-      );
-      if (!scoped) {
-        issues.push(`capability ${identifier} is missing sidecar scope for binaries/${name}`);
+    for (const entry of permission.allow ?? []) {
+      const sidecarMatch = SIDECARS.some(name => entry?.name === `binaries/${name}`);
+      if (sidecarMatch && entry?.args === true) {
+        issues.push(
+          `capability ${identifier} must not allow arbitrary args: true for ${entry.name}`
+        );
       }
     }
   }

@@ -227,6 +227,10 @@ async fn runtime_start_paused_active_task_resumes_existing_worker() -> AppResult
         std::future::pending::<()>().await;
     });
     manager.active_downloads.insert(task_id.clone(), handle);
+    manager
+        .http_downloader
+        .register_test_active_download(&task_id)
+        .await;
 
     let manager = Arc::new(RwLock::new(manager));
     DownloadManager::runtime_start_download(&manager, &task_id).await?;
@@ -240,6 +244,50 @@ async fn runtime_start_paused_active_task_resumes_existing_worker() -> AppResult
     if let Some(handle) = guard.active_downloads.remove(&task_id) {
         handle.abort();
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn runtime_start_paused_stale_handle_falls_through_instead_of_marking_downloading(
+) -> AppResult<()> {
+    let temp_dir = TempDir::new().unwrap();
+    let state_path = temp_dir.path().join("download_state.json");
+    let mut config = DownloadConfig::default();
+    config.concurrent_downloads = 0;
+    let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
+
+    let task_id = manager
+        .add_task(
+            "https://example.com/stale-paused.mp4".to_string(),
+            "./downloads".to_string(),
+        )
+        .await?;
+    if let Some(task) = manager.tasks.get_mut(&task_id) {
+        task.status = TaskStatus::Paused;
+        task.paused_at = Some(chrono::Utc::now());
+        task.paused_from_active = true;
+    }
+
+    let handle = tokio::spawn(async {
+        std::future::pending::<()>().await;
+    });
+    manager.active_downloads.insert(task_id.clone(), handle);
+
+    let manager = Arc::new(RwLock::new(manager));
+    let result = DownloadManager::runtime_start_download(&manager, &task_id).await;
+    assert!(
+        matches!(result, Err(AppError::Download(message)) if message.contains("Maximum concurrent downloads"))
+    );
+
+    let guard = manager.read().await;
+    assert!(!guard.active_downloads.contains_key(&task_id));
+    assert_eq!(
+        guard.tasks.get(&task_id).map(|task| &task.status),
+        Some(&TaskStatus::Paused)
+    );
+    let queue = guard.task_queue.lock().await;
+    assert!(queue.iter().any(|queued| queued.task_id == task_id));
 
     Ok(())
 }

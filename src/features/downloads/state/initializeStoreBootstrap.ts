@@ -1,13 +1,47 @@
 import {
   DownloadConfigSchema,
   DownloadStatsSchema,
-  TaskListSchema,
+  TaskStatusSchema,
+  VideoTaskSchema,
   validateRelatedData,
   type DownloadConfig,
   type DownloadStats,
   type VideoTask,
 } from '../../../schemas';
 import { reportFrontendDiagnostic } from '../../../utils/frontendLogging';
+
+const sanitizeRecoveredTaskFallback = (task: VideoTask): VideoTask | null => {
+  if (!task || typeof task !== 'object') {
+    return null;
+  }
+
+  const candidate = task as Record<string, unknown>;
+  const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+  const url = typeof candidate.url === 'string' ? candidate.url.trim() : '';
+  const title = typeof candidate.title === 'string' ? candidate.title.trim() : '';
+  const outputPath = typeof candidate.output_path === 'string' ? candidate.output_path.trim() : '';
+  const statusParsed = TaskStatusSchema.safeParse(candidate.status);
+
+  if (!id || !url || !title || !outputPath || !statusParsed.success) {
+    return null;
+  }
+
+  const rawProgress = Number(candidate.progress);
+  const progress = Number.isFinite(rawProgress) ? Math.min(Math.max(rawProgress, 0), 100) : 0;
+  const rawDownloaded = Number(candidate.downloaded_size);
+  const downloadedSize = Number.isFinite(rawDownloaded) && rawDownloaded >= 0 ? rawDownloaded : 0;
+
+  return {
+    ...task,
+    id,
+    url,
+    title,
+    output_path: outputPath,
+    status: statusParsed.data,
+    progress,
+    downloaded_size: downloadedSize,
+  };
+};
 
 export const fetchInitialRuntimeSnapshot = async (
   queryTasks: <TTask>() => Promise<TTask[]>,
@@ -34,20 +68,59 @@ export const validateInitialRuntimeSnapshot = ({
   fallbackConfig: DownloadConfig;
   fallbackStats: DownloadStats;
 }) => {
+  const validatedTasks: VideoTask[] = [];
+  const taskItemErrors: string[] = [];
+
+  normalizedTasks.forEach((task, index) => {
+    const parsedTask = VideoTaskSchema.safeParse(task);
+    if (parsedTask.success) {
+      validatedTasks.push(parsedTask.data);
+      return;
+    }
+
+    const issueMessages = parsedTask.error.errors.map(
+      err => `${err.path.join('.')}: ${err.message}`
+    );
+    const fallbackTask = sanitizeRecoveredTaskFallback(task);
+    const taskLabel = (task as { id?: string })?.id || `index:${index}`;
+
+    reportFrontendDiagnostic('warn', 'initialize_store_bootstrap:task_item_invalid', {
+      taskId: taskLabel,
+      preservedFallback: Boolean(fallbackTask),
+      errors: issueMessages,
+    });
+
+    if (fallbackTask) {
+      validatedTasks.push(fallbackTask);
+    } else {
+      taskItemErrors.push(`任务[${taskLabel}]: ${issueMessages.join('; ')}`);
+    }
+  });
+
   const validations = validateRelatedData([
-    { name: 'tasks', schema: TaskListSchema, data: normalizedTasks },
     { name: 'config', schema: DownloadConfigSchema, data: normalizedConfig },
     { name: 'stats', schema: DownloadStatsSchema, data: rawStats },
   ]);
 
+  const tasksValidationResult = {
+    success: taskItemErrors.length === 0,
+    data: validatedTasks,
+    errors: taskItemErrors,
+  };
+
+  const mergedResults = {
+    ...validations.results,
+    tasks: tasksValidationResult,
+  } as typeof validations.results & { tasks: typeof tasksValidationResult };
+
   const validationErrors: string[] = [];
 
-  if (!validations.results.tasks.success) {
+  if (!tasksValidationResult.success) {
     validationErrors.push('后端任务数据格式无效');
     reportFrontendDiagnostic(
       'error',
       'initialize_store_bootstrap:tasks_invalid',
-      validations.results.tasks.errors
+      tasksValidationResult.errors
     );
   }
 
@@ -70,8 +143,11 @@ export const validateInitialRuntimeSnapshot = ({
   }
 
   return {
-    validations,
-    validatedTasks: validations.results.tasks.success ? validations.results.tasks.data : [],
+    validations: {
+      success: validations.success && tasksValidationResult.success,
+      results: mergedResults,
+    },
+    validatedTasks,
     validatedConfig: validations.results.config.success
       ? validations.results.config.data
       : fallbackConfig,

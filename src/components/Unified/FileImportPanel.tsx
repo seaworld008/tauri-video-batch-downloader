@@ -62,7 +62,6 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
   const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
   const setSortBy = useDownloadStore(state => state.setSortBy);
   const recordRecentImport = useDownloadStore(state => state.recordRecentImport);
-  const tasks = useDownloadStore(state => state.tasks);
 
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
@@ -153,7 +152,8 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
       }
 
       // Record previous tasks to identify new ones
-      const previousTaskIds = new Set(tasks.map(task => task.id));
+      const existingTasks = useDownloadStore.getState().tasks;
+      const previousTaskIds = new Set(existingTasks.map(task => task.id));
 
       const tasksToAdd: VideoTask[] = validRows.map((item, index) => {
         const url = item.record_url || item.url || '';
@@ -188,7 +188,10 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
       });
 
       const addedTasks = await addTasks(tasksToAdd);
-      const resolvedTasks = addedTasks.length > 0 ? addedTasks : tasksToAdd;
+      if (addedTasks.length === 0) {
+        notify.error('导入失败', '未能向下载队列添加任务，请重试');
+        return;
+      }
 
       if (refreshTasks) {
         await refreshTasks().catch(error => {
@@ -197,24 +200,22 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
       }
 
       // Identify new tasks for "Recent Imports" logic
-      const newTaskIds = resolvedTasks
+      const newTaskIds = addedTasks
         .filter(task => !previousTaskIds.has(task.id))
         .map(task => task.id);
 
       // Update store with recent imports
       const effectiveSnapshot =
-        newTaskIds.length > 0
-          ? resolvedTasks.filter(t => newTaskIds.includes(t.id))
-          : resolvedTasks; // Fallback if sync failed
+        newTaskIds.length > 0 ? addedTasks.filter(t => newTaskIds.includes(t.id)) : addedTasks;
 
       recordRecentImport(
-        newTaskIds.length > 0 ? newTaskIds : resolvedTasks.map(t => t.id),
+        newTaskIds.length > 0 ? newTaskIds : addedTasks.map(t => t.id),
         effectiveSnapshot
       );
 
       const reconciliation = summarizeTaskCreationReconciliation(
-        tasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[0],
-        resolvedTasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[1]
+        existingTasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[0],
+        addedTasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[1]
       );
       const feedbackMessage = buildTaskCreationSuccessMessage({
         ...reconciliation,
@@ -261,7 +262,6 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
     recordRecentImport,
     setSearchQuery,
     setSortBy,
-    tasks,
     onImportSuccess,
   ]);
 

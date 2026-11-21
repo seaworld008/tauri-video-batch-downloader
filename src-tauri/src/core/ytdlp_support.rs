@@ -343,6 +343,7 @@ pub fn build_probe_args(url: &str, js_runtime_path: Option<&Path>) -> Vec<String
         "--dump-single-json".into(),
     ];
     append_js_runtime_args(&mut args, js_runtime_path);
+    args.push("--".into());
     args.push(url.into());
     args
 }
@@ -378,6 +379,7 @@ pub fn build_download_args(
         args.push(path.to_string_lossy().to_string());
     }
     append_js_runtime_args(&mut args, js_runtime_path);
+    args.push("--".into());
     args.push(url.into());
     args
 }

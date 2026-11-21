@@ -1139,7 +1139,13 @@ impl ResumeDownloader {
         let content =
             serde_json::to_string_pretty(&resume_info).with_context(|| "序列化断点续传信息失败")?;
 
-        tokio::fs::write(resume_file_path, content).await?;
+        let tmp_path =
+            resume_file_path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+        tokio::fs::write(&tmp_path, content).await?;
+        if let Err(err) = tokio::fs::rename(&tmp_path, &resume_file_path).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(err.into());
+        }
 
         // 更新内存缓存
         {

@@ -35,8 +35,27 @@ export const initializeDownloadEventBridge = async () => {
       let progressEventCount = 0;
       const lastProgressUpdate = new Map<string, number>();
       const warmupProgressEventsByTask = new Map<string, number>();
+      const pendingProgressUpdates = new Map<string, ProgressEventPayload>();
+      const trailingFlushTimers = new Map<string, number>();
+
+      const clearTrailingProgress = (taskId: string) => {
+        pendingProgressUpdates.delete(taskId);
+        const timerId = trailingFlushTimers.get(taskId);
+        if (timerId !== undefined && typeof window !== 'undefined') {
+          window.clearTimeout(timerId);
+        }
+        trailingFlushTimers.delete(taskId);
+      };
 
       const updateTaskStatus = (payload: StatusEventPayload) => {
+        if (
+          payload.status === 'completed' ||
+          payload.status === 'failed' ||
+          payload.status === 'cancelled' ||
+          payload.status === 'paused'
+        ) {
+          clearTrailingProgress(payload.task_id);
+        }
         if (
           payload.status === 'completed' ||
           payload.status === 'failed' ||
@@ -87,6 +106,24 @@ export const initializeDownloadEventBridge = async () => {
         }));
       };
 
+      const scheduleTrailingProgressFlush = (update: ProgressEventPayload) => {
+        pendingProgressUpdates.set(update.task_id, update);
+        if (typeof window === 'undefined' || trailingFlushTimers.has(update.task_id)) {
+          return;
+        }
+        const elapsed = Date.now() - (lastProgressUpdate.get(update.task_id) ?? 0);
+        const delayMs = Math.max(0, PROGRESS_UI_UPDATE_INTERVAL_MS - elapsed);
+        const timerId = window.setTimeout(() => {
+          trailingFlushTimers.delete(update.task_id);
+          const pending = pendingProgressUpdates.get(update.task_id);
+          if (!pending) return;
+          pendingProgressUpdates.delete(update.task_id);
+          lastProgressUpdate.set(update.task_id, Date.now());
+          updateTaskProgress(pending);
+        }, delayMs);
+        trailingFlushTimers.set(update.task_id, timerId);
+      };
+
       const shouldDispatchProgressUpdate = (taskId: string) => {
         const now = Date.now();
         const last = lastProgressUpdate.get(taskId) ?? 0;
@@ -121,8 +158,10 @@ export const initializeDownloadEventBridge = async () => {
             if (parsedPayload.success === false) return;
             if (!shouldDispatchProgressUpdate(parsedPayload.data.task_id)) {
               progressEventCount++;
+              scheduleTrailingProgressFlush(parsedPayload.data);
               return;
             }
+            clearTrailingProgress(parsedPayload.data.task_id);
             progressEventCount++;
             updateTaskProgress(parsedPayload.data);
             break;
@@ -140,10 +179,13 @@ export const initializeDownloadEventBridge = async () => {
           case 'task.stats_updated': {
             const parsedPayload = parseTaskStatsUpdatedPayload(envelope.payload);
             if (parsedPayload.success === false) return;
+            const definedStatsPatch = Object.fromEntries(
+              Object.entries(parsedPayload.data).filter(([, value]) => value !== undefined)
+            );
             useDownloadStore.setState(state => ({
               stats: ensureDownloadStats({
-                ...calculateStatsFromTasks(state.tasks),
-                ...parsedPayload.data,
+                ...state.stats,
+                ...definedStatsPatch,
               }),
             }));
             break;
@@ -152,6 +194,18 @@ export const initializeDownloadEventBridge = async () => {
       });
 
       const cleanup = () => {
+        if (activeSyncTimer !== null && typeof window !== 'undefined') {
+          window.clearInterval(activeSyncTimer);
+          activeSyncTimer = null;
+        }
+        if (typeof window !== 'undefined') {
+          for (const timerId of trailingFlushTimers.values()) {
+            window.clearTimeout(timerId);
+          }
+        }
+        trailingFlushTimers.clear();
+        pendingProgressUpdates.clear();
+
         if (!listenersInitialized) return;
         try {
           unlistenDownloadEvents();
@@ -168,6 +222,9 @@ export const initializeDownloadEventBridge = async () => {
 
       if (typeof window !== 'undefined') {
         window.addEventListener('beforeunload', cleanup, { once: true });
+      }
+      if (import.meta.hot) {
+        import.meta.hot.dispose(cleanup);
       }
 
       listenersInitialized = true;

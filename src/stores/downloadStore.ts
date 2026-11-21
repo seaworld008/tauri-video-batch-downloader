@@ -44,6 +44,8 @@ import {
 import { executeImportFromFileStoreAction } from '../features/downloads/state/importFileStoreAction';
 import { executeTaskCreationStoreAction } from '../features/downloads/state/taskCreationStoreAction';
 import {
+  buildClearCompletedTasksPatch,
+  buildRemoveTasksPatch,
   executeClearCompletedTasksMutation,
   executeRemoveTasksMutation,
 } from '../features/downloads/state/taskMutationEffects';
@@ -56,6 +58,7 @@ import { executeRetryFailedTasks } from '../features/downloads/state/retryFailed
 import {
   runControlCommandWithRuntimeSync,
   runQueuedControlCommand,
+  runWithDeferredRuntimeSync,
 } from '../features/downloads/state/commandControlEffects';
 import { executeInitializeStoreStoreAction } from '../features/downloads/state/initializeStoreStoreAction';
 import {
@@ -73,6 +76,26 @@ import {
   executeValidateAndSyncStoreAction,
 } from '../features/downloads/state/validationStoreAction';
 import { reportFrontendDiagnosticIfEnabled } from '../utils/frontendLogging';
+
+let latestRefreshTasksRequestId = 0;
+let latestRefreshStatsRequestId = 0;
+
+const isTaskSnapshotUnchanged = (prev: VideoTask, next: VideoTask): boolean =>
+  prev.id === next.id &&
+  prev.url === next.url &&
+  prev.title === next.title &&
+  prev.output_path === next.output_path &&
+  prev.resolved_path === next.resolved_path &&
+  prev.status === next.status &&
+  prev.progress === next.progress &&
+  prev.file_size === next.file_size &&
+  prev.downloaded_size === next.downloaded_size &&
+  prev.speed === next.speed &&
+  prev.display_speed_bps === next.display_speed_bps &&
+  prev.eta === next.eta &&
+  prev.error_message === next.error_message &&
+  prev.updated_at === next.updated_at &&
+  prev.downloader_type === next.downloader_type;
 
 interface StartDownloadOptions {
   suppressConcurrencyToast?: boolean;
@@ -278,14 +301,41 @@ export const useDownloadStore = create<DownloadState>()(
     clearRecoveredSession: () => set({ recoveredSessionTaskIds: [] }),
 
     refreshTasks: async () => {
+      const requestId = ++latestRefreshTasksRequestId;
       const rawTasks = await fetchRuntimeTasks(getDownloadTasksCommand);
-      const normalizedTasks = rawTasks.map(normalizeBackendTask);
+      if (requestId !== latestRefreshTasksRequestId) {
+        return;
+      }
 
-      set({ tasks: normalizedTasks });
+      const normalizedTasks = rawTasks.map(normalizeBackendTask);
+      set(state => {
+        if (requestId !== latestRefreshTasksRequestId) {
+          return state;
+        }
+        const prevById = new Map(state.tasks.map(task => [task.id, task]));
+        let changed = state.tasks.length !== normalizedTasks.length;
+        const mergedTasks = normalizedTasks.map((nextTask, index) => {
+          const prev = prevById.get(nextTask.id);
+          if (prev && isTaskSnapshotUnchanged(prev, nextTask)) {
+            if (state.tasks[index] !== prev) {
+              changed = true;
+            }
+            return prev;
+          }
+          changed = true;
+          return nextTask;
+        });
+
+        return changed ? { tasks: mergedTasks } : state;
+      });
     },
 
     refreshStats: async () => {
+      const requestId = ++latestRefreshStatsRequestId;
       const stats = await fetchRuntimeStats(getDownloadStatsCommand);
+      if (requestId !== latestRefreshStatsRequestId) {
+        return;
+      }
 
       set({ stats: ensureDownloadStats(stats) });
     },
@@ -363,7 +413,8 @@ export const useDownloadStore = create<DownloadState>()(
           selectedTaskIds: selectedTasks,
           removeTasks: removeTasksCommand,
           refreshStats,
-          applyPatch: patch => set(patch),
+          applyPatch: () =>
+            set(state => buildRemoveTasksPatch(state.tasks, state.selectedTasks, taskIds)),
           toastApi: toast,
         });
       } catch (error) {
@@ -382,7 +433,8 @@ export const useDownloadStore = create<DownloadState>()(
           selectedTaskIds: selectedTasks,
           clearCompletedTasks: clearCompletedTasksCommand,
           refreshStats,
-          applyPatch: patch => set(patch),
+          applyPatch: () =>
+            set(state => buildClearCompletedTasksPatch(state.tasks, state.selectedTasks)),
           toastApi: toast,
         });
       } catch (error) {
@@ -499,6 +551,7 @@ export const useDownloadStore = create<DownloadState>()(
       await executeRetryFailedTasks({
         tasks: get().tasks,
         startDownload: get().startDownload,
+        syncRuntimeState: get().syncRuntimeState,
         toastApi: toast,
       });
     },
@@ -528,9 +581,23 @@ export const useDownloadStore = create<DownloadState>()(
       }
 
       void (async () => {
-        for (const taskId of uniqueIds) {
-          await get().startDownload(taskId, { suppressConcurrencyToast: true });
-        }
+        await runWithDeferredRuntimeSync(async () => {
+          for (const taskId of uniqueIds) {
+            try {
+              await get().startDownload(taskId, { suppressConcurrencyToast: true });
+            } catch (error) {
+              reportFrontendDiagnosticIfEnabled('warn', '[enqueueDownloads] startDownload failed', {
+                taskId,
+                error,
+              });
+            }
+          }
+        });
+        void get()
+          .syncRuntimeState('enqueueDownloads')
+          .catch(err =>
+            reportFrontendDiagnosticIfEnabled('warn', '[enqueueDownloads] runtime sync failed', err)
+          );
       })();
     },
 

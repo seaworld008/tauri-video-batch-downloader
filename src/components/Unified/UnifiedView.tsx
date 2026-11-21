@@ -24,7 +24,7 @@ export const UnifiedView: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [isInputCollapsed, setIsInputCollapsed] = useState(false);
-  const tasks = useDownloadStore(state => state.tasks);
+  const hasTasks = useDownloadStore(state => state.tasks.length > 0);
 
   const toggleSettings = () => setShowSettings(!showSettings);
 
@@ -149,7 +149,7 @@ export const UnifiedView: React.FC = () => {
             className='h-full max-w-7xl mx-auto border-x border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden flex flex-col'
             data-testid='task-list'
           >
-            {tasks.length === 0 ? (
+            {!hasTasks ? (
               <div className='flex-1 flex flex-col items-center justify-center text-gray-400 p-10'>
                 <DocumentArrowUpIcon className='w-16 h-16 mb-4 opacity-20' />
                 <p className='text-lg font-medium'>暂无下载任务</p>
@@ -214,7 +214,9 @@ export const UnifiedView: React.FC = () => {
             <h2 className='text-2xl font-bold text-gray-900 dark:text-white mb-2'>
               Video Downloader Pro
             </h2>
-            <p className='text-gray-500 dark:text-gray-400 mb-6 font-mono text-sm'>v1.0.0</p>
+            <p className='text-gray-500 dark:text-gray-400 mb-6 font-mono text-sm'>
+              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.0.25'}
+            </p>
             <p className='text-gray-600 dark:text-gray-300 mb-8 text-sm leading-relaxed'>
               专业的批量视频下载工具
               <br />

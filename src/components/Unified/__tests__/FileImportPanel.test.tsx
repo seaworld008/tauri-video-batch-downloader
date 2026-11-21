@@ -42,7 +42,10 @@ const uiStoreMocks = vi.hoisted(() => ({
 vi.mock('../../../features/downloads/api/importCommands', () => importCommandMocks);
 vi.mock('../../../features/downloads/api/systemCommands', () => systemCommandMocks);
 vi.mock('../../../stores/downloadStore', () => ({
-  useDownloadStore: (selector: (state: any) => unknown) => selector(downloadStoreState),
+  useDownloadStore: Object.assign(
+    (selector: (state: any) => unknown) => selector(downloadStoreState),
+    { getState: () => downloadStoreState }
+  ),
 }));
 vi.mock('../../../stores/configStore', () => ({
   useConfigStore: (selector: (state: any) => unknown) => selector(configStoreState),

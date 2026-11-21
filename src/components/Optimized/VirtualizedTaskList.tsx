@@ -47,7 +47,6 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
   const filterStatus = useDownloadStore(state => state.filterStatus);
   const searchQuery = useDownloadStore(state => state.searchQuery);
   const selectedTasks = useDownloadStore(state => state.selectedTasks);
-  const toggleTaskSelection = useDownloadStore(state => state.toggleTaskSelection);
   const sortBy = useDownloadStore(state => state.sortBy);
   const sortDirection = useDownloadStore(state => state.sortDirection);
 
@@ -75,8 +74,14 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     return result;
   }, [tasks, filterStatus, searchQuery]);
 
+  const selectedTaskSet = useMemo(() => new Set(selectedTasks), [selectedTasks]);
+
   const sortedTasks = useMemo(() => {
     const result = [...filteredTasks];
+    const timestampCache =
+      sortBy === 'created_at' || sortBy === 'updated_at'
+        ? new Map<string, number>(result.map(task => [task.id, new Date(task[sortBy]).getTime()]))
+        : null;
 
     return result.sort((a, b) => {
       const priorityDiff =
@@ -86,13 +91,8 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
         return priorityDiff;
       }
 
-      let aValue: any = (a as any)[sortBy];
-      let bValue: any = (b as any)[sortBy];
-
-      if (sortBy === 'created_at' || sortBy === 'updated_at') {
-        aValue = new Date(aValue).getTime();
-        bValue = new Date(bValue).getTime();
-      }
+      let aValue: any = timestampCache ? (timestampCache.get(a.id) ?? 0) : (a as any)[sortBy];
+      let bValue: any = timestampCache ? (timestampCache.get(b.id) ?? 0) : (b as any)[sortBy];
 
       if (typeof aValue === 'string' && typeof bValue === 'string') {
         aValue = aValue.toLowerCase();
@@ -170,20 +170,13 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
 
-  const handleTaskSelect = useCallback(
-    (taskId: string, selected: boolean) => {
-      if (selected) {
-        if (!selectedTasks.includes(taskId)) {
-          toggleTaskSelection(taskId); // DownloadStore 里通常是 toggle
-        }
-      } else {
-        if (selectedTasks.includes(taskId)) {
-          toggleTaskSelection(taskId);
-        }
-      }
-    },
-    [selectedTasks, toggleTaskSelection]
-  );
+  const handleTaskSelect = useCallback((taskId: string, selected: boolean) => {
+    const state = useDownloadStore.getState();
+    const isCurrentlySelected = state.selectedTasks.includes(taskId);
+    if (selected !== isCurrentlySelected) {
+      state.toggleTaskSelection(taskId);
+    }
+  }, []);
 
   return (
     <div className={`h-full w-full ${className}`} data-testid='task-list'>
@@ -198,14 +191,10 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
               key={task.id}
               index={index} // 实际列表索引
               task={task}
-              style={{
-                top,
-                height,
-                left: 0,
-                right: 0,
-              }}
-              isSelected={selectedTasks.includes(task.id)}
-              onSelect={selected => handleTaskSelect(task.id, selected)}
+              top={top}
+              height={height}
+              isSelected={selectedTaskSet.has(task.id)}
+              onSelect={handleTaskSelect}
             />
           ))}
 

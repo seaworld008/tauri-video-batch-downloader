@@ -1211,14 +1211,15 @@ impl HttpDownloader {
         Ok(())
     }
 
-    pub async fn resume_task(&self, task_id: &str) -> Result<()> {
+    pub async fn resume_task(&self, task_id: &str) -> Result<bool> {
         let downloads = self.active_downloads.read().await;
         if let Some(control) = downloads.get(task_id) {
             control.pause_flag.store(false, Ordering::Relaxed);
             self.recalc_effective_pause(control);
             tracing::info!("[RESUME_TASK] Resumed task: {}", task_id);
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// 取消特定下载
@@ -1267,6 +1268,16 @@ impl HttpDownloader {
     pub async fn force_remove_active(&self, task_id: &str) {
         let mut downloads = self.active_downloads.write().await;
         downloads.remove(task_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn register_test_active_download(&self, task_id: &str) {
+        let control = DownloadControl::new(&self.is_paused);
+        self.recalc_effective_pause(&control);
+        self.active_downloads
+            .write()
+            .await
+            .insert(task_id.to_string(), control);
     }
 
     /// 批量下载文件
