@@ -2,7 +2,8 @@
 
 更新日期：2026-11-22
 
-当前基线：`v1.1.0`（Phase 1 核心引擎加固与开源社区规范基线）
+当前基线：`v1.2.0`（Phase
+2 可插拔多流媒体引擎与 HLS/DASH/yt-dlp 参数一致性基线）
 
 这份文档是当前仓库的事实源摘要。它只描述现在仍应维护的主链行为，不再承载历史计划、旧评审记录或已完成阶段的流水账。
 
@@ -15,7 +16,10 @@ Video Downloader Pro 是一个基于 **Tauri v2 + Rust + React 19 + TypeScript**
 
 - 从 Excel/CSV 导入大量视频链接
 - 管理可暂停、可恢复、可重试的下载队列
-- 支持 HTTP/HTTPS、M3U8/HLS，并通过统一 `yt-dlp` provider 探测和下载公开视频网页
+- 支持 HTTP/HTTPS、M3U8/HLS（Master Playlist / fMP4 / AES-128 /
+  FFmpeg 混流）、MPEG-DASH (`.mpd`)，并通过统一 `yt-dlp`
+  provider 探测和下载公开视频网页（支持任务级 `headers` / `cookies` / `proxy`
+  透传）
 - 通过 `.part`、resume 快照和完成 marker 保留本地文件状态
 - 在 App 重启后恢复任务状态，但不自动偷跑下载
 - 通过 Tauri 事件桥把后端真实状态同步给前端
@@ -46,7 +50,7 @@ src-tauri/src/main.rs
 -> src-tauri/src/engine/task_engine.rs
 -> src-tauri/src/core/runtime.rs
 -> src-tauri/src/core/manager.rs
--> downloader / resume / m3u8 / youtube
+-> ProviderRegistry -> downloader / resume / m3u8 / dash / ytdlp + ffmpeg_muxer
 ```
 
 后端任务状态、并发调度、文件写入、断点恢复和事件投递以 Rust 侧为真相源。
@@ -120,15 +124,21 @@ User action
 
 ## 5. 多平台视频与外部工具
 
-当前未提交工作树已经把复杂站点统一收敛到 `YtDlp` provider：
+当前工作树通过 `ProviderRegistry` 将不同协议分发至原生流媒体引擎与 `yt-dlp`
+provider：
 
-- 直连媒体文件仍走原生 HTTP/resume 下载器。
-- `.m3u8` URL 仍走原生 M3U8/HLS 下载器。
-- M3U8/HLS 已支持相对 key URI 解析，并能按 segment 读取和缓存不同 AES-128 key。
-- YouTube、TikTok、Instagram、Facebook 和未知复杂网页走 `yt-dlp`。
-- 旧 `youtube` / `Youtube` 下载器类型导入时映射到前端 `ytdlp` 和后端 `YtDlp`。
-- 任务新增 `external_info`，用于保存外部平台元信息，不复用课程导入的
-  `video_info`。
+- 直连媒体文件仍走原生 HTTP/resume 下载器（支持单任务 `Client` / Proxy /
+  Headers 作用域构建）。
+- `.m3u8` URL 走原生 `M3U8Downloader`（支持 Master Playlist 码率与音轨选择、fMP4
+  `#EXT-X-MAP`、AES-128 Sequence 默认 IV 与 FFmpeg 无损混流）。
+- `.mpd` URL 走原生 `DashDownloader`（支持 MPD 解析、`SegmentTemplate` /
+  `SegmentTimeline` / `SegmentList` /
+  `SegmentBase`、多轨选择与 FFmpeg 无损混流）。
+- YouTube、Bilibili、TikTok、Instagram、Facebook、X/Twitter、Vimeo、Twitch 和未知复杂网页走
+  `yt-dlp`，并转发经校验的 `proxy` / `headers` / `cookies_from_browser` /
+  `format_selector` / `output_container`。
+- 任务支持可选 `request_options` (`TaskRequestOptions`) 并保留 `external_info`
+  保存外部平台元信息。
 - 平台 host 识别已收敛到 `platform_host_rules()` registry，并使用精确 host
   / 子域匹配，避免 `youtube.com.evil.example` 这类误判。
 
@@ -259,6 +269,19 @@ GitNexus 对当前未提交工作树的影响检查：
   - 已补齐根目录 `LICENSE`（MIT）、`README.md` /
     `README.zh-CN.md`、`CHANGELOG.md`、`CODE_OF_CONDUCT.md` 与准确的
     `SECURITY.md` / `.github/dependabot.yml`。
+- `v1.2.0` 可插拔多流媒体引擎已完成收敛：
+  - 将 `DownloadProviderRouter` 重构为 `DownloadProviderSpec`
+    Trait + 优先级排序的 `ProviderRegistry` 注册中心。
+  - 新增共享 `ffmpeg_muxer.rs`、`dash_parser.rs` 与 `dash_downloader.rs`
+    原生 MPEG-DASH
+    (`.mpd`) 下载引擎，支持 MPD 多轨选择、Range/206、分段暂停复用与 FFmpeg 无损音视频混流。
+  - 升级 `M3U8Downloader` 支持 Master Playlist 多码率/音轨选择、`#EXT-X-MAP`
+    fMP4 初始化分段、`#EXT-X-MEDIA-SEQUENCE` 默认 IV 推导与非重试状态快速失败。
+  - 打通任务级 `TaskRequestOptions`（前端 `ManualInputPanel` 高级请求参数 ->
+    `HttpDownloader` / `ResumeDownloader` / `M3U8Downloader` / `DashDownloader`
+    / `YtDlpDownloader`），并扩展 Bilibili / X(Twitter) / Vimeo /
+    Twitch 平台识别与 `drm_protected` / `proxy_error` 错误分类。
+  - 升级 `url` crate 至 `2.5.9` 修复 `RUSTSEC-2026-0592`。
 
 ---
 
@@ -279,15 +302,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 如果改动涉及下载核心、恢复、导入或事件契约，应再跑对应 focused
 tests，并用 GitNexus 查看影响面。
 
-2026-11-22 当前 `v1.1.0` 已验证通过：
+2026-11-22 当前 `v1.2.0` 已验证通过：
 
 - `pnpm type-check`
 - `pnpm lint`（`--max-warnings 0`）
-- `pnpm exec vitest run`：54 个测试文件，302 个测试通过
+- `pnpm exec vitest run`：54 个测试文件，303 个测试通过
 - `pnpm exec vitest run --config vitest.config.integration.ts`：2 个测试文件，14 个测试通过
+- `pnpm exec vite build`：构建通过
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check`
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- `cargo test --manifest-path src-tauri/Cargo.toml`：182 个测试通过
+- `cargo test --manifest-path src-tauri/Cargo.toml`：199 个测试通过
 - `pnpm sidecars:check:local`：允许占位文件的本地 smoke 预检通过
 - `git diff --check`
 
@@ -311,9 +335,6 @@ tests，并用 GitNexus 查看影响面。
 
 优先级与多阶段规划见 `docs/roadmap.md`：
 
-- **`v1.2.0`**：可插拔 `DownloadProvider` Trait 注册中心、完整 HLS Master
-  Playlist / fMP4 / FFmpeg 无损混流、原生 MPEG-DASH
-  (`.mpd`) 与单任务 Headers/Cookies/Proxy 参数透传。
 - **`v1.3.0`**：前端完整国际化 (`zh-CN` /
   `en-US`)、系统托盘与原生桌面通知、快捷键与 Headless CLI。
 - **`v2.0.0`**：Cargo Workspace 模块化拆分与 SQLite WAL 持久化存储引擎。

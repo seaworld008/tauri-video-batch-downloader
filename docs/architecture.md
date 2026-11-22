@@ -16,19 +16,26 @@
   - `manager/stats.rs`：统计聚合、progress/lifecycle duration 指标
   - `manager/integrity.rs`：expected hash 与完整性校验配置/执行
   - `manager/events.rs`：DownloadEvent 发送辅助
-  - `downloader.rs`：下载执行与重试
-  - `resume_downloader.rs`：断点续传逻辑
-  - `m3u8_downloader.rs`：M3U8 解析与分片
-  - `youtube_downloader.rs`：YouTube 解析与下载
+  - `download_provider.rs`：`DownloadProviderSpec` Trait 与优先级
+    `ProviderRegistry`
+  - `downloader.rs`：统一下载调度、作用域请求构造与单流下载
+  - `resume_downloader.rs`：HTTP Range 分片断点续传（支持作用域 `Client` 覆盖）
+  - `m3u8_downloader.rs`：HLS/M3U8 解析、Master Playlist 选流、fMP4
+    INIT 与 AES-128 解密
+  - `dash_parser.rs` & `dash_downloader.rs`：MPEG-DASH
+    MPD 解析、分片断点与双轨下载
+  - `ffmpeg_muxer.rs`：单轨重封装与音视频无损混流公共层
+  - `ytdlp_downloader.rs` & `ytdlp_support.rs`：统一多站点 `yt-dlp`
+    适配与安全参数构造
 - `src-tauri/src/commands/`：Tauri 命令入口
 - `src-tauri/src/parsers/`：CSV/Excel 解析
 
 ## 数据流（简化）
 
-1. 前端触发导入/开始下载
+1. 前端触发导入/添加任务（可附带 `TaskRequestOptions`）与开始下载
 2. Tauri command 写入任务队列
-3. DownloadManager 负责调度并发
-4. downloader/resume/m3u8/youtube provider 执行下载
+3. DownloadManager 负责调度并发与合并配置默认值
+4. ProviderRegistry 路由至 HTTP / Resume / M3U8 / DASH / YtDlp Provider 执行下载
 5. DownloadEvent 经事件桥接回前端
 6. 前端 listener/reducer/store 以事件或 refresh 结果同步 UI
 

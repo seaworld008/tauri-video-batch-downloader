@@ -112,4 +112,39 @@ describe('ManualInputPanel', () => {
       expect.any(String)
     );
   });
+
+  it('infers dash downloader for mpd URLs and attaches per-task request_options', async () => {
+    const user = userEvent.setup();
+    downloadStoreActions.addTasks.mockImplementation(async tasks => tasks);
+
+    render(<ManualInputPanel />);
+
+    await user.type(screen.getByTestId('url-input'), 'https://cdn.example.com/live/manifest.mpd');
+    await user.click(screen.getByTestId('add-url'));
+
+    await user.click(screen.getByTestId('toggle-advanced-options'));
+    await user.type(screen.getByTestId('request-referer-input'), 'https://player.example.com/');
+    await user.type(screen.getByTestId('request-cookies-input'), 'sid=123');
+    await user.selectOptions(screen.getByTestId('request-format-select'), '720p');
+    await user.type(screen.getByTestId('request-headers-input'), 'X-Token: secret');
+
+    await user.click(screen.getByTestId('confirm-import'));
+
+    await waitFor(() => {
+      expect(downloadStoreActions.addTasks).toHaveBeenCalledTimes(1);
+    });
+
+    expect(downloadStoreActions.addTasks.mock.calls[0][0][0]).toMatchObject({
+      url: 'https://cdn.example.com/live/manifest.mpd',
+      downloader_type: 'dash',
+      request_options: {
+        referer: 'https://player.example.com/',
+        cookies: 'sid=123',
+        format_selector: '720p',
+        headers: {
+          'X-Token': 'secret',
+        },
+      },
+    });
+  });
 });

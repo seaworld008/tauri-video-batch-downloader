@@ -29,6 +29,7 @@ fn task_for_target(
         downloader_type,
         video_info: None,
         external_info: None,
+        request_options: None,
     }
 }
 

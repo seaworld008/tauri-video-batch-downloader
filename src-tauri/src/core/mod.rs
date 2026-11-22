@@ -5,11 +5,14 @@
 
 pub mod app_bootstrap;
 pub mod config;
+pub mod dash_downloader;
+pub mod dash_parser;
 pub mod download_provider;
 pub mod downloader;
 pub mod error_handling;
 mod external_tool_compat;
 pub mod external_tools;
+pub mod ffmpeg_muxer;
 pub mod file_parser;
 pub mod integrity_checker;
 pub mod m3u8_downloader;

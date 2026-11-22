@@ -21,8 +21,8 @@
 ---
 
 **Video Downloader Pro** 面向真实批量下载与流媒体采集场景：支持从 Excel /
-CSV 表格、批量粘贴 URL、HTTP 直链、HLS
-(`.m3u8`) 与公开视频站点统一进入可暂停、可恢复、可观测、可诊断的 Rust 原生下载队列。
+CSV 表格、批量粘贴 URL、HTTP 直链、HLS (`.m3u8`)、MPEG-DASH
+(`.mpd`) 与公开视频站点统一进入可暂停、可恢复、可观测、可诊断的 Rust 原生下载队列。
 
 ## 目录
 
@@ -55,14 +55,14 @@ CSV 表格、批量粘贴 URL、HTTP 直链、HLS
 
 ## 功能矩阵
 
-| 模块               | 当前支持能力 (`v1.1.0`)                                                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **批量导入**       | Excel (`.xlsx` / `.xls`)、CSV 编码识别、字段映射预览、剪贴板批量粘贴、单/多 URL 探测                                                    |
-| **队列与行级控制** | 全局开始/暂停/重试/清理、单行开始/暂停/继续/重试/删除、批量勾选与临时输出目录覆盖                                                       |
-| **协议与站点适配** | 原生 HTTP/HTTPS（单流 `.part` 原子提交 + 分片断点 `ResumeDownloader`）、原生 HLS (`.m3u8` AES-128 / byte-range)、统一 `yt-dlp` provider |
-| **可靠性与校验**   | `.part` + `sync_all()` 原子重命名、原子配置落盘、`RetryExecutor` 熔断联动、`spawn_blocking` SHA-256 / MD5 校验                          |
-| **可观测性**       | 单任务实时速度与 ETA、底部实时态势状态徽标、平均/P95 提交耗时、单任务一键复制诊断报告                                                   |
-| **跨平台桌面端**   | Tauri v2 桌面端覆盖 Windows (`nsis`)、macOS (`universal` `.dmg`) 与 Linux                                                               |
+| 模块               | 当前支持能力 (`v1.2.0`)                                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **批量导入**       | Excel (`.xlsx` / `.xls`)、CSV 编码识别、字段映射预览、剪贴板批量粘贴、单/多 URL 探测、任务级高级请求参数 (`Referer` / `Cookie` / `Proxy` / 清晰度)                       |
+| **队列与行级控制** | 全局开始/暂停/重试/清理、单行开始/暂停/继续/重试/删除、批量勾选与临时输出目录覆盖                                                                                        |
+| **协议与站点适配** | 插件化 `ProviderRegistry`：HTTP/Range (`ResumeDownloader`)、HLS (`.m3u8` Master / fMP4 / AES-128 / FFmpeg)、原生 MPEG-DASH (`.mpd`)、`yt-dlp` (YT/B站/TK/X/Vimeo/Twitch) |
+| **可靠性与校验**   | `.part` / `.seg` + `sync_all()` 原子提交、原子配置落盘、`RetryExecutor` 熔断联动、`spawn_blocking` SHA-256 / MD5 校验                                                    |
+| **可观测性**       | 单任务实时速度与 ETA、底部实时态势状态徽标、平均/P95 提交耗时、单任务一键复制诊断报告                                                                                    |
+| **跨平台桌面端**   | Tauri v2 桌面端覆盖 Windows (`nsis`)、macOS (`universal` `.dmg`) 与 Linux                                                                                                |
 
 ---
 
@@ -70,20 +70,23 @@ CSV 表格、批量粘贴 URL、HTTP 直链、HLS
 
 ```mermaid
 flowchart LR
-  Input["CSV / Excel / 批量 URL"] --> UI["React 19 UnifiedView"]
+  Input["CSV / Excel / 批量 URL + 请求参数"] --> UI["React 19 UnifiedView"]
   UI --> Store["Zustand Stores & 状态校验"]
   Store --> API["Feature-local Tauri Wrappers"]
   API --> Commands["Tauri v2 Commands + TaskEngine"]
   Commands --> Runtime["DownloadRuntimeHandle"]
   Runtime --> Manager["DownloadManager（队列 + 并发信号量）"]
-  Manager --> Router["DownloadProviderRouter"]
+  Manager --> Router["ProviderRegistry（优先级 DownloadProviderSpec）"]
   Router --> HTTP["HttpDownloader（单流 .part）"]
   Router --> Resume["ResumeDownloader（分片 Range）"]
-  Router --> HLS["M3U8Downloader（分片 + AES-128）"]
+  Router --> HLS["M3U8Downloader（Master / fMP4 / AES-128）"]
+  Router --> DASH["DashDownloader（MPD / 独立音视频轨）"]
   Router --> YtDlp["YtDlp 外部下载器"]
+  HLS --> Mux["ffmpeg_muxer（无损重封装 / 混流）"]
+  DASH --> Mux
   HTTP --> Storage["原子 .part -> 最终文件 + .vdstate"]
   Resume --> Storage
-  HLS --> Storage
+  Mux --> Storage
   YtDlp --> Storage
   Manager --> EventBus["download-events 事件信封"]
   EventBus --> Bridge["downloadEventBridge（防抖状态同步）"]
@@ -163,7 +166,7 @@ pnpm audit --prod --audit-level moderate
 | 主题                        | 文档链接                                                                         |
 | --------------------------- | -------------------------------------------------------------------------------- |
 | 完整架构与功能设计          | [docs/architecture-functional-design.md](docs/architecture-functional-design.md) |
-| 当前系统真实状态 (`v1.1.0`) | [docs/current-state.md](docs/current-state.md)                                   |
+| 当前系统真实状态 (`v1.2.0`) | [docs/current-state.md](docs/current-state.md)                                   |
 | 文档总目录                  | [docs/index.md](docs/index.md)                                                   |
 | 构建与发布指南              | [docs/build-release.md](docs/build-release.md)                                   |
 | 贡献指南                    | [CONTRIBUTING.md](CONTRIBUTING.md)                                               |
@@ -175,11 +178,13 @@ pnpm audit --prod --audit-level moderate
 
 ## 演进路线
 
-- **`v1.1.0`（当前版本）**：核心下载引擎可靠性与原子性加固、M3U8 任务隔离与断点续传、设置项全链路联动、单行任务操作、开源规范基础设施建设。
-- **`v1.2.0`（下一阶段）**：可插拔 `DownloadProvider` Trait 注册中心、完整 HLS
-  Master Playlist 多音视频/字幕轨选择与 fMP4 + FFmpeg 无损混流、原生 MPEG-DASH
-  (`.mpd`) 解析下载器、单任务级 Headers/Cookies/Proxy 透传与 `yt-dlp` 深度对齐。
-- **`v1.3.0`**：前端全量国际化与系统托盘/桌面原生通知完善、键盘快捷键体系与 Headless
+- **`v1.1.0`（已完成）**：核心下载引擎可靠性与原子性加固、M3U8 任务隔离与断点续传、设置项全链路联动、单行任务操作、开源规范基础设施建设。
+- **`v1.2.0`（当前版本）**：可插拔 `DownloadProviderSpec` / `ProviderRegistry`
+  注册中心、完整 HLS Master Playlist 选流与 fMP4 +
+  FFmpeg 无损混流、原生 MPEG-DASH (`.mpd`) 下载引擎、任务级 Headers / Cookies /
+  Proxy 全链路透传与 `yt-dlp` 深度对齐（新增 Bilibili / X / Vimeo /
+  Twitch 识别）。
+- **`v1.3.0`（下一阶段）**：前端全量国际化与系统托盘/桌面原生通知完善、键盘快捷键体系与 Headless
   CLI 工具。
 - **`v2.0.0`**：Rust Cargo Workspace 多 crate 分层、SQLite
   WAL 持久化存储引擎与浏览器扩展/本地接口联动。

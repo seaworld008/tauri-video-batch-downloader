@@ -408,6 +408,7 @@ mod tests {
                 course_name: None,
             }),
             external_info: None,
+            request_options: None,
         }
     }
 

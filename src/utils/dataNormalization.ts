@@ -27,7 +27,9 @@ const normalizeDownloaderType = (value: unknown): VideoTask['downloader_type'] =
   }
   const normalized = value.toLowerCase();
   if (normalized === 'youtube' || normalized === 'ytdlp') return 'ytdlp';
-  if (normalized === 'http' || normalized === 'm3u8') return normalized;
+  if (normalized === 'hls' || normalized === 'm3u8') return 'm3u8';
+  if (normalized === 'mpd' || normalized === 'dash') return 'dash';
+  if (normalized === 'http') return 'http';
   return undefined;
 };
 
@@ -80,6 +82,7 @@ export const normalizeTaskData = (data: any): Partial<VideoTask> => {
     downloader_type: normalizeDownloaderType(data.downloader_type),
     video_info: hasVideoInfo ? normalizedVideoInfo : undefined,
     external_info: data.external_info,
+    ...(data.request_options ? { request_options: data.request_options } : {}),
   };
 };
 

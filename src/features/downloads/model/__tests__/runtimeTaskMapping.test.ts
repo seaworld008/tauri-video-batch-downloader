@@ -31,9 +31,24 @@ describe('runtimeTaskMapping', () => {
       status: 'Downloading',
       downloader_type: 'YtDlp',
     });
+    expect(
+      convertTaskForBackend({
+        id: 'task-dash',
+        url: 'https://example.com/manifest.mpd',
+        title: 'DASH',
+        status: 'pending',
+        progress: 0,
+        output_path: '/tmp/dash.mp4',
+        created_at: '2026-04-16T00:00:00.000Z',
+        updated_at: '2026-04-16T00:00:00.000Z',
+        downloader_type: 'dash',
+      } as any)
+    ).toMatchObject({
+      downloader_type: 'Dash',
+    });
   });
 
-  it('normalizes legacy youtube downloader values to ytdlp', () => {
+  it('normalizes legacy youtube and dash downloader values cleanly', () => {
     expect(
       normalizeBackendTask({
         id: 'task-youtube',
@@ -48,6 +63,21 @@ describe('runtimeTaskMapping', () => {
       })
     ).toMatchObject({
       downloader_type: 'ytdlp',
+    });
+    expect(
+      normalizeBackendTask({
+        id: 'task-dash',
+        url: 'https://cdn.example.com/stream.mpd',
+        title: 'DASH Stream',
+        status: 'Pending',
+        progress: 0,
+        output_path: '/tmp',
+        created_at: '2026-04-16T00:00:00.000Z',
+        updated_at: '2026-04-16T00:00:00.000Z',
+        downloader_type: 'Dash',
+      })
+    ).toMatchObject({
+      downloader_type: 'dash',
     });
   });
 

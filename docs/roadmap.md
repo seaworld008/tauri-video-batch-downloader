@@ -25,25 +25,30 @@
 
 ---
 
-## Phase 2 (`v1.2.0`) — 可插拔多流媒体引擎（下一阶段）
+## Phase 2 (`v1.2.0`) — 可插拔多流媒体引擎（已完成）
 
 - **Trait 化 `DownloadProvider` 注册中心**：将硬编码的 `DownloadProviderRouter`
-  重构为基于优先级匹配与插件注册表的 `DownloadProvider` /
+  重构为基于优先级匹配与插件注册表的 `DownloadProviderSpec` /
   `ProviderRegistry`，解耦 HTTP / Range / HLS / DASH / `yt-dlp`。
 - **完整 HLS Master Playlist + fMP4 + FFmpeg 无损混流**：
-  - 支持 `#EXT-X-STREAM-INF` / `#EXT-X-MEDIA` 码率与音视频/字幕轨选择。
+  - 支持 `#EXT-X-STREAM-INF` / `#EXT-X-MEDIA` 码率与音视频轨选择。
   - 支持 `#EXT-X-MAP` (fMP4 init segment)、AES-128 默认 Media Sequence
-    IV 推导与自动 FFmpeg 无损封装为 `.mp4` / `.mkv`。
-  - 支持分片级指数退避重试与直播滑窗拉流支持。
-- **原生 MPEG-DASH (`.mpd`) 下载器**：原生解析 MPD Manifest / `SegmentTemplate`
-  / `SegmentList` / `BaseURL`，并发拉取音频与视频表示轨并用 FFmpeg 无损混流。
-- **单任务协议参数与 `yt-dlp` 深度对齐**：支持任务级 `headers` / `cookies` /
-  `referer` / `proxy` 透传，统一 HTTP、HLS、DASH 与 `yt-dlp`
-  字幕/封面/音质参数策略，支持用户覆盖格式选择器与网络异常分类增强。
+    IV 推导与自动 FFmpeg 无损重封装/音视频混流（`ffmpeg_muxer`）。
+  - 支持非重试 HTTP 状态（401/403/404/410）快速失败与有界指数退避重试。
+- **原生 MPEG-DASH (`.mpd`) 下载引擎**：新增 `dash_parser.rs` 与
+  `dash_downloader.rs`，原生解析 MPD Manifest / `SegmentTemplate` /
+  `SegmentTimeline` / `SegmentList` / `SegmentBase` /
+  `BaseURL`，并发拉取 fMP4 初始化与媒体分片并通过 FFmpeg 无损混流。
+- **单任务协议参数与 `yt-dlp` 深度对齐**：新增全栈 `TaskRequestOptions`
+  与前端高级请求参数面板，支持任务级 `headers` / `cookies` /
+  `cookies_from_browser` / `referer` / `user_agent` / `proxy` /
+  `format_selector` / `preferred_language` / `output_container`
+  透传，统一 HTTP、HLS、DASH 与 `yt-dlp` 参数策略；新增 Bilibili / X / Vimeo /
+  Twitch 平台识别与 `drm_protected` / `proxy_error` 错误分类。
 
 ---
 
-## Phase 3 (`v1.3.0`) — 全球化 UX 抛光、桌面融合与 CLI
+## Phase 3 (`v1.3.0`) — 全球化 UX 抛光、桌面融合与 CLI（下一阶段）
 
 - **全量国际化覆盖**：消除硬编码中文文案，打通 Settings / Toolbar / UnifiedView
   / Dialogs / 状态文案的完整 `zh-CN` 与 `en-US`

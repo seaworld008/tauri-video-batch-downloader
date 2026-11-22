@@ -40,13 +40,23 @@ describe('Zod v4 schemas', () => {
       expect(parsed.updated_at).toBe('2026-01-01T00:00:00+00:00');
     });
 
-    it('preprocesses downloader_type youtube to ytdlp', () => {
+    it('preprocesses downloader_type youtube to ytdlp and mpd to dash', () => {
       const parsed = VideoTaskSchema.parse({
         ...validTaskBase,
         downloader_type: 'youtube',
       });
+      const parsedDash = VideoTaskSchema.parse({
+        ...validTaskBase,
+        downloader_type: 'mpd',
+        request_options: {
+          referer: 'https://example.com',
+          format_selector: '720p',
+        },
+      });
 
       expect(parsed.downloader_type).toBe('ytdlp');
+      expect(parsedDash.downloader_type).toBe('dash');
+      expect(parsedDash.request_options?.format_selector).toBe('720p');
     });
 
     it('rejects invalid URL and datetime with expected localized messages', () => {
