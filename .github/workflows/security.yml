@@ -278,23 +278,45 @@ jobs:
           echo "## Frontend Security Audit Results" > frontend-audit-results.md
           echo "" >> frontend-audit-results.md
 
-          high_ok=true
-          prod_ok=true
+          pnpm audit --json > npm-audit.json 2> npm-audit.stderr || true
 
-          if ! pnpm audit --audit-level high --json > npm-audit.json 2> npm-audit.stderr; then
-            high_ok=false
+          if [ ! -s npm-audit.json ] || ! python3 -c 'import json; json.load(open("npm-audit.json", encoding="utf-8"))' 2>/dev/null; then
+            echo "::error::pnpm audit did not produce valid JSON" >&2
+            cat npm-audit.stderr >&2 || true
+            exit 1
           fi
+
+          summary=$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("npm-audit.json").read_text(encoding="utf-8"))
+          vulns = data.get("metadata", {}).get("vulnerabilities", {})
+          critical = int(vulns.get("critical", 0))
+          high = int(vulns.get("high", 0))
+          moderate = int(vulns.get("moderate", 0))
+          low = int(vulns.get("low", 0))
+          print(f"{critical} {high} {moderate} {low} {critical + high}")
+          PY
+          )
+          read -r critical high moderate low high_critical <<< "$summary"
+
+          prod_ok=true
           if ! pnpm audit --prod --audit-level moderate > prod-audit.txt 2>&1; then
             prod_ok=false
           fi
 
-          if [[ "$high_ok" == "true" && "$prod_ok" == "true" ]]; then
-            echo "✅ No high/critical security vulnerabilities found in frontend dependencies" >> frontend-audit-results.md
+          echo "Lockfile vulnerability counts - critical: ${critical}, high: ${high}, moderate: ${moderate}, low: ${low}" >> frontend-audit-results.md
+          echo "" >> frontend-audit-results.md
+
+          if [[ "$high_critical" -eq 0 && "$prod_ok" == "true" ]]; then
+            echo "✅ No high/critical security vulnerabilities across lockfile and no moderate+ vulnerabilities in production dependencies" >> frontend-audit-results.md
             echo "npm_security_status=clean" >> "$GITHUB_OUTPUT"
           else
             echo "⚠️  Frontend security vulnerabilities detected:" >> frontend-audit-results.md
             echo "" >> frontend-audit-results.md
             echo '```' >> frontend-audit-results.md
+            cat prod-audit.txt >> frontend-audit-results.md 2>/dev/null || true
             pnpm audit --audit-level moderate >> frontend-audit-results.md 2>&1 || true
             cat npm-audit.stderr >> frontend-audit-results.md 2>/dev/null || true
             echo '```' >> frontend-audit-results.md
