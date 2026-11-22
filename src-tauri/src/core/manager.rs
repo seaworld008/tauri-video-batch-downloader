@@ -3393,21 +3393,27 @@ impl DownloadManager {
                 )
             }
             AppError::Download(download_error) => {
-                // Try to categorize download errors more specifically
-                if download_error.contains("timeout") || download_error.contains("connection") {
+                let normalized = strip_urls_for_error_classification(&download_error);
+                // Classify on URL-stripped lowercased text so ephemeral ports or URL query params
+                // (e.g. `:404xx`, `?access_key=...`) are not mistaken for HTTP status codes or FS errors.
+                if normalized.contains("timeout") || normalized.contains("connection") {
                     errors::network_error(download_error, true)
-                } else if download_error.contains("permission") || download_error.contains("access")
+                } else if normalized.contains("permission") || normalized.contains("access denied")
                 {
                     errors::filesystem_error(download_error, None, false)
-                } else if download_error.contains("space") || download_error.contains("disk") {
+                } else if normalized.contains("space") || normalized.contains("disk") {
                     errors::resource_exhaustion_error(
                         download_error,
                         "disk_space".to_string(),
                         false,
                     )
-                } else if download_error.contains("404") || download_error.contains("not found") {
+                } else if contains_status_code(&normalized, "404")
+                    || normalized.contains("not found")
+                {
                     errors::protocol_error(download_error, Some(404), false)
-                } else if download_error.contains("429") || download_error.contains("rate limit") {
+                } else if contains_status_code(&normalized, "429")
+                    || normalized.contains("rate limit")
+                {
                     errors::external_service_error(
                         download_error,
                         "rate_limited".to_string(),
@@ -3418,7 +3424,7 @@ impl DownloadManager {
                     "500", "502", "503", "504", "520", "521", "522", "523", "524",
                 ]
                 .iter()
-                .any(|code| download_error.contains(code))
+                .any(|code| contains_status_code(&normalized, code))
                 {
                     // Server errors (5xx) are typically retryable
                     errors::external_service_error(
@@ -3447,6 +3453,48 @@ impl DownloadManager {
             },
         }
     }
+}
+
+fn strip_urls_for_error_classification(input: &str) -> String {
+    let lower = input.to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut rest = lower.as_str();
+
+    while !rest.is_empty() {
+        let next_http = rest.find("http://");
+        let next_https = rest.find("https://");
+        let next_url = match (next_http, next_https) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+
+        let Some(start) = next_url else {
+            out.push_str(rest);
+            break;
+        };
+
+        out.push_str(&rest[..start]);
+        let after_scheme = &rest[start..];
+        let end = after_scheme
+            .char_indices()
+            .find(|&(_, ch)| ch.is_whitespace() || matches!(ch, ')' | ']' | '>' | '"' | '\'' | ','))
+            .map(|(idx, _)| idx)
+            .unwrap_or(after_scheme.len());
+        rest = &after_scheme[end..];
+    }
+
+    out
+}
+
+fn contains_status_code(text: &str, code: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(code).any(|(idx, matched)| {
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
+        let after_idx = idx + matched.len();
+        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
+        before_ok && after_ok
+    })
 }
 
 #[cfg(test)]
@@ -4743,6 +4791,47 @@ mod tests {
             }
             other => panic!("expected ExternalService server_error, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_convert_app_error_ignores_status_and_keywords_inside_urls() {
+        let port_404_err = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "HTTP请求失败: error sending request for url (http://127.0.0.1:40412/video.mp4?access_key=1)".to_string(),
+        ));
+        assert_eq!(port_404_err.category(), ErrorCategory::Network);
+        assert!(port_404_err.is_retryable());
+
+        let path_503_429_err = DownloadManager::convert_app_error_to_download_error(
+            AppError::Download(
+                "HTTP请求失败: error sending request for url (https://cdn.example.com/503/429/video.mp4)".to_string(),
+            ),
+        );
+        assert_eq!(path_503_429_err.category(), ErrorCategory::Network);
+        assert!(path_503_429_err.is_retryable());
+
+        let http_404 = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "HTTP错误: 404 Not Found".to_string(),
+        ));
+        assert_eq!(http_404.category(), ErrorCategory::Protocol);
+        assert!(!http_404.is_retryable());
+
+        let http_429 = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "HTTP错误: 429 Too Many Requests".to_string(),
+        ));
+        assert_eq!(http_429.category(), ErrorCategory::ExternalService);
+        assert!(http_429.is_retryable());
+
+        let http_503 = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "HTTP错误: 503 Service Unavailable".to_string(),
+        ));
+        assert_eq!(http_503.category(), ErrorCategory::ExternalService);
+        assert!(http_503.is_retryable());
+
+        let fs_denied = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "File write failed: Access denied".to_string(),
+        ));
+        assert_eq!(fs_denied.category(), ErrorCategory::FileSystem);
+        assert!(!fs_denied.is_retryable());
     }
 
     #[tokio::test]
