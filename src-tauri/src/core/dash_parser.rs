@@ -445,10 +445,8 @@ pub fn parse_dash_manifest(mpd_url: &str, xml: &str) -> Result<DashManifest> {
                     _ => {}
                 }
             }
-            Ok(Event::Text(e)) => {
-                if reading_base_url {
-                    base_url_text.push_str(e.as_ref());
-                }
+            Ok(Event::Text(e)) if reading_base_url => {
+                base_url_text.push_str(e.as_ref());
             }
             Ok(Event::End(e)) => {
                 let tag = e.local_name().into_inner();
