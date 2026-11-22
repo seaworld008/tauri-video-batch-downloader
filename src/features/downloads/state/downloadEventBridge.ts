@@ -19,6 +19,8 @@ import {
   reportFrontendDiagnosticIfEnabled,
   reportFrontendIssue,
 } from '../../../utils/frontendLogging';
+import { notify } from '../../../stores/uiStore';
+import { translate } from '../../../i18n/hooks';
 
 let listenersInitialized = false;
 let listenerSetupPromise: Promise<void> | null = null;
@@ -41,6 +43,57 @@ export const initializeDownloadEventBridge = async () => {
       const pendingProgressUpdates = new Map<string, ProgressEventPayload>();
       const trailingFlushTimers = new Map<string, number>();
       let terminalRefreshTimer: number | null = null;
+      let terminalNotifyTimer: number | null = null;
+      let pendingCompletedInfos: Array<{ title: string }> = [];
+      let pendingFailedInfos: Array<{ title: string; reason: string }> = [];
+
+      const flushTerminalNotifications = () => {
+        if (pendingCompletedInfos.length === 1) {
+          const item = pendingCompletedInfos[0];
+          notify.success(
+            translate('notifications.taskCompletedTitle'),
+            translate('notifications.taskCompletedSingle', { title: item.title })
+          );
+        } else if (pendingCompletedInfos.length > 1) {
+          notify.success(
+            translate('notifications.taskCompletedTitle'),
+            translate('notifications.taskCompletedBatch', { count: pendingCompletedInfos.length })
+          );
+        }
+
+        if (pendingFailedInfos.length === 1) {
+          const item = pendingFailedInfos[0];
+          notify.error(
+            translate('notifications.taskFailedTitle'),
+            translate('notifications.taskFailedSingle', {
+              title: item.title,
+              reason: item.reason,
+            })
+          );
+        } else if (pendingFailedInfos.length > 1) {
+          notify.error(
+            translate('notifications.taskFailedTitle'),
+            translate('notifications.taskFailedBatch', { count: pendingFailedInfos.length })
+          );
+        }
+
+        pendingCompletedInfos = [];
+        pendingFailedInfos = [];
+      };
+
+      const scheduleTerminalNotification = () => {
+        if (typeof window === 'undefined') {
+          flushTerminalNotifications();
+          return;
+        }
+        if (terminalNotifyTimer !== null) {
+          window.clearTimeout(terminalNotifyTimer);
+        }
+        terminalNotifyTimer = window.setTimeout(() => {
+          terminalNotifyTimer = null;
+          flushTerminalNotifications();
+        }, 500);
+      };
 
       const scheduleTerminalRefresh = () => {
         const runRefresh = () => {
@@ -95,6 +148,26 @@ export const initializeDownloadEventBridge = async () => {
         ) {
           lastProgressUpdate.delete(payload.task_id);
           warmupProgressEventsByTask.delete(payload.task_id);
+        }
+
+        const prevTask = useDownloadStore
+          .getState()
+          .tasks.find(task => task.id === payload.task_id);
+        const wasNonTerminal =
+          prevTask &&
+          prevTask.status !== 'completed' &&
+          prevTask.status !== 'failed' &&
+          prevTask.status !== 'cancelled';
+
+        if (wasNonTerminal && payload.status === 'completed') {
+          pendingCompletedInfos.push({ title: prevTask.title });
+          scheduleTerminalNotification();
+        } else if (wasNonTerminal && payload.status === 'failed') {
+          pendingFailedInfos.push({
+            title: prevTask.title,
+            reason: payload.error_message || translate('errors.downloadFailed'),
+          });
+          scheduleTerminalNotification();
         }
 
         useDownloadStore.setState(state => {
@@ -227,6 +300,12 @@ export const initializeDownloadEventBridge = async () => {
           window.clearTimeout(terminalRefreshTimer);
           terminalRefreshTimer = null;
         }
+        if (terminalNotifyTimer !== null && typeof window !== 'undefined') {
+          window.clearTimeout(terminalNotifyTimer);
+          terminalNotifyTimer = null;
+        }
+        pendingCompletedInfos = [];
+        pendingFailedInfos = [];
         if (typeof window !== 'undefined') {
           for (const timerId of trailingFlushTimers.values()) {
             window.clearTimeout(timerId);

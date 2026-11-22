@@ -6,6 +6,7 @@ import {
   ComputerDesktopIcon,
 } from '@heroicons/react/24/outline';
 import type { AppConfig } from '../../types';
+import { useI18n } from '../../i18n/hooks';
 
 type ConfigChangeHandler = (section: keyof AppConfig, key: string, value: any) => void;
 
@@ -29,258 +30,296 @@ const parseIntInput = (raw: string, onValid: (value: number) => void) => {
 
 export const DownloadSettingsSection: React.FC<
   SettingsSectionProps & { onSelectOutputDirectory: () => void }
-> = ({ localConfig, onConfigChange, onSelectOutputDirectory }) => (
-  <div className='bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
-    <div className='flex items-center mb-6'>
-      <CloudArrowDownIcon className='w-6 h-6 text-blue-600 dark:text-blue-400 mr-3' />
-      <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>下载设置</h2>
-    </div>
+> = ({ localConfig, onConfigChange, onSelectOutputDirectory }) => {
+  const { t } = useI18n();
 
-    <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
-      <div className='min-w-0'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          并发下载数
-        </label>
-        <input
-          type='number'
-          min='1'
-          max='10'
-          value={localConfig.download.concurrent_downloads}
-          onChange={e =>
-            parseIntInput(e.target.value, value =>
-              onConfigChange('download', 'concurrent_downloads', value)
-            )
-          }
-          data-testid='concurrent-downloads'
-          className={inputClass}
-        />
-        <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>建议值：3-8</p>
+  return (
+    <div className='bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
+      <div className='flex items-center mb-6'>
+        <CloudArrowDownIcon className='w-6 h-6 text-blue-600 dark:text-blue-400 mr-3' />
+        <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>
+          {t('settings.download.title')}
+        </h2>
       </div>
 
-      <div className='min-w-0'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          重试次数
-        </label>
-        <input
-          type='number'
-          min='0'
-          max='10'
-          value={localConfig.download.retry_attempts}
-          onChange={e =>
-            parseIntInput(e.target.value, value =>
-              onConfigChange('download', 'retry_attempts', value)
-            )
-          }
-          data-testid='retry-attempts'
-          className={inputClass}
-        />
-      </div>
-
-      <div>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          超时时间 (秒)
-        </label>
-        <input
-          type='number'
-          min='10'
-          max='300'
-          value={localConfig.download.timeout_seconds}
-          onChange={e =>
-            parseIntInput(e.target.value, value =>
-              onConfigChange('download', 'timeout_seconds', value)
-            )
-          }
-          data-testid='timeout-setting'
-          className={inputClass}
-        />
-      </div>
-
-      <div className='md:col-span-2'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          默认下载目录
-        </label>
-        <div className='rounded-md border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-3'>
-          <div className='text-sm text-gray-900 dark:text-gray-100 break-all'>
-            {localConfig.download.output_directory || '未设置目录'}
-          </div>
-          <p className='text-xs text-gray-500 dark:text-gray-400 mt-2'>
-            这是未来新任务和导入任务的默认保存根目录。开始下载时可以对本次任务临时覆盖，不会修改这里。
+      <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
+        <div className='min-w-0'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.download.concurrentDownloads')}
+          </label>
+          <input
+            type='number'
+            min='1'
+            max='10'
+            value={localConfig.download.concurrent_downloads}
+            onChange={e =>
+              parseIntInput(e.target.value, value =>
+                onConfigChange('download', 'concurrent_downloads', value)
+              )
+            }
+            data-testid='concurrent-downloads'
+            className={inputClass}
+          />
+          <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+            {t('settings.download.concurrentDownloadsHint')}
           </p>
         </div>
-        <div className='mt-3 flex items-center justify-end'>
-          <button
-            type='button'
-            onClick={onSelectOutputDirectory}
-            className={`inline-flex items-center px-3 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors ${buttonFocusClass}`}
-          >
-            <FolderIcon className='w-4 h-4 mr-2' />
-            选择目录
-          </button>
+
+        <div className='min-w-0'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.download.retryAttempts')}
+          </label>
+          <input
+            type='number'
+            min='0'
+            max='10'
+            value={localConfig.download.retry_attempts}
+            onChange={e =>
+              parseIntInput(e.target.value, value =>
+                onConfigChange('download', 'retry_attempts', value)
+              )
+            }
+            data-testid='retry-attempts'
+            className={inputClass}
+          />
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.download.timeout')}
+          </label>
+          <input
+            type='number'
+            min='10'
+            max='300'
+            value={localConfig.download.timeout_seconds}
+            onChange={e =>
+              parseIntInput(e.target.value, value =>
+                onConfigChange('download', 'timeout_seconds', value)
+              )
+            }
+            data-testid='timeout-setting'
+            className={inputClass}
+          />
+        </div>
+
+        <div className='md:col-span-2'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.download.outputDirectory')}
+          </label>
+          <div className='rounded-md border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-3'>
+            <div className='text-sm text-gray-900 dark:text-gray-100 break-all'>
+              {localConfig.download.output_directory || t('settings.download.unsetDirectory')}
+            </div>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mt-2'>
+              {t('settings.download.outputDirectoryHint')}
+            </p>
+          </div>
+          <div className='mt-3 flex items-center justify-end'>
+            <button
+              type='button'
+              onClick={onSelectOutputDirectory}
+              className={`inline-flex items-center px-3 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors ${buttonFocusClass}`}
+            >
+              <FolderIcon className='w-4 h-4 mr-2' />
+              {t('settings.download.selectDirectory')}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div className='mt-6'>
-      <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-        User Agent
-      </label>
-      <input
-        type='text'
-        value={localConfig.download.user_agent}
-        onChange={e => onConfigChange('download', 'user_agent', e.target.value)}
-        className={inputClass}
-      />
-    </div>
+      <div className='mt-6'>
+        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+          {t('settings.advanced.userAgent')}
+        </label>
+        <input
+          type='text'
+          value={localConfig.download.user_agent}
+          onChange={e => onConfigChange('download', 'user_agent', e.target.value)}
+          className={inputClass}
+        />
+      </div>
 
-    <div className='mt-6'>
-      <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-        代理服务器 (可选)
-      </label>
-      <input
-        type='text'
-        placeholder='http://proxy.example.com:8080'
-        value={localConfig.download.proxy || ''}
-        onChange={e => onConfigChange('download', 'proxy', e.target.value || undefined)}
-        className={inputClass}
-      />
+      <div className='mt-6'>
+        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+          {t('settings.advanced.proxy')}
+        </label>
+        <input
+          type='text'
+          placeholder='http://proxy.example.com:8080'
+          value={localConfig.download.proxy || ''}
+          onChange={e => onConfigChange('download', 'proxy', e.target.value || undefined)}
+          className={inputClass}
+        />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const UiSettingsSection: React.FC<SettingsSectionProps> = ({
   localConfig,
   onConfigChange,
-}) => (
-  <div className='bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
-    <div className='flex items-center mb-6'>
-      <ComputerDesktopIcon className='w-6 h-6 text-green-600 dark:text-green-400 mr-3' />
-      <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>界面设置</h2>
-    </div>
+}) => {
+  const { t } = useI18n();
 
-    <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
-      <div className='min-w-0'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          主题
-        </label>
-        <select
-          value={localConfig.ui.theme}
-          onChange={e =>
-            onConfigChange('ui', 'theme', e.target.value as 'light' | 'dark' | 'system')
-          }
-          className={inputClass}
-        >
-          <option value='system'>跟随系统</option>
-          <option value='light'>浅色</option>
-          <option value='dark'>深色</option>
-        </select>
+  return (
+    <div className='bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
+      <div className='flex items-center mb-6'>
+        <ComputerDesktopIcon className='w-6 h-6 text-green-600 dark:text-green-400 mr-3' />
+        <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>
+          {t('settings.ui.title')}
+        </h2>
       </div>
 
-      <div className='min-w-0'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          语言
-        </label>
-        <select
-          value={localConfig.ui.language}
-          onChange={e => onConfigChange('ui', 'language', e.target.value)}
-          className={inputClass}
-        >
-          <option value='zh-CN'>简体中文</option>
-          <option value='en-US'>English</option>
-        </select>
+      <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
+        <div className='min-w-0'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.theme.title')}
+          </label>
+          <select
+            value={localConfig.ui.theme}
+            onChange={e =>
+              onConfigChange('ui', 'theme', e.target.value as 'light' | 'dark' | 'system')
+            }
+            className={inputClass}
+          >
+            <option value='system'>{t('settings.theme.system')}</option>
+            <option value='light'>{t('settings.theme.light')}</option>
+            <option value='dark'>{t('settings.theme.dark')}</option>
+          </select>
+        </div>
+
+        <div className='min-w-0'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.language.title')}
+          </label>
+          <select
+            value={localConfig.ui.language}
+            onChange={e => onConfigChange('ui', 'language', e.target.value)}
+            className={inputClass}
+          >
+            <option value='zh-CN'>简体中文</option>
+            <option value='en-US'>English</option>
+          </select>
+        </div>
+      </div>
+
+      <div className='mt-6 space-y-4'>
+        <SettingsCheckbox
+          label={t('settings.ui.showCompletedTasks')}
+          description={t('settings.ui.showCompletedTasksDesc')}
+          checked={localConfig.ui.show_completed_tasks}
+          onChange={checked => onConfigChange('ui', 'show_completed_tasks', checked)}
+        />
+        <SettingsCheckbox
+          label={t('settings.ui.autoStartDownloads')}
+          description={t('settings.ui.autoStartDownloadsDesc')}
+          checked={localConfig.ui.auto_start_downloads}
+          onChange={checked => onConfigChange('ui', 'auto_start_downloads', checked)}
+        />
+        <SettingsCheckbox
+          label={t('settings.ui.showNotifications')}
+          description={t('settings.ui.showNotificationsDesc')}
+          checked={localConfig.ui.show_notifications}
+          onChange={checked => onConfigChange('ui', 'show_notifications', checked)}
+        />
+        <SettingsCheckbox
+          label={t('settings.ui.notificationSound')}
+          description={t('settings.ui.notificationSoundDesc')}
+          checked={localConfig.ui.notification_sound ?? true}
+          onChange={checked => onConfigChange('ui', 'notification_sound', checked)}
+        />
+        <SettingsCheckbox
+          label={t('settings.ui.minimizeToTray')}
+          description={t('settings.ui.minimizeToTrayDesc')}
+          checked={localConfig.ui.minimize_to_tray ?? false}
+          onChange={checked => onConfigChange('ui', 'minimize_to_tray', checked)}
+        />
+        <SettingsCheckbox
+          label={t('settings.ui.startMinimized')}
+          description={t('settings.ui.startMinimizedDesc')}
+          checked={localConfig.ui.start_minimized ?? false}
+          onChange={checked => onConfigChange('ui', 'start_minimized', checked)}
+        />
       </div>
     </div>
-
-    <div className='mt-6 space-y-4'>
-      <SettingsCheckbox
-        label='显示已完成任务'
-        description='在任务列表中显示已完成的下载任务'
-        checked={localConfig.ui.show_completed_tasks}
-        onChange={checked => onConfigChange('ui', 'show_completed_tasks', checked)}
-      />
-      <SettingsCheckbox
-        label='自动开始下载'
-        description='添加任务后自动开始下载'
-        checked={localConfig.ui.auto_start_downloads}
-        onChange={checked => onConfigChange('ui', 'auto_start_downloads', checked)}
-      />
-      <SettingsCheckbox
-        label='显示通知'
-        description='显示下载完成和错误通知'
-        checked={localConfig.ui.show_notifications}
-        onChange={checked => onConfigChange('ui', 'show_notifications', checked)}
-      />
-    </div>
-  </div>
-);
+  );
+};
 
 export const AdvancedSettingsSection: React.FC<SettingsSectionProps> = ({
   localConfig,
   onConfigChange,
-}) => (
-  <div className='bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
-    <div className='flex items-center mb-6'>
-      <CogIcon className='w-6 h-6 text-purple-600 dark:text-purple-400 mr-3' />
-      <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>高级设置</h2>
-    </div>
+}) => {
+  const { t } = useI18n();
 
-    <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
-      <div className='min-w-0'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          日志级别
-        </label>
-        <select
-          value={localConfig.advanced.log_level}
-          onChange={e =>
-            onConfigChange(
-              'advanced',
-              'log_level',
-              e.target.value as 'error' | 'warn' | 'info' | 'debug'
-            )
-          }
-          className={inputClass}
-        >
-          <option value='error'>错误</option>
-          <option value='warn'>警告</option>
-          <option value='info'>信息</option>
-          <option value='debug'>调试</option>
-        </select>
+  return (
+    <div className='bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6'>
+      <div className='flex items-center mb-6'>
+        <CogIcon className='w-6 h-6 text-purple-600 dark:text-purple-400 mr-3' />
+        <h2 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>
+          {t('settings.advanced.title')}
+        </h2>
       </div>
 
-      <div className='min-w-0'>
-        <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-          最大日志文件数
-        </label>
-        <input
-          type='number'
-          min='1'
-          max='50'
-          value={localConfig.advanced.max_log_files}
-          onChange={e =>
-            parseIntInput(e.target.value, value =>
-              onConfigChange('advanced', 'max_log_files', value)
-            )
-          }
-          className={inputClass}
+      <div className='grid grid-cols-1 md:grid-cols-2 gap-6 items-start'>
+        <div className='min-w-0'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.advanced.logLevel')}
+          </label>
+          <select
+            value={localConfig.advanced.log_level}
+            onChange={e =>
+              onConfigChange(
+                'advanced',
+                'log_level',
+                e.target.value as 'error' | 'warn' | 'info' | 'debug'
+              )
+            }
+            className={inputClass}
+          >
+            <option value='error'>{t('settings.advanced.logError')}</option>
+            <option value='warn'>{t('settings.advanced.logWarn')}</option>
+            <option value='info'>{t('settings.advanced.logInfo')}</option>
+            <option value='debug'>{t('settings.advanced.logDebug')}</option>
+          </select>
+        </div>
+
+        <div className='min-w-0'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            {t('settings.advanced.maxLogFiles')}
+          </label>
+          <input
+            type='number'
+            min='1'
+            max='50'
+            value={localConfig.advanced.max_log_files}
+            onChange={e =>
+              parseIntInput(e.target.value, value =>
+                onConfigChange('advanced', 'max_log_files', value)
+              )
+            }
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div className='mt-6 space-y-4'>
+        <SettingsCheckbox
+          label={t('settings.advanced.enableLogging')}
+          description={t('settings.advanced.enableLoggingDesc')}
+          checked={localConfig.advanced.enable_logging}
+          onChange={checked => onConfigChange('advanced', 'enable_logging', checked)}
+        />
+        <SettingsCheckbox
+          label={t('settings.advanced.cleanupOnExit')}
+          description={t('settings.advanced.cleanupOnExitDesc')}
+          checked={localConfig.advanced.cleanup_on_exit}
+          onChange={checked => onConfigChange('advanced', 'cleanup_on_exit', checked)}
         />
       </div>
     </div>
-
-    <div className='mt-6 space-y-4'>
-      <SettingsCheckbox
-        label='启用日志记录'
-        description='记录应用运行和错误日志'
-        checked={localConfig.advanced.enable_logging}
-        onChange={checked => onConfigChange('advanced', 'enable_logging', checked)}
-      />
-      <SettingsCheckbox
-        label='退出时清理'
-        description='应用退出时清理临时文件'
-        checked={localConfig.advanced.cleanup_on_exit}
-        onChange={checked => onConfigChange('advanced', 'cleanup_on_exit', checked)}
-      />
-    </div>
-  </div>
-);
+  );
+};
 
 interface SettingsCheckboxProps {
   label: string;

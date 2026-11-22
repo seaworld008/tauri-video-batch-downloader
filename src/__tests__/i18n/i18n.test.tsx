@@ -26,6 +26,8 @@ import {
 } from '../../i18n/hooks';
 import { LanguageSelector } from '../../components/Common/LanguageSelector';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n';
+import enLocale from '../../i18n/locales/en.json';
+import zhLocale from '../../i18n/locales/zh.json';
 
 // Mock localStorage
 const mockLocalStorage = {
@@ -479,5 +481,45 @@ describe('Integration Tests', () => {
       },
       { timeout: 3000 }
     );
+  });
+});
+
+describe('Locale Parity', () => {
+  const collectLeaves = (
+    node: Record<string, unknown>,
+    prefix = ''
+  ): Array<{ key: string; value: string }> => {
+    const entries: Array<{ key: string; value: string }> = [];
+    for (const [k, v] of Object.entries(node)) {
+      const nextKey = prefix ? `${prefix}.${k}` : k;
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        entries.push(...collectLeaves(v as Record<string, unknown>, nextKey));
+      } else {
+        entries.push({ key: nextKey, value: String(v ?? '') });
+      }
+    }
+    return entries.sort((a, b) => a.key.localeCompare(b.key));
+  };
+
+  const extractPlaceholders = (text: string): string[] =>
+    Array.from(text.matchAll(/\{\{(\w+)\}\}/g))
+      .map(match => match[1])
+      .sort();
+
+  it('maintains 100% key, non-empty value, and placeholder parity between en.json and zh.json', () => {
+    const enLeaves = collectLeaves(enLocale as Record<string, unknown>);
+    const zhLeaves = collectLeaves(zhLocale as Record<string, unknown>);
+
+    expect(enLeaves.map(item => item.key)).toEqual(zhLeaves.map(item => item.key));
+
+    const zhMap = new Map(zhLeaves.map(item => [item.key, item.value]));
+    for (const { key, value: enValue } of enLeaves) {
+      const zhValue = zhMap.get(key) ?? '';
+      expect(enValue.trim().length, `empty en leaf for ${key}`).toBeGreaterThan(0);
+      expect(zhValue.trim().length, `empty zh leaf for ${key}`).toBeGreaterThan(0);
+      expect(extractPlaceholders(zhValue), `placeholder mismatch for ${key}`).toEqual(
+        extractPlaceholders(enValue)
+      );
+    }
   });
 });

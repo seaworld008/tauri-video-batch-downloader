@@ -55,14 +55,16 @@ CSV 表格、批量粘贴 URL、HTTP 直链、HLS (`.m3u8`)、MPEG-DASH
 
 ## 功能矩阵
 
-| 模块               | 当前支持能力 (`v1.2.0`)                                                                                                                                                  |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **批量导入**       | Excel (`.xlsx` / `.xls`)、CSV 编码识别、字段映射预览、剪贴板批量粘贴、单/多 URL 探测、任务级高级请求参数 (`Referer` / `Cookie` / `Proxy` / 清晰度)                       |
-| **队列与行级控制** | 全局开始/暂停/重试/清理、单行开始/暂停/继续/重试/删除、批量勾选与临时输出目录覆盖                                                                                        |
-| **协议与站点适配** | 插件化 `ProviderRegistry`：HTTP/Range (`ResumeDownloader`)、HLS (`.m3u8` Master / fMP4 / AES-128 / FFmpeg)、原生 MPEG-DASH (`.mpd`)、`yt-dlp` (YT/B站/TK/X/Vimeo/Twitch) |
-| **可靠性与校验**   | `.part` / `.seg` + `sync_all()` 原子提交、原子配置落盘、`RetryExecutor` 熔断联动、`spawn_blocking` SHA-256 / MD5 校验                                                    |
-| **可观测性**       | 单任务实时速度与 ETA、底部实时态势状态徽标、平均/P95 提交耗时、单任务一键复制诊断报告                                                                                    |
-| **跨平台桌面端**   | Tauri v2 桌面端覆盖 Windows (`nsis`)、macOS (`universal` `.dmg`) 与 Linux                                                                                                |
+| 模块                       | 当前支持能力 (`v1.3.0`)                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **批量导入**               | Excel (`.xlsx` / `.xls`)、CSV 编码识别、字段映射预览、剪贴板批量粘贴、单/多 URL 探测、任务级高级请求参数 (`Referer` / `Cookie` / `Proxy` / 清晰度)                       |
+| **队列与行级控制**         | 全局开始/暂停/重试/清理、单行开始/暂停/继续/重试/删除、批量勾选与临时输出目录覆盖、全局键盘快捷键与 `?` 面板                                                             |
+| **协议与站点适配**         | 插件化 `ProviderRegistry`：HTTP/Range (`ResumeDownloader`)、HLS (`.m3u8` Master / fMP4 / AES-128 / FFmpeg)、原生 MPEG-DASH (`.mpd`)、`yt-dlp` (YT/B站/TK/X/Vimeo/Twitch) |
+| **桌面原生与国际化**       | `zh-CN` / `en-US` 全量双语与顶部一键切换、系统托盘（`minimize_to_tray`、`start_minimized`、显示/全部开始/全部暂停/退出）、提示音与后台原生桌面通知                       |
+| **无头 CLI (`vdpro-cli`)** | 复用统一 Rust 内核，支持 URL 与 `.txt`/`.csv`/`.xlsx`/`.xls` 批量下载、`probe`、`doctor`、`--json`、`--rate-limit` 与请求参数透传                                        |
+| **可靠性与校验**           | `.part` / `.seg` + `sync_all()` 原子提交、原子配置落盘、`RetryExecutor` 熔断联动、`spawn_blocking` SHA-256 / MD5 校验                                                    |
+| **可观测性**               | 单任务实时速度与 ETA、底部实时态势状态徽标、平均/P95 提交耗时、500ms 终端状态合并通知、单任务一键复制诊断报告                                                            |
+| **跨平台桌面端**           | Tauri v2 桌面端覆盖 Windows (`nsis`)、macOS (`universal` `.dmg`) 与 Linux                                                                                                |
 
 ---
 
@@ -117,6 +119,23 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
+### 无头伴生 CLI（`vdpro-cli`）
+
+直接基于统一 Rust 下载核心构建并运行无头命令行模式，适用于脚本与服务器批量下载：
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli
+
+# 探测链接匹配的 Provider 与媒体响应头
+./src-tauri/target/debug/vdpro-cli probe "https://example.com/video.mp4" --json
+
+# 检查 yt-dlp / ffmpeg / deno 工具健康状态
+./src-tauri/target/debug/vdpro-cli doctor
+
+# 从 CSV/Excel/TXT 批量导入并下载，支持并发与限速控制
+./src-tauri/target/debug/vdpro-cli download -f courses.xlsx -o ./downloads -c 4 --rate-limit 2M
+```
+
 ### 构建生产安装包
 
 生产打包前需要在 `src-tauri/binaries/` 下就绪对应 target triple 的真实
@@ -166,7 +185,7 @@ pnpm audit --prod --audit-level moderate
 | 主题                        | 文档链接                                                                         |
 | --------------------------- | -------------------------------------------------------------------------------- |
 | 完整架构与功能设计          | [docs/architecture-functional-design.md](docs/architecture-functional-design.md) |
-| 当前系统真实状态 (`v1.2.0`) | [docs/current-state.md](docs/current-state.md)                                   |
+| 当前系统真实状态 (`v1.3.0`) | [docs/current-state.md](docs/current-state.md)                                   |
 | 文档总目录                  | [docs/index.md](docs/index.md)                                                   |
 | 构建与发布指南              | [docs/build-release.md](docs/build-release.md)                                   |
 | 贡献指南                    | [CONTRIBUTING.md](CONTRIBUTING.md)                                               |
@@ -179,15 +198,17 @@ pnpm audit --prod --audit-level moderate
 ## 演进路线
 
 - **`v1.1.0`（已完成）**：核心下载引擎可靠性与原子性加固、M3U8 任务隔离与断点续传、设置项全链路联动、单行任务操作、开源规范基础设施建设。
-- **`v1.2.0`（当前版本）**：可插拔 `DownloadProviderSpec` / `ProviderRegistry`
+- **`v1.2.0`（已完成）**：可插拔 `DownloadProviderSpec` / `ProviderRegistry`
   注册中心、完整 HLS Master Playlist 选流与 fMP4 +
   FFmpeg 无损混流、原生 MPEG-DASH (`.mpd`) 下载引擎、任务级 Headers / Cookies /
   Proxy 全链路透传与 `yt-dlp` 深度对齐（新增 Bilibili / X / Vimeo /
   Twitch 识别）。
-- **`v1.3.0`（下一阶段）**：前端全量国际化与系统托盘/桌面原生通知完善、键盘快捷键体系与 Headless
-  CLI 工具。
-- **`v2.0.0`**：Rust Cargo Workspace 多 crate 分层、SQLite
-  WAL 持久化存储引擎与浏览器扩展/本地接口联动。
+- **`v1.3.0`（当前版本）**：前端全量 `zh-CN` / `en-US`
+  双语对齐与顶部切换、原生系统托盘（`minimize_to_tray` /
+  `start_minimized`）、提示音与后台原生桌面通知、全局快捷键与无头伴生 CLI（`vdpro-cli`）。
+- **`v2.0.0`（下一阶段）**：Rust Cargo Workspace 多 crate 分层（`vdpro-core` /
+  `vdpro-providers` / `vdpro-storage` / `src-tauri`）与 SQLite
+  WAL 持久化存储引擎升级。
 
 完整规划详见 [docs/roadmap.md](docs/roadmap.md)。
 

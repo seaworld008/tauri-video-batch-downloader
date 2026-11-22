@@ -9,6 +9,7 @@
 // safety-critical paths should opt in locally via
 // `#![deny(clippy::unwrap_used, clippy::expect_used)]`.
 
+pub mod cli;
 pub mod commands;
 pub mod core;
 pub mod engine;
@@ -31,7 +32,10 @@ pub use core::{
 
 pub use utils::encoding::detect_encoding;
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tauri::{Manager, State};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
@@ -49,6 +53,7 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub download_runtime: DownloadRuntimeHandle,
     pub task_engine: TaskEngineHandle,
+    pub minimize_to_tray: Arc<AtomicBool>,
     /// Router receiver - needs to be spawned in Tauri runtime during setup
     router_rx: Arc<std::sync::Mutex<Option<mpsc::Receiver<core::runtime::RuntimeCommand>>>>,
 }
@@ -89,12 +94,16 @@ impl AppState {
         let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
 
         core::app_bootstrap::ensure_optional_config_defaults(&mut config);
+        let minimize_to_tray = Arc::new(AtomicBool::new(
+            config.ui.as_ref().is_some_and(|ui| ui.minimize_to_tray),
+        ));
 
         Ok(Self {
             download_manager,
             config: Arc::new(RwLock::new(config)),
             download_runtime,
             task_engine,
+            minimize_to_tray,
             router_rx: Arc::new(std::sync::Mutex::new(Some(router_rx))),
         })
     }
@@ -126,12 +135,16 @@ impl AppState {
         let (download_runtime, router_rx) =
             create_download_runtime_handle(download_manager.clone());
         let task_engine = spawn_task_engine(Arc::new(download_runtime.clone()));
+        let minimize_to_tray = Arc::new(AtomicBool::new(
+            config.ui.as_ref().is_some_and(|ui| ui.minimize_to_tray),
+        ));
 
         Ok(Self {
             download_manager,
             config: Arc::new(RwLock::new(config)),
             download_runtime,
             task_engine,
+            minimize_to_tray,
             router_rx: Arc::new(std::sync::Mutex::new(Some(router_rx))),
         })
     }
@@ -186,7 +199,10 @@ pub fn run() {
     info!("🚀 Starting Video Downloader Pro v{}", VERSION);
 
     let app_state = AppState::new();
-    let is_closing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let is_closing = Arc::new(AtomicBool::new(false));
+    let force_quit = Arc::new(AtomicBool::new(false));
+    let minimize_to_tray = app_state.minimize_to_tray.clone();
+    let force_quit_for_setup = Arc::clone(&force_quit);
 
     let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
 
@@ -297,11 +313,37 @@ pub fn run() {
                 }
             });
 
+            let tray_ready = match infra::tray::build_tray(app, force_quit_for_setup) {
+                Ok(()) => true,
+                Err(err) => {
+                    warn!("Failed to initialize system tray: {}", err);
+                    false
+                }
+            };
+            let start_minimized = app_state
+                .config
+                .try_read()
+                .map(|c| c.ui.as_ref().is_some_and(|ui| ui.start_minimized))
+                .unwrap_or(false);
+            if tray_ready && start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             Ok(())
         })
         .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if is_closing.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                if infra::tray::should_minimize_on_close(
+                    minimize_to_tray.load(Ordering::Relaxed),
+                    force_quit.load(Ordering::SeqCst),
+                ) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
+                if is_closing.swap(true, Ordering::SeqCst) {
                     return;
                 }
                 info!("📦 Application closing requested");

@@ -13,6 +13,7 @@ import { buildTaskSupportBundle } from '../../features/downloads/model/downloadD
 import { useDownloadStore } from '../../stores/downloadStore';
 import type { VideoTask } from '../../types';
 import { formatSpeed } from '../../utils/format';
+import { useI18n } from '../../i18n/hooks';
 
 const buttonFocusClass =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
@@ -55,6 +56,8 @@ export const TaskItem = React.memo<{
   onSelect: (taskId: string, selected: boolean) => void;
   index: number;
 }>(({ task, top, height, isSelected, onSelect, index }) => {
+  const { t, i18n } = useI18n();
+  const actionLabelSep = i18n.language?.startsWith('en') ? ': ' : '：';
   const displaySpeed = task.display_speed_bps ?? 0;
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -98,9 +101,9 @@ export const TaskItem = React.memo<{
     event.stopPropagation();
     try {
       await copyTextToClipboard(buildTaskSupportBundle(task));
-      toast.success('任务诊断已复制');
+      toast.success(t('taskItem.diagnosticCopied'));
     } catch {
-      toast.error('复制诊断失败，请检查剪贴板权限');
+      toast.error(t('taskItem.diagnosticCopyFailed'));
     }
   };
 
@@ -135,15 +138,15 @@ export const TaskItem = React.memo<{
     setMenuPosition(null);
 
     if (!path) {
-      toast.error('没有可定位的下载文件路径');
+      toast.error(t('taskItem.noRevealPath'));
       return;
     }
 
     try {
       await revealPathInFolderCommand(path);
-      toast.success('已在目录中显示');
+      toast.success(t('taskItem.revealedInFolder'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '无法在目录中显示文件');
+      toast.error(error instanceof Error ? error.message : t('taskItem.revealFailed'));
     }
   };
 
@@ -204,8 +207,8 @@ export const TaskItem = React.memo<{
                 type='button'
                 onClick={handlePrimaryAction}
                 className={`p-1 rounded-md text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/30 ${buttonFocusClass}`}
-                title='暂停任务'
-                aria-label={`暂停任务：${task.title}`}
+                title={t('taskItem.pauseTask')}
+                aria-label={`${t('taskItem.pauseTask')}${actionLabelSep}${task.title}`}
               >
                 <PauseIcon className='w-4 h-4' />
               </button>
@@ -220,18 +223,18 @@ export const TaskItem = React.memo<{
                 className={`p-1 rounded-md text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 ${buttonFocusClass}`}
                 title={
                   task.status === 'paused'
-                    ? '继续任务'
+                    ? t('taskItem.resumeTask')
                     : task.status === 'failed'
-                      ? '重试任务'
-                      : '开始任务'
+                      ? t('taskItem.retryTask')
+                      : t('taskItem.startTask')
                 }
                 aria-label={`${
                   task.status === 'paused'
-                    ? '继续任务'
+                    ? t('taskItem.resumeTask')
                     : task.status === 'failed'
-                      ? '重试任务'
-                      : '开始任务'
-                }：${task.title}`}
+                      ? t('taskItem.retryTask')
+                      : t('taskItem.startTask')
+                }${actionLabelSep}${task.title}`}
               >
                 <PlayIcon className='w-4 h-4' />
               </button>
@@ -240,8 +243,8 @@ export const TaskItem = React.memo<{
               type='button'
               onClick={handleCopyDiagnostic}
               className={`p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-100 dark:hover:bg-gray-700 ${buttonFocusClass}`}
-              title='复制任务诊断'
-              aria-label={`复制任务诊断：${task.title}`}
+              title={t('taskItem.copyDiagnostic')}
+              aria-label={`${t('taskItem.copyDiagnostic')}${actionLabelSep}${task.title}`}
             >
               <ClipboardDocumentIcon className='w-4 h-4' />
             </button>
@@ -250,8 +253,8 @@ export const TaskItem = React.memo<{
                 type='button'
                 onClick={handleDeleteTask}
                 className={`p-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/30 ${buttonFocusClass}`}
-                title='删除任务'
-                aria-label={`删除任务：${task.title}`}
+                title={t('taskItem.deleteTask')}
+                aria-label={`${t('taskItem.deleteTask')}${actionLabelSep}${task.title}`}
               >
                 <TrashIcon className='w-4 h-4' />
               </button>
@@ -261,19 +264,19 @@ export const TaskItem = React.memo<{
               data-testid='task-status'
             >
               {task.status === 'pending'
-                ? '等待中'
+                ? t('downloads.task.status.pending')
                 : task.status === 'downloading'
-                  ? '下载中'
+                  ? t('downloads.task.status.downloading')
                   : task.status === 'committing'
-                    ? '提交中'
+                    ? t('downloads.task.status.committing')
                     : task.status === 'completed'
-                      ? '已完成'
+                      ? t('downloads.task.status.completed')
                       : task.status === 'failed'
-                        ? '失败'
+                        ? t('downloads.task.status.failed')
                         : task.status === 'paused'
-                          ? '暂停'
+                          ? t('taskItem.statusPausedShort')
                           : task.status === 'cancelled'
-                            ? '已取消'
+                            ? t('downloads.task.status.cancelled')
                             : task.status}
             </span>
           </div>
@@ -286,16 +289,18 @@ export const TaskItem = React.memo<{
               <span className='w-24 font-mono tabular-nums whitespace-nowrap'>
                 {formatSpeed(displaySpeed)}
               </span>
-              <span>剩余: {task.eta ? formatTime(task.eta) : '--'}</span>
+              <span>
+                {t('taskItem.remaining', { time: task.eta ? formatTime(task.eta) : '--' })}
+              </span>
             </>
           )}
           {task.status === 'committing' && (
             <>
               <span className='w-16'>{progressPercentage}%</span>
               <span className='w-24 text-indigo-600 dark:text-indigo-300 whitespace-nowrap'>
-                提交中
+                {t('downloads.task.status.committing')}
               </span>
-              <span>剩余: --</span>
+              <span>{t('taskItem.remaining', { time: '--' })}</span>
             </>
           )}
           {task.status === 'failed' && task.error_message ? (
@@ -360,7 +365,7 @@ export const TaskItem = React.memo<{
             role='menuitem'
           >
             <FolderOpenIcon className='h-4 w-4' />
-            在目录中显示
+            {t('taskItem.revealInFolder')}
           </button>
         </div>
       )}

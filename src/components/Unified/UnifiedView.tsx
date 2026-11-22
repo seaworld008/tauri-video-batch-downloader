@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Cog6ToothIcon,
   InformationCircleIcon,
@@ -7,6 +7,8 @@ import {
   XMarkIcon,
   ChevronUpIcon,
   ChevronDownIcon,
+  LanguageIcon,
+  CommandLineIcon,
 } from '@heroicons/react/24/outline';
 import { FileImportPanel } from './FileImportPanel';
 import { ManualInputPanel } from './ManualInputPanel';
@@ -14,19 +16,118 @@ import { DashboardToolbar } from '../Downloads/DashboardToolbar';
 import { VirtualizedTaskList } from '../Optimized/VirtualizedTaskList';
 import { SettingsView } from '../Settings/SettingsView';
 import { useDownloadStore } from '../../stores/downloadStore';
+import { useConfigStore } from '../../stores/configStore';
 import { StatusBar } from './StatusBar';
 import { SessionRecoveryBanner } from './SessionRecoveryBanner';
+import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
+import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
+import { useI18n } from '../../i18n/hooks';
 
 type TabType = 'file' | 'manual';
 
 export const UnifiedView: React.FC = () => {
+  const { t, language, changeLanguage } = useI18n();
   const [activeTab, setActiveTab] = useState<TabType>('manual');
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [isInputCollapsed, setIsInputCollapsed] = useState(false);
   const hasTasks = useDownloadStore(state => state.tasks.length > 0);
 
-  const toggleSettings = () => setShowSettings(!showSettings);
+  const toggleSettings = useCallback(() => setShowSettings(prev => !prev), []);
+
+  const handleToggleLanguage = useCallback(() => {
+    const nextLng = language?.toLowerCase().startsWith('en') ? 'zh' : 'en';
+    const nextConfigLang = nextLng === 'en' ? 'en-US' : 'zh-CN';
+    void changeLanguage(nextLng);
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = nextConfigLang;
+    }
+    const configStoreState =
+      typeof useConfigStore?.getState === 'function' ? useConfigStore.getState() : undefined;
+    if (configStoreState?.config?.ui && typeof configStoreState.updateConfig === 'function') {
+      void configStoreState
+        .updateConfig({
+          ...configStoreState.config,
+          ui: {
+            ...configStoreState.config.ui,
+            language: nextConfigLang,
+          },
+        })
+        .catch(() => undefined);
+    }
+  }, [changeLanguage, language]);
+
+  const handleFocusSearch = useCallback(() => {
+    const input = document.querySelector<HTMLInputElement>('[data-testid="search-input"]');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    const storeState =
+      typeof useDownloadStore?.getState === 'function' ? useDownloadStore.getState() : undefined;
+    if (!storeState?.tasks || typeof storeState.setSelectedTasks !== 'function') {
+      return;
+    }
+    storeState.setSelectedTasks(storeState.tasks.map(task => task.id));
+  }, []);
+
+  const handleTogglePauseResume = useCallback(() => {
+    const storeState =
+      typeof useDownloadStore?.getState === 'function' ? useDownloadStore.getState() : undefined;
+    if (!storeState?.tasks) {
+      return;
+    }
+    const hasDownloading = storeState.tasks.some(task => task.status === 'downloading');
+    if (hasDownloading && typeof storeState.pauseAllDownloads === 'function') {
+      void storeState.pauseAllDownloads().catch(() => undefined);
+      return;
+    }
+    const hasStartable = storeState.tasks.some(
+      task => task.status === 'pending' || task.status === 'paused' || task.status === 'failed'
+    );
+    if (hasStartable && typeof storeState.startAllDownloads === 'function') {
+      void storeState.startAllDownloads().catch(() => undefined);
+    }
+  }, []);
+
+  const handleEscape = useCallback(() => {
+    if (showShortcuts) {
+      setShowShortcuts(false);
+      return;
+    }
+    if (showAbout) {
+      setShowAbout(false);
+      return;
+    }
+    if (showSettings) {
+      setShowSettings(false);
+      return;
+    }
+    const storeState =
+      typeof useDownloadStore?.getState === 'function' ? useDownloadStore.getState() : undefined;
+    if (storeState && typeof storeState.clearSelection === 'function') {
+      storeState.clearSelection();
+    }
+  }, [showAbout, showSettings, showShortcuts]);
+
+  const handleToggleShortcuts = useCallback(() => {
+    setShowShortcuts(prev => !prev);
+  }, []);
+
+  useKeyboardShortcuts({
+    onFocusSearch: handleFocusSearch,
+    onToggleSettings: toggleSettings,
+    onSelectAll: handleSelectAll,
+    onTogglePauseResume: handleTogglePauseResume,
+    onEscape: handleEscape,
+    onToggleShortcutsModal: handleToggleShortcuts,
+  });
+
+  const isEnglish = language?.toLowerCase().startsWith('en');
 
   return (
     <div className='h-screen flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden relative'>
@@ -49,17 +150,40 @@ export const UnifiedView: React.FC = () => {
 
         <div className='flex items-center gap-2'>
           <button
+            type='button'
+            onClick={handleToggleLanguage}
+            data-testid='nav-language-toggle'
+            className='inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors'
+            title={t('header.switchLanguage')}
+            aria-label={t('header.switchLanguage')}
+          >
+            <LanguageIcon className='w-4 h-4' />
+            <span>{isEnglish ? 'EN' : '中文'}</span>
+          </button>
+          <button
+            type='button'
+            onClick={() => setShowShortcuts(true)}
+            data-testid='nav-shortcuts'
+            className='p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 transition-colors'
+            title={t('header.shortcuts')}
+            aria-label={t('header.shortcuts')}
+          >
+            <CommandLineIcon className='w-5 h-5' />
+          </button>
+          <button
             onClick={toggleSettings}
             data-testid='nav-settings'
             className={`p-2 rounded-lg transition-all ${showSettings ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'}`}
-            title='设置'
+            title={t('header.settings')}
+            aria-label={t('header.settings')}
           >
             <Cog6ToothIcon className='w-5 h-5' />
           </button>
           <button
             onClick={() => setShowAbout(true)}
             className='p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 transition-colors'
-            title='关于'
+            title={t('header.about')}
+            aria-label={t('header.about')}
           >
             <InformationCircleIcon className='w-5 h-5' />
           </button>
@@ -92,7 +216,7 @@ export const UnifiedView: React.FC = () => {
                   }`}
                 >
                   <LinkIcon className='w-4 h-4' />
-                  添加链接
+                  {t('unified.addUrlsTab')}
                 </button>
                 <button
                   onClick={() => {
@@ -107,14 +231,14 @@ export const UnifiedView: React.FC = () => {
                   }`}
                 >
                   <DocumentArrowUpIcon className='w-4 h-4' />
-                  批量导入
+                  {t('unified.batchImportTab')}
                 </button>
               </div>
 
               <button
                 onClick={() => setIsInputCollapsed(!isInputCollapsed)}
                 className='p-1.5 rounded-md text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'
-                title={isInputCollapsed ? '展开' : '收起'}
+                title={isInputCollapsed ? t('unified.expand') : t('unified.collapse')}
               >
                 {isInputCollapsed ? (
                   <ChevronDownIcon className='w-4 h-4' />
@@ -152,8 +276,8 @@ export const UnifiedView: React.FC = () => {
             {!hasTasks ? (
               <div className='flex-1 flex flex-col items-center justify-center text-gray-400 p-10'>
                 <DocumentArrowUpIcon className='w-16 h-16 mb-4 opacity-20' />
-                <p className='text-lg font-medium'>暂无下载任务</p>
-                <p className='text-sm opacity-70'>请在上方添加链接或导入文件</p>
+                <p className='text-lg font-medium'>{t('unified.emptyTitle')}</p>
+                <p className='text-sm opacity-70'>{t('unified.emptyHint')}</p>
               </div>
             ) : (
               <VirtualizedTaskList />
@@ -184,7 +308,7 @@ export const UnifiedView: React.FC = () => {
           <div className='flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 shrink-0 bg-gray-50 dark:bg-gray-800/50'>
             <h2 className='text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2'>
               <Cog6ToothIcon className='w-5 h-5 text-gray-500' />
-              设置
+              {t('unified.settingsTitle')}
             </h2>
             <button
               onClick={() => setShowSettings(false)}
@@ -196,6 +320,9 @@ export const UnifiedView: React.FC = () => {
           <div className='flex-1 overflow-y-auto p-6'>{showSettings && <SettingsView />}</div>
         </div>
       </div>
+
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal open={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
       {/* About Modal */}
       {showAbout && (
@@ -214,18 +341,18 @@ export const UnifiedView: React.FC = () => {
               Video Downloader Pro
             </h2>
             <p className='text-gray-500 dark:text-gray-400 mb-6 font-mono text-sm'>
-              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.2.0'}
+              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.3.0'}
             </p>
             <p className='text-gray-600 dark:text-gray-300 mb-8 text-sm leading-relaxed'>
-              专业的批量视频下载工具
+              {t('app.aboutDescriptionLine1')}
               <br />
-              支持多线程下载、自动嗅探和断点续传
+              {t('app.aboutDescriptionLine2')}
             </p>
             <button
               onClick={() => setShowAbout(false)}
               className='w-full py-2.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-xl font-medium transition-colors'
             >
-              关闭
+              {t('unified.close')}
             </button>
           </div>
         </div>

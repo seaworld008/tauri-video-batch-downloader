@@ -5,11 +5,17 @@
 
 ## 架构概览
 
-- 前端（React）：负责 UI、状态管理、导入映射与用户交互
-- 后端（Rust/Tauri）：负责任务队列、下载执行、文件解析与系统能力
+- 前端（React）：负责 UI、状态管理、导入映射、完整 `zh-CN`/`en-US`
+  国际化、全局键盘快捷键与桌面提示音/原生通知
+- 后端（Rust/Tauri + CLI）：负责任务队列、下载执行、文件解析、系统托盘与无头
+  `vdpro-cli` 二进制
 
 ## 关键模块
 
+- `src-tauri/src/infra/tray.rs`：系统托盘菜单、`minimize_to_tray` 与优雅关闭控制
+- `src-tauri/src/cli/mod.rs` &
+  `src-tauri/src/bin/vdpro_cli.rs`：复用 Rust 核心的无头命令行模式（`download` /
+  `probe` / `doctor`）
 - `src-tauri/src/core/`：下载核心与运行时
   - `manager.rs`：DownloadManager 主类型、任务生命周期入口与兼容 API
   - `manager/queue.rs`：入队、出队、队列调度与 semaphore 收敛

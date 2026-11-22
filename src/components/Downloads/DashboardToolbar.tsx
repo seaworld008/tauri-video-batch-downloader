@@ -17,6 +17,7 @@ import { DownloadStartConfirmDialog } from './DownloadStartConfirmDialog';
 import { DeleteTasksConfirmDialog } from './DeleteTasksConfirmDialog';
 import { ToolbarActions } from './ToolbarActions';
 import { ToolbarFilters } from './ToolbarFilters';
+import { useI18n } from '../../i18n/hooks';
 
 interface DashboardToolbarProps {
   onRefresh?: () => void;
@@ -27,6 +28,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   onRefresh,
   onOpenSettings,
 }) => {
+  const { t } = useI18n();
   const tasks = useDownloadStore(state => state.tasks);
   const selectedTasks = useDownloadStore(state => state.selectedTasks);
   const startAllDownloads = useDownloadStore(state => state.startAllDownloads);
@@ -169,7 +171,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   const openStartConfirm = React.useCallback(
     (startAction: () => Promise<void>, taskIds: string[]) => {
       if (taskIds.length === 0) {
-        toast('没有可开始的下载任务');
+        toast(t('toolbar.noStartableTasks'));
         return;
       }
 
@@ -185,13 +187,13 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       setStartConfirmInitialDirectory(initialDirectory);
       setStartConfirmOpen(true);
     },
-    [config.download.output_directory, tasks]
+    [config.download.output_directory, t, tasks]
   );
 
   const openDeleteConfirm = React.useCallback(
     (taskIds: string[], title: string, description: string, action: () => Promise<void>) => {
       if (taskIds.length === 0) {
-        toast('没有可清理的任务');
+        toast(t('toolbar.noClearableTasks'));
         return;
       }
 
@@ -201,7 +203,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       setDeleteConfirmDescription(description);
       setDeleteConfirmOpen(true);
     },
-    []
+    [t]
   );
 
   const runPendingStartAction = React.useCallback(async () => {
@@ -251,7 +253,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   const handleChangeDirectoryForThisRun = React.useCallback(async () => {
     try {
       const selected = await selectOutputDirectoryCommand({
-        title: '选择本次保存位置',
+        title: t('toolbar.selectTempDirTitle'),
         defaultPath: startConfirmDirectory || config.download.output_directory,
       });
       if (selected) {
@@ -259,18 +261,18 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       }
     } catch (error) {
       reportFrontendIssue('error', 'dashboard_toolbar:select_temp_directory_failed', error);
-      toast.error('选择本次保存位置失败');
+      toast.error(t('toolbar.selectTempDirFailed'));
     }
-  }, [config.download.output_directory, startConfirmDirectory]);
+  }, [config.download.output_directory, startConfirmDirectory, t]);
 
   const handleOpenDownloadFolder = React.useCallback(async () => {
     try {
       await openDownloadFolderCommand();
     } catch (error) {
       reportFrontendIssue('error', 'dashboard_toolbar:open_download_folder_failed', error);
-      toast.error('打开下载目录失败');
+      toast.error(t('toolbar.openFolderFailed'));
     }
-  }, []);
+  }, [t]);
 
   const handleBatchAction = React.useCallback(
     async (action: 'start' | 'pause' | 'delete') => {
@@ -328,8 +330,8 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
           case 'delete':
             openDeleteConfirm(
               selectedTasks,
-              '确认删除选中任务',
-              `即将删除 ${selectedTasks.length} 个已选任务。只有在你点击“确认清理”后才会执行。`,
+              t('toolbar.confirmDeleteSelectedTitle'),
+              t('toolbar.confirmDeleteSelectedDesc', { count: selectedTasks.length }),
               async () => {
                 await removeTasks(selectedTasks);
                 clearSelection();
@@ -351,6 +353,7 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       removeTasks,
       selectedTasks,
       startAllDownloads,
+      t,
       tasks,
     ]
   );
@@ -358,26 +361,26 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   const handleDeleteFiltered = React.useCallback(() => {
     openDeleteConfirm(
       filteredTaskIds,
-      '确认清理筛选结果',
-      `即将清理当前筛选结果中的 ${filteredTaskIds.length} 个任务。只有在你点击“确认清理”后才会执行。`,
+      t('toolbar.confirmClearFilteredTitle'),
+      t('toolbar.confirmClearFilteredDesc', { count: filteredTaskIds.length }),
       async () => {
         await removeTasks(filteredTaskIds);
         clearSelection();
       }
     );
-  }, [clearSelection, filteredTaskIds, openDeleteConfirm, removeTasks]);
+  }, [clearSelection, filteredTaskIds, openDeleteConfirm, removeTasks, t]);
 
   const handleClearInactive = React.useCallback(() => {
     openDeleteConfirm(
       inactiveTaskIds,
-      '确认清理残留任务',
-      `即将清理全部 ${inactiveTaskIds.length} 个非活跃任务。正在下载和提交中的任务会被保留，只有在你点击“确认清理”后才会执行。`,
+      t('toolbar.confirmClearInactiveTitle'),
+      t('toolbar.confirmClearInactiveDesc', { count: inactiveTaskIds.length }),
       async () => {
         await removeTasks(inactiveTaskIds);
         clearSelection();
       }
     );
-  }, [clearSelection, inactiveTaskIds, openDeleteConfirm, removeTasks]);
+  }, [clearSelection, inactiveTaskIds, openDeleteConfirm, removeTasks, t]);
 
   const handleRefresh = React.useCallback(async () => {
     await forceSync();

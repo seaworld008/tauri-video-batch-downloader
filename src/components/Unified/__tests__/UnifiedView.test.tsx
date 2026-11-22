@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UnifiedView } from '../UnifiedView';
 import { useDownloadStore } from '../../../stores/downloadStore';
+import i18n from '../../../i18n';
 
 vi.mock('../../../stores/downloadStore');
 vi.mock('../FileImportPanel', () => ({
@@ -37,8 +38,9 @@ describe('UnifiedView', () => {
     clearRecoveredSession: vi.fn(),
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    await i18n.changeLanguage('zh');
     const mockState = {
       tasks: [{ id: 'task-1', status: 'pending' }],
       recoveredSessionTaskIds: ['task-1'],
@@ -50,6 +52,10 @@ describe('UnifiedView', () => {
         ? (selector as (state: typeof mockState) => unknown)(mockState)
         : mockState
     );
+  });
+
+  afterEach(async () => {
+    await i18n.changeLanguage('zh');
   });
 
   it('opens settings drawer when toolbar requests the authoritative mainline settings entrypoint', () => {
@@ -110,5 +116,35 @@ describe('UnifiedView', () => {
 
     expect(screen.queryByTestId('session-recovery-banner')).not.toBeInTheDocument();
     expect(storeActions.clearRecoveredSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches UI labels between Chinese and English via header language toggle', async () => {
+    render(<UnifiedView />);
+
+    expect(screen.getByText('添加链接')).toBeInTheDocument();
+    expect(screen.getByText('上次会话已恢复')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('nav-language-toggle'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Add URLs')).toBeInTheDocument();
+      expect(screen.getByText('Batch Import')).toBeInTheDocument();
+      expect(screen.getByText('Previous Session Restored')).toBeInTheDocument();
+    });
+  });
+
+  it('opens and closes the keyboard shortcuts help modal', () => {
+    render(<UnifiedView />);
+
+    expect(screen.queryByTestId('keyboard-shortcuts-modal')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-shortcuts'));
+    expect(screen.getByTestId('keyboard-shortcuts-modal')).toBeInTheDocument();
+    expect(screen.getByText('键盘快捷键')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('keyboard-shortcuts-modal')).not.toBeInTheDocument();
   });
 });

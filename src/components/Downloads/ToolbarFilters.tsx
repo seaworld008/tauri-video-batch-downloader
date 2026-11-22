@@ -1,5 +1,6 @@
 import React from 'react';
 import type { TaskStatus } from '../../types';
+import { useI18n } from '../../i18n/hooks';
 
 export type ToolbarFilterStatus = TaskStatus | 'all';
 
@@ -22,60 +23,64 @@ export const ToolbarFilters: React.FC<ToolbarFiltersProps> = ({
   filterStatus,
   stats,
   onFilterChange,
-}) => (
-  <div
-    className='flex items-center gap-1 overflow-x-auto pb-1 scrollbar-hide'
-    data-testid='status-filter'
-  >
-    <FilterTab
-      active={filterStatus === 'all'}
-      onClick={() => onFilterChange('all')}
-      label='全部任务'
-      count={stats.all}
-      value='all'
-    />
-    <FilterTab
-      active={filterStatus === 'downloading'}
-      onClick={() => onFilterChange('downloading')}
-      label='下载中'
-      count={stats.downloading}
-      color='blue'
-      value='downloading'
-    />
-    <FilterTab
-      active={filterStatus === 'pending'}
-      onClick={() => onFilterChange('pending')}
-      label='等待中'
-      count={stats.pending}
-      color='yellow'
-      value='pending'
-    />
-    <FilterTab
-      active={filterStatus === 'paused'}
-      onClick={() => onFilterChange('paused')}
-      label='已暂停'
-      count={stats.paused}
-      color='orange'
-      value='paused'
-    />
-    <FilterTab
-      active={filterStatus === 'completed'}
-      onClick={() => onFilterChange('completed')}
-      label='已完成'
-      count={stats.completed}
-      color='green'
-      value='completed'
-    />
-    <FilterTab
-      active={filterStatus === 'failed'}
-      onClick={() => onFilterChange('failed')}
-      label='失败'
-      count={stats.failed}
-      color='red'
-      value='failed'
-    />
-  </div>
-);
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <div
+      className='flex items-center gap-1 overflow-x-auto pb-1 scrollbar-hide'
+      data-testid='status-filter'
+    >
+      <FilterTab
+        active={filterStatus === 'all'}
+        onClick={() => onFilterChange('all')}
+        label={t('toolbar.filterAll')}
+        count={stats.all}
+        value='all'
+      />
+      <FilterTab
+        active={filterStatus === 'downloading'}
+        onClick={() => onFilterChange('downloading')}
+        label={t('toolbar.filterDownloading')}
+        count={stats.downloading}
+        color='blue'
+        value='downloading'
+      />
+      <FilterTab
+        active={filterStatus === 'pending'}
+        onClick={() => onFilterChange('pending')}
+        label={t('toolbar.filterPending')}
+        count={stats.pending}
+        color='yellow'
+        value='pending'
+      />
+      <FilterTab
+        active={filterStatus === 'paused'}
+        onClick={() => onFilterChange('paused')}
+        label={t('toolbar.filterPaused')}
+        count={stats.paused}
+        color='orange'
+        value='paused'
+      />
+      <FilterTab
+        active={filterStatus === 'completed'}
+        onClick={() => onFilterChange('completed')}
+        label={t('toolbar.filterCompleted')}
+        count={stats.completed}
+        color='green'
+        value='completed'
+      />
+      <FilterTab
+        active={filterStatus === 'failed'}
+        onClick={() => onFilterChange('failed')}
+        label={t('toolbar.filterFailed')}
+        count={stats.failed}
+        color='red'
+        value='failed'
+      />
+    </div>
+  );
+};
 
 interface FilterTabProps {
   active: boolean;

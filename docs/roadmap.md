@@ -48,18 +48,22 @@
 
 ---
 
-## Phase 3 (`v1.3.0`) — 全球化 UX 抛光、桌面融合与 CLI（下一阶段）
+## Phase 3 (`v1.3.0`) — 全球化 UX 抛光、桌面融合与 CLI（已完成）
 
-- **全量国际化覆盖**：消除硬编码中文文案，打通 Settings / Toolbar / UnifiedView
-  / Dialogs / 状态文案的完整 `zh-CN` 与 `en-US`
-  双语覆盖，并向社区开放多语言贡献。
-- **桌面原生体验深化**：真正接入系统托盘最小化（`minimize_to_tray`）、系统级下载完成/失败通知（`notification_sound`）与可访问性键盘快捷键体系（`Ctrl/Cmd+V`、全选、空格暂停/恢复、焦点管理）。
-- **无头伴生 CLI
-  (`vdpro-cli`)**：复用同一 Rust 下载引擎核心，提供面向脚本与服务器批处理的命令行模式。
+- **全量国际化覆盖**：消除硬编码中文文案，打通 `UnifiedView` / `StatusBar` /
+  `SessionRecoveryBanner` / `ManualInputPanel` / `FileImportPanel` /
+  `DashboardToolbar` / `Dialogs` / `TaskListItem` / `Settings` 的完整 `zh-CN` 与
+  `en-US` 双语覆盖，提供顶部实时切换与自动化键名/占位符一致性测试。
+- **桌面原生体验深化**：接入系统托盘最小化（`minimize_to_tray` /
+  `start_minimized`）、提示音与后台窗口桌面通知（`notification_sound`）、500ms 终态合并通知与全局可访问键盘快捷键体系（`Ctrl/Cmd+K`
+  / `/`、`Ctrl/Cmd+,`、`Ctrl/Cmd+A`、`Space`、`?`、`Esc`）。
+- **无头伴生 CLI (`vdpro-cli`)**：复用同一 Rust 下载引擎核心，支持
+  `download`（`.txt`/`.csv`/`.xlsx`/`.xls`
+  导入）、`probe`、`doctor`、`--json`、`--rate-limit` 与 `Ctrl+C` 中止。
 
 ---
 
-## Phase 4 (`v2.0.0`) — Cargo Workspace 分层与 SQLite WAL 存储
+## Phase 4 (`v2.0.0`) — Cargo Workspace 分层与 SQLite WAL 存储（下一阶段）
 
 - **Cargo Workspace 多 Crate 架构**：拆分为
   `vdpro-core`（模型、配置、错误、事件）、`vdpro-providers`（HTTP / Range / HLS

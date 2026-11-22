@@ -14,6 +14,9 @@ type TranslationParamsArg = TranslationParams | PluralOptions | undefined;
 
 type SafeTranslator = (key: TranslationKeyArg, params?: TranslationParamsArg) => string;
 
+export const translate: SafeTranslator = (key, params) =>
+  (i18n.t as unknown as SafeTranslator)(key, params);
+
 export const useI18n = () => {
   const { t, i18n: i18nInstance, ready } = useTranslation();
 

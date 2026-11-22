@@ -1,5 +1,6 @@
 import React from 'react';
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { useI18n } from '../../i18n/hooks';
 
 interface DeleteTasksConfirmDialogProps {
   open: boolean;
@@ -20,6 +21,8 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
   onClose,
   onConfirm,
 }) => {
+  const { t } = useI18n();
+
   React.useEffect(() => {
     if (!open) {
       return;
@@ -68,7 +71,7 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
             onClick={onClose}
             disabled={working}
             className='p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50'
-            aria-label='关闭'
+            aria-label={t('common.close')}
           >
             <XMarkIcon className='h-5 w-5 text-gray-500' />
           </button>
@@ -77,7 +80,7 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
         {taskTitles.length > 0 && (
           <div className='rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-4 mb-5'>
             <div className='text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2'>
-              即将处理的任务
+              {t('dialogs.pendingItemsTitle')}
             </div>
             <div className='space-y-1 text-sm text-gray-800 dark:text-gray-100'>
               {taskTitles.slice(0, 3).map((taskTitle, index) => (
@@ -87,7 +90,7 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
               ))}
               {taskTitles.length > 3 && (
                 <div className='text-xs text-gray-500 dark:text-gray-400'>
-                  以及另外 {taskTitles.length - 3} 个任务
+                  {t('dialogs.moreTasks', { count: taskTitles.length - 3 })}
                 </div>
               )}
             </div>
@@ -100,14 +103,14 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
             disabled={working}
             className='flex-1 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors'
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             onClick={() => void onConfirm()}
             disabled={working}
             className='flex-1 px-3 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors'
           >
-            {working ? '处理中...' : '确认清理'}
+            {working ? t('dialogs.processing') : t('dialogs.confirmClear')}
           </button>
         </div>
       </div>

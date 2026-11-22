@@ -1,14 +1,16 @@
-import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StatusBar } from '../StatusBar';
 import { useDownloadStore } from '../../../stores/downloadStore';
+import i18n from '../../../i18n';
 
 vi.mock('../../../stores/downloadStore');
 
 const mockUseDownloadStore = vi.mocked(useDownloadStore);
 
 describe('Unified StatusBar', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh');
     const mockState = {
       tasks: [
         { id: 'downloading-1', status: 'downloading', downloaded_size: 1024 },
@@ -40,6 +42,10 @@ describe('Unified StatusBar', () => {
         ? (selector as (state: typeof mockState) => unknown)(mockState)
         : mockState
     );
+  });
+
+  afterEach(async () => {
+    await i18n.changeLanguage('zh');
   });
 
   it('renders total speed from store stats display_total_speed_bps on the authoritative mainline status bar', () => {
@@ -121,5 +127,18 @@ describe('Unified StatusBar', () => {
 
     render(<StatusBar />);
     expect(screen.getAllByTestId('status-overview-badge')[1]).toHaveTextContent('队列已暂停');
+  });
+
+  it('renders English labels when language is switched to en', async () => {
+    await act(async () => {
+      await i18n.changeLanguage('en');
+    });
+
+    render(<StatusBar />);
+
+    expect(screen.getByText('Total Speed')).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Errors')).toBeInTheDocument();
+    expect(screen.getByTestId('status-overview-badge')).toHaveTextContent('Downloading');
   });
 });
