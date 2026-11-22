@@ -20,10 +20,10 @@
 - `src-tauri/crates/vdpro-providers`：多站点平台识别（`platform`）、优先级
   `ProviderRegistry` 路由（`registry`）、MPEG-DASH
   MPD 解析器（`dash_parser`）与共享 `ffmpeg_muxer` 无损混流层
-- `src-tauri/src/`（`video-downloader-pro` & `vdpro-cli`）：
+- `src-tauri/crates/vdpro-cli`（`vdpro-cli`）：独立无头命令行二进制包（`src/main.rs`），与桌面打包二进制解耦
+- `src-tauri/src/`（`video-downloader-pro`）：
   - `infra/tray.rs`：系统托盘菜单、`minimize_to_tray` 与优雅关闭控制
-  - `cli/mod.rs` &
-    `bin/vdpro_cli.rs`：复用 Rust 核心的无头命令行模式（`download` / `probe` /
+  - `cli/mod.rs`：复用 Rust 核心的无头命令行逻辑实现（`download` / `probe` /
     `doctor`）
   - `core/`：DownloadManager 调度器（接入
     `SqliteStateStore`）、传输实现（`downloader` / `resume_downloader` /

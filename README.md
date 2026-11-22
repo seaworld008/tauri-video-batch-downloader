@@ -62,7 +62,7 @@ by a Rust core.
 
 | Area                       | Current Capabilities (`v2.0.0`)                                                                                                                                                                            |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Modular Rust Workspace** | 4-crate Cargo Workspace (`vdpro-core`, `vdpro-storage`, `vdpro-providers`, `video-downloader-pro` / `vdpro-cli`) with decoupled domain, persistence, routing, and desktop IPC boundaries                   |
+| **Modular Rust Workspace** | 5-crate Cargo Workspace (`vdpro-core`, `vdpro-storage`, `vdpro-providers`, `video-downloader-pro`, `vdpro-cli`) with decoupled domain, persistence, routing, desktop IPC, and CLI boundaries               |
 | **Batch Input**            | Excel (`.xlsx`/`.xls`), CSV encoding auto-detection, field mapping, clipboard batch paste, single/multi-URL validation, collapsible advanced request options (`Referer`, `Cookie`, `Proxy`, etc.)          |
 | **Queue & Controls**       | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override, global keyboard shortcuts (`?` modal)                                                |
 | **Protocols & Providers**  | Pluggable `ProviderRegistry`: HTTP/HTTPS (`ResumeDownloader`), HLS (`.m3u8` Master Playlist, fMP4, AES-128, FFmpeg mux), native MPEG-DASH (`.mpd`), `yt-dlp` (YouTube, Bilibili, TikTok, X, Vimeo, Twitch) |
@@ -131,7 +131,7 @@ Build and run the headless companion binary directly against the Rust core for
 servers, scripts, and batch automation:
 
 ```bash
-cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli
+cargo build --manifest-path src-tauri/Cargo.toml -p vdpro-cli --bin vdpro-cli
 
 # Inspect resolved provider & media headers
 ./src-tauri/target/debug/vdpro-cli probe "https://example.com/video.mp4" --json
@@ -216,10 +216,10 @@ pnpm audit --prod --audit-level moderate
   header switcher, native system tray (`minimize_to_tray`, `start_minimized`),
   notification chimes & hidden-window desktop alerts, global keyboard shortcuts,
   and headless companion CLI (`vdpro-cli`).
-- **`v2.0.0` (Current)**: Modular 4-crate Cargo Workspace (`vdpro-core`,
-  `vdpro-providers`, `vdpro-storage`, `video-downloader-pro`), SQLite WAL
-  persistent state storage (`download_state.db`) with automatic lossless
-  migration from legacy JSON snapshots, and release pipeline polish.
+- **`v2.0.0` (Current)**: Modular 5-crate Cargo Workspace (`vdpro-core`,
+  `vdpro-providers`, `vdpro-storage`, `video-downloader-pro`, `vdpro-cli`),
+  SQLite WAL persistent state storage (`download_state.db`) with automatic
+  lossless migration from legacy JSON snapshots, and release pipeline polish.
 
 See [docs/roadmap.md](docs/roadmap.md) for detailed milestones.
 

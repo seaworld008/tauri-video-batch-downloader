@@ -10,7 +10,7 @@ and this project adheres to
 
 ### Added
 
-- **4-Crate Cargo Workspace Modularization**:
+- **5-Crate Cargo Workspace Modularization**:
   - `src-tauri/crates/vdpro-core`: Pure domain models (`VideoTask`,
     `TaskStatus`, `TaskPriority`, `PersistedManagerState`, `AppError`),
     configuration (`AppConfig`), retry/circuit-breaker error handling, URL/file
@@ -22,8 +22,10 @@ and this project adheres to
   - `src-tauri/crates/vdpro-providers`: Platform URL detection (`platform.rs`),
     priority `ProviderRegistry` (`registry.rs`), native MPEG-DASH MPD parser
     (`dash_parser.rs`), and shared FFmpeg remux/mux layer (`ffmpeg_muxer.rs`).
-  - `src-tauri` (`video-downloader-pro` & `vdpro-cli`): Tauri v2 IPC commands,
-    tray/lifecycle integration, active transport engines, and companion CLI.
+  - `src-tauri` (`video-downloader-pro`): Tauri v2 desktop binary, IPC commands,
+    tray/lifecycle integration, and active transport engines.
+  - `src-tauri/crates/vdpro-cli` (`vdpro-cli`): Dedicated companion CLI crate
+    (`src/main.rs`) decoupled from desktop `tauri build` bundling.
 - **SQLite WAL Persistent State Store & Lossless JSON Migration**:
   - Replaced monolithic full-file JSON snapshot serialization in
     `DownloadManager` with `SqliteStateStore` (`download_state.db` in WAL mode

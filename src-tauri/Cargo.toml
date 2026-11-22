@@ -89,10 +89,6 @@ tempfile = "3.8"
 name = "video-downloader-pro"
 path = "src/main.rs"
 
-[[bin]]
-name = "vdpro-cli"
-path = "src/bin/vdpro_cli.rs"
-
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
@@ -116,4 +112,5 @@ members = [
     "crates/vdpro-core",
     "crates/vdpro-storage",
     "crates/vdpro-providers",
+    "crates/vdpro-cli",
 ]

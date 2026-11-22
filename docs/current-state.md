@@ -2,7 +2,7 @@
 
 更新日期：2026-11-22
 
-当前基线：`v2.0.0`（Phase 4 4-crate Cargo Workspace 模块化拆分与 SQLite
+当前基线：`v2.0.0`（Phase 4 5-crate Cargo Workspace 模块化拆分与 SQLite
 WAL 持久化引擎基线）
 
 这份文档是当前仓库的事实源摘要。它只描述现在仍应维护的主链行为，不再承载历史计划、旧评审记录或已完成阶段的流水账。
@@ -296,7 +296,7 @@ GitNexus 对当前未提交工作树的影响检查：
     `KeyboardShortcutsModal`）支持 `Ctrl/Cmd+K` / `/` 搜索、`Ctrl/Cmd+,`
     设置、`Ctrl/Cmd+A` 全选、`Space` 队列切换、`?` 帮助面板与 `Esc`
     退出，并跳过可编辑控件与按钮误触。
-  - 无头伴生 CLI（`src-tauri/src/cli/mod.rs`、`src-tauri/src/bin/vdpro_cli.rs`）提供
+  - 无头伴生 CLI（`src-tauri/src/cli/mod.rs`、`src-tauri/crates/vdpro-cli/src/main.rs`）提供
     `download`（URL 与 `.txt`/`.csv`/`.xlsx`/`.xls`
     导入）、`probe`、`doctor`、`--json`、`--rate-limit` 与 `Ctrl+C` 信号中止。
   - `v2.0.0` Cargo Workspace 架构模块化与 SQLite
@@ -304,11 +304,12 @@ GitNexus 对当前未提交工作树的影响检查：
     `vdpro-core`（模型/配置/错误处理/校验/进度追踪/完整性校验）、`vdpro-storage`（`SqliteStateStore`
     SQLite WAL 状态存储与原子 `.part`
     暂存）、`vdpro-providers`（协议注册表/平台探测/DASH
-    MPD 解析/FFmpeg 混流辅助）与 `video-downloader-pro`（Tauri 应用、引擎编排与
-    `vdpro-cli`）；状态持久化升级为 `download_state.db`（WAL 模式、`tasks` /
-    `queue_items` / `manager_meta` 三表 + 状态索引），支持从旧版
-    `download_state.json` 一次性无损迁移并自动归档为
-    `.migrated.<ts>.bak`（异常 JSON 备份为 `.corrupt.<ts>`），`DownloadManager`
+    MPD 解析/FFmpeg 混流辅助）、`video-downloader-pro`（Tauri 应用与引擎编排）与
+    `vdpro-cli`（独立 CLI crate）；状态持久化升级为
+    `download_state.db`（WAL 模式、`tasks` / `queue_items` / `manager_meta`
+    三表 + 状态索引），支持从旧版 `download_state.json`
+    一次性无损迁移并自动归档为 `.migrated.<ts>.bak`（异常 JSON 备份为
+    `.corrupt.<ts>`），`DownloadManager`
     支持按任务 O(1)/批量增量写入及快照兜底，`ci.yml` / `release.yml` /
     `security.yml` 与 `pnpm test:all` 已接入 `--workspace` 门禁。
 
@@ -342,7 +343,7 @@ tests，并用 GitNexus 查看影响面。
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings`
 - `cargo test --manifest-path src-tauri/Cargo.toml --workspace`：209个测试通过（`vdpro-core`
   34 + `vdpro-providers` 11 + `vdpro-storage` 7 + `video-downloader-pro` 157）
-- `cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli`：`vdpro-cli 2.0.0`
+- `cargo build --manifest-path src-tauri/Cargo.toml -p vdpro-cli --bin vdpro-cli`：`vdpro-cli 2.0.0`
   构建与 `--version` 验证通过
 - `pnpm sidecars:check:local`：允许占位文件的本地 smoke 预检通过
 - `git diff --check`

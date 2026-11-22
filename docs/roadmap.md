@@ -69,8 +69,8 @@
   `src-tauri/crates/vdpro-core`（模型、配置、错误、校验、完整性校验与进程辅助）、`src-tauri/crates/vdpro-storage`（`PartFileWriter`
   与
   `SqliteStateStore`）、`src-tauri/crates/vdpro-providers`（平台探测、`ProviderRegistry`、MPEG-DASH
-  MPD 解析器与 `ffmpeg_muxer`）与 `src-tauri`（IPC、桌面壳、活跃传输器与
-  `vdpro-cli`）。
+  MPD 解析器与 `ffmpeg_muxer`）、`src-tauri`（IPC、桌面壳与活跃传输器）与
+  `src-tauri/crates/vdpro-cli`（独立无头伴生 CLI `vdpro-cli`）。
 - **SQLite (WAL) 存储替代全量 JSON 快照**：通过
   `SqliteStateStore`（`download_state.db` +
   `PRAGMA journal_mode = WAL`）实现增量单条/批量持久化，并在首次打开时无损迁移旧
