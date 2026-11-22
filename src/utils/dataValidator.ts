@@ -95,10 +95,10 @@ export const validateAppConfig = (data: unknown): ValidationResult<AppConfig> =>
  */
 export const validateApiResponse = <T>(
   data: unknown,
-  dataSchema?: z.ZodTypeAny
+  dataSchema?: z.ZodType
 ): ValidationResult<ApiResponse<T>> => {
   const schema = dataSchema ? createApiResponseSchema(dataSchema) : ApiResponseSchema;
-  const result = validator.validate(schema as z.ZodTypeAny, data, { context: 'ApiResponse' });
+  const result = validator.validate(schema as z.ZodType, data, { context: 'ApiResponse' });
   return result as ValidationResult<ApiResponse<T>>;
 };
 

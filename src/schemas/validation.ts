@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-export const safeParse = <T extends z.ZodTypeAny>(
+export const safeParse = <T extends z.ZodType>(
   schema: T,
   data: unknown
 ): {
   success: boolean;
   data?: z.infer<T>;
-  errors?: z.ZodError['errors'];
+  errors?: z.ZodError['issues'];
 } => {
   const result = schema.safeParse(data);
   if (result.success) {
@@ -18,19 +18,19 @@ export const safeParse = <T extends z.ZodTypeAny>(
 
   return {
     success: false,
-    errors: result.error.errors,
+    errors: result.error.issues,
   };
 };
 
-export const validateArray = <T extends z.ZodTypeAny>(
+export const validateArray = <T extends z.ZodType>(
   schema: T,
   dataArray: unknown[]
 ): {
   validItems: z.infer<T>[];
-  invalidItems: { index: number; data: unknown; errors: z.ZodError['errors'] }[];
+  invalidItems: { index: number; data: unknown; errors: z.ZodError['issues'] }[];
 } => {
   const validItems: z.infer<T>[] = [];
-  const invalidItems: { index: number; data: unknown; errors: z.ZodError['errors'] }[] = [];
+  const invalidItems: { index: number; data: unknown; errors: z.ZodError['issues'] }[] = [];
 
   dataArray.forEach((item, index) => {
     const result = safeParse(schema, item);
@@ -51,14 +51,14 @@ export const validateArray = <T extends z.ZodTypeAny>(
 export const validateRelatedData = (
   validations: {
     name: string;
-    schema: z.ZodTypeAny;
+    schema: z.ZodType;
     data: unknown;
   }[]
 ): {
   success: boolean;
-  results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['errors'] }>;
+  results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['issues'] }>;
 } => {
-  const results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['errors'] }> =
+  const results: Record<string, { success: boolean; data?: any; errors?: z.ZodError['issues'] }> =
     {};
   let overallSuccess = true;
 

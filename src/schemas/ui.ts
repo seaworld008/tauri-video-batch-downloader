@@ -1,9 +1,20 @@
 import { z } from 'zod';
 import { FormFieldTypeSchema, ModalTypeSchema, NotificationTypeSchema } from './enums';
 
+const VoidFunctionSchema = z.custom<() => void>(val => typeof val === 'function', {
+  message: 'Expected a function',
+});
+
+const AsyncVoidFunctionSchema = z.custom<() => void | Promise<void>>(
+  val => typeof val === 'function',
+  {
+    message: 'Expected a function',
+  }
+);
+
 export const NotificationActionSchema = z.object({
   label: z.string().min(1),
-  action: z.function().returns(z.void()),
+  action: VoidFunctionSchema,
   style: z.enum(['primary', 'secondary']).optional(),
 });
 
@@ -23,11 +34,8 @@ export const ModalOptionsSchema = z.object({
   message: z.string().optional(),
   confirmText: z.string().optional(),
   cancelText: z.string().optional(),
-  onConfirm: z
-    .function()
-    .returns(z.union([z.void(), z.promise(z.void())]))
-    .optional(),
-  onCancel: z.function().returns(z.void()).optional(),
+  onConfirm: AsyncVoidFunctionSchema.optional(),
+  onCancel: VoidFunctionSchema.optional(),
   customContent: z.any().optional(),
 });
 
@@ -55,7 +63,7 @@ export const KeyboardShortcutSchema = z.object({
   altKey: z.boolean().optional(),
   shiftKey: z.boolean().optional(),
   metaKey: z.boolean().optional(),
-  action: z.function().returns(z.void()),
+  action: VoidFunctionSchema,
   description: z.string().min(1),
 });
 
