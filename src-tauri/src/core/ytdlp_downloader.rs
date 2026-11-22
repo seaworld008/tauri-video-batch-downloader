@@ -15,11 +15,11 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, timeout, Duration};
 
 use crate::core::downloader::{DownloadStats, DownloadTask};
-use crate::core::models::{ExternalVideoInfo, SourcePlatform};
+use crate::core::models::{EffectiveRequestOptions, ExternalVideoInfo, SourcePlatform};
 use crate::core::ytdlp_support::{
-    build_download_args, build_probe_args, classify_error, detect_platform, emit_committing,
-    emit_progress, env_path, external_info_from_json, sanitize_filename, sidecar_path,
-    spawn_line_reader,
+    build_download_args, build_download_args_with_options, build_probe_args,
+    build_probe_args_with_options, classify_error, detect_platform, emit_committing, emit_progress,
+    env_path, external_info_from_json, sanitize_filename, sidecar_path, spawn_line_reader,
 };
 pub use crate::core::ytdlp_support::{parse_progress_line, YtDlpDownloaderConfig};
 use crate::utils::process::hidden_command;
@@ -51,6 +51,13 @@ impl YtDlpDownloader {
         build_probe_args(url, None)
     }
 
+    pub fn build_probe_args_with_options(
+        url: &str,
+        options: Option<&EffectiveRequestOptions>,
+    ) -> Result<Vec<String>> {
+        build_probe_args_with_options(url, None, options)
+    }
+
     pub fn build_download_args(
         url: &str,
         output_dir: &Path,
@@ -58,6 +65,23 @@ impl YtDlpDownloader {
         ffmpeg_path: Option<&Path>,
     ) -> Vec<String> {
         build_download_args(url, output_dir, output_template, ffmpeg_path, None)
+    }
+
+    pub fn build_download_args_with_options(
+        url: &str,
+        output_dir: &Path,
+        output_template: &str,
+        ffmpeg_path: Option<&Path>,
+        options: Option<&EffectiveRequestOptions>,
+    ) -> Result<Vec<String>> {
+        build_download_args_with_options(
+            url,
+            output_dir,
+            output_template,
+            ffmpeg_path,
+            None,
+            options,
+        )
     }
 
     pub async fn probe_video_info(&self, url: &str) -> Result<ExternalVideoInfo> {
@@ -144,6 +168,18 @@ impl YtDlpDownloader {
         pause_flag: Arc<AtomicBool>,
         progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
     ) -> Result<()> {
+        self.download_with_options(task, cancel_flag, pause_flag, progress_tx, None)
+            .await
+    }
+
+    pub async fn download_with_options(
+        &self,
+        task: &mut DownloadTask,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
+        progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
+        options: Option<&EffectiveRequestOptions>,
+    ) -> Result<()> {
         crate::utils::validation::assert_http_url(&task.url)?;
         let ytdlp = self.resolve_ytdlp_command();
         let ffmpeg = self.resolve_ffmpeg_command().await?;
@@ -159,13 +195,14 @@ impl YtDlpDownloader {
         let use_extractor_title_template = should_use_extractor_title_template(&safe_name);
         let output_template =
             format_ytdlp_output_template(&safe_name, use_extractor_title_template);
-        let args = build_download_args(
+        let args = build_download_args_with_options(
             &task.url,
             Path::new(&task.output_path),
             &output_template,
             Some(&ffmpeg),
             js_runtime.as_deref(),
-        );
+            options,
+        )?;
 
         let mut command = hidden_command(&ytdlp);
         command.kill_on_drop(true);

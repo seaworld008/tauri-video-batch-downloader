@@ -35,7 +35,7 @@ use crate::core::integrity_checker::{
 };
 use crate::core::models::{
     AppError, AppResult, DownloadConfig, DownloadStats as ModelsDownloadStats, DownloaderType,
-    ProgressUpdate, TaskStatus, VideoTask,
+    ProgressUpdate, TaskRequestOptions, TaskStatus, VideoTask,
 };
 
 use self::state::{
@@ -391,6 +391,8 @@ impl DownloadManager {
             buffer_size: 64 * 1024, // 64KB buffer
             user_agent: config.user_agent.clone(),
             resume_enabled: true, // Always enable resume by default
+            headers: config.headers.clone(),
+            proxy: config.proxy.clone(),
         };
 
         // Create HTTP downloader
@@ -1001,6 +1003,7 @@ impl DownloadManager {
             downloader_type: None,
             video_info: None, // 没有额外的视频信息
             external_info: None,
+            request_options: None,
         };
 
         self.hydrate_existing_file_state(&mut task).await?;
@@ -1183,6 +1186,7 @@ impl DownloadManager {
         let preferred_title = target.preferred_title;
         let initial_downloaded_size = task.downloaded_size;
         let initial_file_size = task.file_size;
+        let request_options = task.request_options.clone();
         let downloader = Arc::clone(&self.http_downloader);
         let progress_tracker = Arc::clone(&self.progress_tracker);
         let integrity_checker = Arc::clone(&self.integrity_checker);
@@ -1199,6 +1203,7 @@ impl DownloadManager {
                 preferred_title,
                 initial_downloaded_size,
                 initial_file_size,
+                request_options,
                 downloader,
                 event_sender,
                 progress_tracker,
@@ -1641,6 +1646,7 @@ impl DownloadManager {
             preferred_title,
             initial_downloaded_size,
             initial_file_size,
+            request_options,
             previous_status,
         ) =
             {
@@ -1655,6 +1661,7 @@ impl DownloadManager {
                     current_downloaded_size,
                     current_file_size,
                     current_url,
+                    task_request_options,
                     prior_status,
                 ) = {
                     let task_mut = guard.tasks.get_mut(task_id).ok_or_else(|| {
@@ -1681,6 +1688,7 @@ impl DownloadManager {
                         task_mut.downloaded_size,
                         task_mut.file_size,
                         task_mut.url.clone(),
+                        task_mut.request_options.clone(),
                         prior_status,
                     )
                 };
@@ -1699,6 +1707,7 @@ impl DownloadManager {
                     effective_preferred_title,
                     current_downloaded_size,
                     current_file_size,
+                    task_request_options,
                     prior_status,
                 )
             };
@@ -1731,6 +1740,7 @@ impl DownloadManager {
                 preferred_title,
                 initial_downloaded_size,
                 initial_file_size,
+                request_options,
                 downloader,
                 event_sender,
                 progress_tracker,
@@ -2915,6 +2925,7 @@ impl DownloadManager {
         preferred_title: Option<String>,
         initial_downloaded_size: u64,
         initial_file_size: Option<u64>,
+        request_options: Option<TaskRequestOptions>,
         downloader: Arc<HttpDownloader>,
         event_sender: EventSender,
         progress_tracker: Arc<ProgressTrackingManager>,
@@ -2940,6 +2951,7 @@ impl DownloadManager {
                 let url = url.clone();
                 let output_path = output_path.clone();
                 let preferred_title = preferred_title.clone();
+                let request_options = request_options.clone();
                 let downloader = Arc::clone(&downloader);
                 let event_sender = event_sender.clone();
                 let progress_tracker = Arc::clone(&progress_tracker);
@@ -2960,6 +2972,7 @@ impl DownloadManager {
                         preferred_title,
                         initial_downloaded_size,
                         initial_file_size,
+                        request_options,
                         downloader,
                         event_sender.clone(),
                         progress_tracker,
@@ -3023,6 +3036,7 @@ impl DownloadManager {
         preferred_title: Option<String>,
         initial_downloaded_size: u64,
         initial_file_size: Option<u64>,
+        request_options: Option<TaskRequestOptions>,
         downloader: Arc<HttpDownloader>,
         event_sender: EventSender,
         progress_tracker: Arc<ProgressTrackingManager>,
@@ -3039,6 +3053,8 @@ impl DownloadManager {
         let mut download_task =
             DownloadTask::new(url.to_string(), output_dir.to_string(), filename);
         download_task.id = task_id.to_string();
+        download_task.request_options =
+            TaskRequestOptions::with_config_fallback(request_options, &config);
         download_task.stats.downloaded_bytes = initial_downloaded_size;
         download_task.stats.total_bytes = initial_file_size;
         if let Some(total) = initial_file_size {
@@ -3826,6 +3842,7 @@ mod tests {
                 course_name: None,
             }),
             external_info: None,
+            request_options: None,
         };
 
         let duplicate_task = VideoTask {
@@ -3860,6 +3877,7 @@ mod tests {
                 course_name: None,
             }),
             external_info: None,
+            request_options: None,
         };
 
         let first = manager.add_video_task(base_task).await?;
@@ -4126,6 +4144,7 @@ mod tests {
             downloader_type: Some(DownloaderType::Http),
             video_info: None,
             external_info: None,
+            request_options: None,
         };
 
         let stored = manager.add_video_task(task).await?;
@@ -4580,6 +4599,7 @@ mod tests {
             &temp_dir.path().to_string_lossy(),
             Some("retry-video".to_string()),
             0,
+            None,
             None,
             downloader,
             event_sender,

@@ -31,6 +31,7 @@ const STATUS_FROM_BACKEND: Record<string, TaskStatus> = {
 const DOWNLOADER_TYPE_TO_BACKEND: Record<DownloaderType, string> = {
   http: 'Http',
   m3u8: 'M3u8',
+  dash: 'Dash',
   ytdlp: 'YtDlp',
 };
 
@@ -39,6 +40,12 @@ const DOWNLOADER_TYPE_FROM_BACKEND: Record<string, DownloaderType> = {
   Http: 'http',
   m3u8: 'm3u8',
   M3u8: 'm3u8',
+  hls: 'm3u8',
+  Hls: 'm3u8',
+  dash: 'dash',
+  Dash: 'dash',
+  mpd: 'dash',
+  Mpd: 'dash',
   ytdlp: 'ytdlp',
   YtDlp: 'ytdlp',
   youtube: 'ytdlp',

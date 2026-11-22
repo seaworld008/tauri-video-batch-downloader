@@ -32,6 +32,8 @@ pub enum DownloaderType {
 
     M3u8,
 
+    Dash,
+
     YtDlp,
 }
 
@@ -43,7 +45,8 @@ impl<'de> Deserialize<'de> for DownloaderType {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "Http" | "http" => Ok(Self::Http),
-            "M3u8" | "m3u8" => Ok(Self::M3u8),
+            "M3u8" | "m3u8" | "Hls" | "hls" => Ok(Self::M3u8),
+            "Dash" | "dash" | "Mpd" | "mpd" => Ok(Self::Dash),
             "YtDlp" | "ytdlp" | "Youtube" | "youtube" => Ok(Self::YtDlp),
             other => Err(serde::de::Error::custom(format!(
                 "unknown downloader type: {}",
@@ -60,7 +63,183 @@ pub enum SourcePlatform {
     Tiktok,
     Instagram,
     Facebook,
+    Bilibili,
+    Twitter,
+    Vimeo,
+    Twitch,
     Generic,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRequestOptions {
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub cookies: Option<String>,
+    #[serde(default)]
+    pub cookies_from_browser: Option<String>,
+    #[serde(default)]
+    pub referer: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub proxy: Option<String>,
+    #[serde(default)]
+    pub format_selector: Option<String>,
+    #[serde(default)]
+    pub preferred_language: Option<String>,
+    #[serde(default)]
+    pub output_container: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EffectiveRequestOptions {
+    pub headers: HashMap<String, String>,
+    pub cookies_from_browser: Option<String>,
+    pub user_agent: String,
+    pub proxy: Option<String>,
+    pub format_selector: Option<String>,
+    pub preferred_language: Option<String>,
+    pub output_container: Option<String>,
+}
+
+fn non_empty_trimmed(value: Option<&String>) -> Option<String> {
+    value
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn has_header_case_insensitive(headers: &HashMap<String, String>, target: &str) -> bool {
+    headers
+        .keys()
+        .any(|key| key.trim().eq_ignore_ascii_case(target))
+}
+
+fn set_header_case_insensitive(headers: &mut HashMap<String, String>, name: &str, value: String) {
+    headers.retain(|k, _| !k.trim().eq_ignore_ascii_case(name));
+    headers.insert(name.to_string(), value);
+}
+
+impl TaskRequestOptions {
+    pub fn merge_with_config(
+        task_opts: Option<&TaskRequestOptions>,
+        config: &DownloadConfig,
+    ) -> EffectiveRequestOptions {
+        Self::merge_with_defaults(
+            task_opts,
+            &config.headers,
+            config.proxy.as_deref(),
+            &config.user_agent,
+        )
+    }
+
+    pub fn merge_with_defaults(
+        task_opts: Option<&TaskRequestOptions>,
+        default_headers: &HashMap<String, String>,
+        default_proxy: Option<&str>,
+        default_user_agent: &str,
+    ) -> EffectiveRequestOptions {
+        let mut headers: HashMap<String, String> = default_headers
+            .iter()
+            .filter_map(|(k, v)| {
+                let key = k.trim();
+                let val = v.trim();
+                (!key.is_empty() && !val.is_empty()).then(|| (key.to_string(), val.to_string()))
+            })
+            .collect();
+
+        if let Some(opts) = task_opts {
+            for (k, v) in &opts.headers {
+                let key = k.trim();
+                let val = v.trim();
+                if !key.is_empty() && !val.is_empty() {
+                    set_header_case_insensitive(&mut headers, key, val.to_string());
+                }
+            }
+
+            if !has_header_case_insensitive(&opts.headers, "referer") {
+                if let Some(referer) = non_empty_trimmed(opts.referer.as_ref()) {
+                    set_header_case_insensitive(&mut headers, "Referer", referer);
+                }
+            }
+
+            if !has_header_case_insensitive(&opts.headers, "cookie") {
+                if let Some(cookies) = non_empty_trimmed(opts.cookies.as_ref()) {
+                    set_header_case_insensitive(&mut headers, "Cookie", cookies);
+                }
+            }
+        }
+
+        let user_agent = task_opts
+            .and_then(|opts| non_empty_trimmed(opts.user_agent.as_ref()))
+            .or_else(|| {
+                headers
+                    .iter()
+                    .find(|(k, _)| k.trim().eq_ignore_ascii_case("user-agent"))
+                    .map(|(_, v)| v.clone())
+            })
+            .unwrap_or_else(|| default_user_agent.trim().to_string());
+
+        headers.retain(|k, _| !k.trim().eq_ignore_ascii_case("user-agent"));
+
+        let proxy = task_opts
+            .and_then(|opts| non_empty_trimmed(opts.proxy.as_ref()))
+            .or_else(|| {
+                default_proxy
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+            });
+
+        EffectiveRequestOptions {
+            headers,
+            cookies_from_browser: task_opts
+                .and_then(|opts| non_empty_trimmed(opts.cookies_from_browser.as_ref())),
+            user_agent,
+            proxy,
+            format_selector: task_opts
+                .and_then(|opts| non_empty_trimmed(opts.format_selector.as_ref())),
+            preferred_language: task_opts
+                .and_then(|opts| non_empty_trimmed(opts.preferred_language.as_ref())),
+            output_container: task_opts
+                .and_then(|opts| non_empty_trimmed(opts.output_container.as_ref())),
+        }
+    }
+
+    pub fn with_config_fallback(
+        task_opts: Option<TaskRequestOptions>,
+        config: &DownloadConfig,
+    ) -> Option<TaskRequestOptions> {
+        let has_config_overrides = !config.headers.is_empty()
+            || config
+                .proxy
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|p| !p.is_empty());
+
+        if task_opts.is_none() && !has_config_overrides {
+            return None;
+        }
+
+        let effective = Self::merge_with_config(task_opts.as_ref(), config);
+        let original = task_opts.unwrap_or_default();
+        Some(TaskRequestOptions {
+            headers: effective.headers,
+            cookies: original.cookies,
+            cookies_from_browser: effective.cookies_from_browser,
+            referer: original.referer,
+            user_agent: if effective.user_agent.is_empty() {
+                None
+            } else {
+                Some(effective.user_agent)
+            },
+            proxy: effective.proxy,
+            format_selector: effective.format_selector,
+            preferred_language: effective.preferred_language,
+            output_container: effective.output_container,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -132,6 +311,10 @@ pub struct VideoTask {
     /// Metadata discovered by external providers such as yt-dlp.
     #[serde(default)]
     pub external_info: Option<ExternalVideoInfo>,
+
+    /// Optional per-task request overrides (headers, cookies, proxy, format, language).
+    #[serde(default)]
+    pub request_options: Option<TaskRequestOptions>,
 }
 
 /// Progress update information
@@ -504,3 +687,70 @@ pub enum AppError {
 
 /// Result type alias for application operations
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downloader_type_deserializes_dash_and_aliases() {
+        let dash: DownloaderType = serde_json::from_str("\"dash\"").expect("dash");
+        assert_eq!(dash, DownloaderType::Dash);
+        let mpd: DownloaderType = serde_json::from_str("\"mpd\"").expect("mpd");
+        assert_eq!(mpd, DownloaderType::Dash);
+        let m3u8: DownloaderType = serde_json::from_str("\"hls\"").expect("hls");
+        assert_eq!(m3u8, DownloaderType::M3u8);
+    }
+
+    #[test]
+    fn merge_with_config_applies_precedence_and_case_insensitive_headers() {
+        let mut config = DownloadConfig::default();
+        config
+            .headers
+            .insert("referer".to_string(), "https://global.example".to_string());
+        config
+            .headers
+            .insert("X-Global".to_string(), "1".to_string());
+        config.proxy = Some("http://127.0.0.1:8080".to_string());
+
+        let mut task_headers = HashMap::new();
+        task_headers.insert("X-Global".to_string(), "override".to_string());
+        task_headers.insert("User-Agent".to_string(), "CustomUA/2.0".to_string());
+
+        let task_opts = TaskRequestOptions {
+            headers: task_headers,
+            cookies: Some("sid=abc".to_string()),
+            cookies_from_browser: Some("chrome".to_string()),
+            referer: Some("https://task.example".to_string()),
+            user_agent: None,
+            proxy: Some("socks5://127.0.0.1:1080".to_string()),
+            format_selector: Some("720p".to_string()),
+            preferred_language: Some("en".to_string()),
+            output_container: Some("mp4".to_string()),
+        };
+
+        let effective = TaskRequestOptions::merge_with_config(Some(&task_opts), &config);
+        assert_eq!(effective.user_agent, "CustomUA/2.0");
+        assert_eq!(effective.proxy.as_deref(), Some("socks5://127.0.0.1:1080"));
+        assert_eq!(
+            effective.headers.get("X-Global").map(String::as_str),
+            Some("override")
+        );
+        assert_eq!(
+            effective.headers.get("Referer").map(String::as_str),
+            Some("https://task.example")
+        );
+        assert_eq!(
+            effective.headers.get("Cookie").map(String::as_str),
+            Some("sid=abc")
+        );
+        assert!(!effective
+            .headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("user-agent")));
+        assert_eq!(effective.cookies_from_browser.as_deref(), Some("chrome"));
+        assert_eq!(effective.format_selector.as_deref(), Some("720p"));
+        assert_eq!(effective.preferred_language.as_deref(), Some("en"));
+        assert_eq!(effective.output_container.as_deref(), Some("mp4"));
+    }
+}

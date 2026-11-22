@@ -1,6 +1,6 @@
 [package]
 name = "video-downloader-pro"
-version = "1.1.0"
+version = "1.2.0"
 description = "Professional batch video downloader"
 authors = ["Video Downloader Team"]
 edition = "2021"
@@ -22,7 +22,7 @@ tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 
 # HTTP 客户端和下载
-reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls", "blocking", "charset", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls", "blocking", "charset", "http2", "socks"] }
 
 # 错误处理
 anyhow = "1.0"
@@ -59,7 +59,8 @@ calamine = "0.38"       # Excel 读取
 
 # Futures 工具集
 futures-util = "0.3"
-url = "2.4"
+url = "2.5.9"
+quick-xml = "0.42"
 
 # 正则表达式
 regex = "1.10"

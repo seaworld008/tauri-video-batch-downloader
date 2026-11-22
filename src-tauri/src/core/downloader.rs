@@ -65,7 +65,8 @@ impl BandwidthController {
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -80,10 +81,11 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
 use uuid::Uuid;
 
+use crate::core::dash_downloader::{DashDownloadContext, DashDownloader, DashDownloaderConfig};
 use crate::core::download_provider::{
     ContentMetadata, DownloadProviderRouter, InitialProviderDecision, ResolvedProviderDecision,
 };
-use crate::core::m3u8_downloader::{M3U8Downloader, M3U8DownloaderConfig};
+use crate::core::m3u8_downloader::{M3U8DownloadContext, M3U8Downloader, M3U8DownloaderConfig};
 use crate::core::models::*;
 use crate::core::resume_downloader::{
     ResumeDownloader, ResumeDownloaderConfig, ResumeInfo, ResumeProgressCallback,
@@ -109,6 +111,12 @@ pub struct DownloaderConfig {
     pub user_agent: String,
     /// 是否启用断点续传
     pub resume_enabled: bool,
+    /// 全局默认自定义请求头
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// 全局默认代理 URL
+    #[serde(default)]
+    pub proxy: Option<String>,
 }
 
 impl Default for DownloaderConfig {
@@ -121,6 +129,8 @@ impl Default for DownloaderConfig {
             buffer_size: 64 * 1024, // 64KB 缓冲区
             user_agent: "VideoDownloaderPro/1.0.0".to_string(),
             resume_enabled: true,
+            headers: HashMap::new(),
+            proxy: None,
         }
     }
 }
@@ -175,6 +185,8 @@ pub struct DownloadTask {
     pub retry_count: usize,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub request_options: Option<TaskRequestOptions>,
 }
 
 impl DownloadTask {
@@ -200,6 +212,7 @@ impl DownloadTask {
             retry_count: 0,
             created_at: now,
             updated_at: now,
+            request_options: None,
         }
     }
 }
@@ -243,6 +256,7 @@ pub struct HttpDownloader {
     is_paused: Arc<AtomicBool>,
     resume_downloader: Arc<ResumeDownloader>,
     m3u8_downloader: Arc<M3U8Downloader>,
+    dash_downloader: Arc<DashDownloader>,
     ytdlp_downloader: Arc<YtDlpDownloader>,
     provider_router: Arc<DownloadProviderRouter>,
     bandwidth_controller: BandwidthController,
@@ -291,6 +305,19 @@ impl HttpDownloader {
 
         // 创建M3U8Downloader实例
         let m3u8_downloader = M3U8Downloader::new(m3u8_config)?;
+
+        // 创建DashDownloader配置与实例
+        let dash_config = DashDownloaderConfig {
+            max_concurrent_segments: config.max_connections_per_download.max(4),
+            timeout: config.timeout,
+            retry_attempts: config.retry_attempts,
+            buffer_size: config.buffer_size,
+            user_agent: config.user_agent.clone(),
+            temp_dir: std::env::temp_dir().join("video_downloader_dash"),
+            keep_temp_files: false,
+        };
+        let dash_downloader = DashDownloader::new(dash_config)?;
+
         let ytdlp_downloader = YtDlpDownloader::default_with_user_agent(config.user_agent.clone());
         let provider_router = DownloadProviderRouter::new(50 * 1024 * 1024);
 
@@ -304,10 +331,90 @@ impl HttpDownloader {
             is_paused: Arc::new(AtomicBool::new(false)),
             resume_downloader: Arc::new(resume_downloader),
             m3u8_downloader: Arc::new(m3u8_downloader),
+            dash_downloader: Arc::new(dash_downloader),
             ytdlp_downloader: Arc::new(ytdlp_downloader),
             provider_router: Arc::new(provider_router),
             bandwidth_controller,
         })
+    }
+
+    pub fn effective_request_options(&self, task: &DownloadTask) -> EffectiveRequestOptions {
+        TaskRequestOptions::merge_with_defaults(
+            task.request_options.as_ref(),
+            &self.config.headers,
+            self.config.proxy.as_deref(),
+            &self.config.user_agent,
+        )
+    }
+
+    pub fn build_client_for_request(&self, effective: &EffectiveRequestOptions) -> Result<Client> {
+        if effective.proxy.is_none()
+            && effective.headers.is_empty()
+            && effective.user_agent == self.config.user_agent
+        {
+            return Ok(self.client.clone());
+        }
+
+        let mut header_map = HeaderMap::new();
+        for (raw_name, raw_value) in &effective.headers {
+            let name = raw_name.trim();
+            let value = raw_value.trim();
+            if name.contains('\r')
+                || name.contains('\n')
+                || value.contains('\r')
+                || value.contains('\n')
+            {
+                anyhow::bail!("非法的自定义请求头（包含换行符）: {}", name);
+            }
+            if name.is_empty() {
+                continue;
+            }
+            let header_name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|err| anyhow::anyhow!("非法请求头名称 '{}': {}", name, err))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|err| anyhow::anyhow!("非法请求头值 '{}': {}", name, err))?;
+            header_map.insert(header_name, header_value);
+        }
+
+        let mut builder = Client::builder()
+            .connect_timeout(Duration::from_secs(self.config.timeout))
+            .read_timeout(Duration::from_secs(self.config.timeout));
+
+        let ua = effective.user_agent.trim();
+        if !ua.is_empty() {
+            if ua.contains('\r') || ua.contains('\n') {
+                anyhow::bail!("非法的 User-Agent 请求头");
+            }
+            builder = builder.user_agent(ua);
+        }
+
+        if !header_map.is_empty() {
+            builder = builder.default_headers(header_map);
+        }
+
+        if let Some(proxy_raw) = effective
+            .proxy
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            let parsed = url::Url::parse(proxy_raw)
+                .map_err(|err| anyhow::anyhow!("代理地址格式无效 '{}': {}", proxy_raw, err))?;
+            if !matches!(
+                parsed.scheme().to_ascii_lowercase().as_str(),
+                "http" | "https" | "socks5" | "socks5h"
+            ) {
+                anyhow::bail!(
+                    "不支持的代理协议 '{}': 仅允许 http/https/socks5/socks5h",
+                    parsed.scheme()
+                );
+            }
+            let proxy = Proxy::all(proxy_raw)
+                .map_err(|err| anyhow::anyhow!("代理配置失败 '{}': {}", proxy_raw, err))?;
+            builder = builder.proxy(proxy);
+        }
+
+        Ok(builder.build()?)
     }
 
     pub fn bandwidth_controller(&self) -> BandwidthController {
@@ -546,6 +653,9 @@ impl HttpDownloader {
         )
         .await;
 
+        let effective = self.effective_request_options(task);
+        let scoped_client = self.build_client_for_request(&effective)?;
+
         // 首先通过 provider router 做不需要 HEAD 的快速判定。
         let initial_decision = self.provider_router.initial_decision(&task.url);
         tracing::info!(
@@ -557,6 +667,10 @@ impl HttpDownloader {
             InitialProviderDecision::M3u8 => {
                 tracing::info!("🟢 [SMART_DOWNLOAD] M3U8 URL detected, using M3U8 downloader");
                 return self.download_with_m3u8(task, cancel_flag, pause_flag).await;
+            }
+            InitialProviderDecision::Dash => {
+                tracing::info!("🟢 [SMART_DOWNLOAD] DASH URL detected, using DASH downloader");
+                return self.download_with_dash(task, cancel_flag, pause_flag).await;
             }
             InitialProviderDecision::YtDlp => {
                 tracing::info!("🟢 [SMART_DOWNLOAD] Social/video webpage detected, using yt-dlp");
@@ -573,7 +687,10 @@ impl HttpDownloader {
             task.id,
             task.url
         );
-        let metadata = match self.get_content_metadata(&task.url).await {
+        let metadata = match self
+            .get_content_metadata_with_client(&scoped_client, &task.url)
+            .await
+        {
             Ok(metadata) => metadata,
             Err(e) => {
                 tracing::error!(
@@ -586,7 +703,12 @@ impl HttpDownloader {
                     task.id
                 );
                 return self
-                    .download_with_resume(task, cancel_flag, pause_flag)
+                    .download_with_resume_using_client(
+                        task,
+                        &scoped_client,
+                        cancel_flag,
+                        pause_flag,
+                    )
                     .await;
             }
         };
@@ -600,10 +722,21 @@ impl HttpDownloader {
                     .download_with_ytdlp(task, cancel_flag, pause_flag)
                     .await;
             }
+            ResolvedProviderDecision::M3u8 => {
+                return self.download_with_m3u8(task, cancel_flag, pause_flag).await;
+            }
+            ResolvedProviderDecision::Dash => {
+                return self.download_with_dash(task, cancel_flag, pause_flag).await;
+            }
             ResolvedProviderDecision::HttpResumable if metadata.content_length.is_none() => {
                 tracing::warn!("🟡 [SMART_DOWNLOAD] No content length returned for task {}, using resume downloader", task.id);
                 return self
-                    .download_with_resume_downloader(task, cancel_flag, pause_flag)
+                    .download_with_resume_downloader_with_client(
+                        task,
+                        &scoped_client,
+                        cancel_flag,
+                        pause_flag,
+                    )
                     .await;
             }
             ResolvedProviderDecision::HttpResumable => {
@@ -623,8 +756,13 @@ impl HttpDownloader {
                 )
                 .await;
                 tracing::info!("大文件检测：使用ResumeDownloader进行分片下载");
-                self.download_with_resume_downloader(task, cancel_flag, pause_flag)
-                    .await
+                self.download_with_resume_downloader_with_client(
+                    task,
+                    &scoped_client,
+                    cancel_flag,
+                    pause_flag,
+                )
+                .await
             }
             ResolvedProviderDecision::HttpSimple => {
                 let content_length = metadata.content_length.unwrap_or_default();
@@ -643,16 +781,40 @@ impl HttpDownloader {
                 )
                 .await;
                 tracing::info!("小文件检测：使用传统HTTP下载");
-                self.download_with_resume(task, cancel_flag, pause_flag)
-                    .await
+                self.download_with_resume_using_client(
+                    task,
+                    &scoped_client,
+                    cancel_flag,
+                    pause_flag,
+                )
+                .await
             }
         }
     }
 
     /// 使用ResumeDownloader进行大文件分片下载
+    #[allow(dead_code)]
     async fn download_with_resume_downloader(
         &self,
         task: &mut DownloadTask,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let effective = self.effective_request_options(task);
+        let scoped_client = self.build_client_for_request(&effective)?;
+        self.download_with_resume_downloader_with_client(
+            task,
+            &scoped_client,
+            cancel_flag,
+            pause_flag,
+        )
+        .await
+    }
+
+    async fn download_with_resume_downloader_with_client(
+        &self,
+        task: &mut DownloadTask,
+        client: &Client,
         cancel_flag: Arc<AtomicBool>,
         pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
@@ -680,8 +842,11 @@ impl HttpDownloader {
         let task_url = task.url.clone();
         let resume_key = self.build_resume_key(task);
 
+        let scoped_resume_downloader = self.resume_downloader.with_client(client.clone());
+
         // 读取已有断点信息，确保续传时进度从已下载位置开始
-        if let Ok(Some(resume_info)) = self.resume_downloader.load_resume_info(&resume_key).await {
+        if let Ok(Some(resume_info)) = scoped_resume_downloader.load_resume_info(&resume_key).await
+        {
             if resume_info.total_size > 0 {
                 let should_update = match task.stats.total_bytes {
                     Some(existing) => existing < resume_info.total_size,
@@ -699,7 +864,7 @@ impl HttpDownloader {
             }
         }
 
-        let mut resume_future = Box::pin(self.resume_downloader.download_with_resume(
+        let mut resume_future = Box::pin(scoped_resume_downloader.download_with_resume(
             &resume_key,
             &task_url,
             Path::new(&output_path_str),
@@ -774,12 +939,21 @@ impl HttpDownloader {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn get_content_metadata(&self, url: &str) -> Result<ContentMetadata> {
+        self.get_content_metadata_with_client(&self.client, url)
+            .await
+    }
+
+    async fn get_content_metadata_with_client(
+        &self,
+        client: &Client,
+        url: &str,
+    ) -> Result<ContentMetadata> {
         tracing::info!("🔍 [GET_CONTENT_LENGTH] Sending HEAD request to: {}", url);
 
         // 复用连接池并使用较短的探针超时，防止阻塞
-        let response = match self
-            .client
+        let response = match client
             .head(url)
             .timeout(Duration::from_secs(10))
             .send()
@@ -862,22 +1036,77 @@ impl HttpDownloader {
             });
         }
 
+        let effective = self.effective_request_options(task);
+        let scoped_client = self.build_client_for_request(&effective)?;
+
         tracing::info!("使用M3U8Downloader开始流媒体下载: {}", task.filename);
 
-        // 传入每任务独立的进度/取消/限速上下文，避免并发 M3U8 任务串台
+        // 传入每任务独立的进度/取消/限速/请求选项上下文，避免并发 M3U8 任务串台
         self.m3u8_downloader
-            .download_m3u8_with_context(
+            .download_m3u8_with_options(
                 &task.id,
                 &task.url,
                 &output_path_str,
-                cancel_flag,
-                pause_flag,
-                self.progress_tx.clone(),
-                Some(self.bandwidth_controller.clone()),
+                M3U8DownloadContext {
+                    cancel_flag,
+                    pause_flag,
+                    progress_tx: self.progress_tx.clone(),
+                    bandwidth_controller: Some(self.bandwidth_controller.clone()),
+                    client_override: Some(scoped_client),
+                    format_selector: effective.format_selector,
+                    preferred_language: effective.preferred_language,
+                    output_container: effective.output_container,
+                    ffmpeg_path: None,
+                },
             )
             .await?;
 
         tracing::info!("M3U8流媒体下载完成: {}", task.filename);
+        Ok(())
+    }
+
+    /// 使用DashDownloader进行MPEG-DASH流媒体下载
+    async fn download_with_dash(
+        &self,
+        task: &mut DownloadTask,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let full_path = Path::new(&task.output_path).join(&task.filename);
+        let output_path_str = full_path.to_string_lossy().to_string();
+        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+            return Err(if cancel_flag.load(Ordering::Relaxed) {
+                anyhow::anyhow!("download_cancelled")
+            } else {
+                anyhow::anyhow!("download_paused")
+            });
+        }
+
+        let effective = self.effective_request_options(task);
+        let scoped_client = self.build_client_for_request(&effective)?;
+
+        tracing::info!("使用DashDownloader开始DASH流媒体下载: {}", task.filename);
+
+        self.dash_downloader
+            .download_dash_with_options(
+                &task.id,
+                &task.url,
+                &output_path_str,
+                DashDownloadContext {
+                    cancel_flag,
+                    pause_flag,
+                    progress_tx: self.progress_tx.clone(),
+                    bandwidth_controller: Some(self.bandwidth_controller.clone()),
+                    client_override: Some(scoped_client),
+                    format_selector: effective.format_selector,
+                    preferred_language: effective.preferred_language,
+                    output_container: effective.output_container,
+                    ffmpeg_path: None,
+                },
+            )
+            .await?;
+
+        tracing::info!("DASH流媒体下载完成: {}", task.filename);
         Ok(())
     }
 
@@ -895,8 +1124,15 @@ impl HttpDownloader {
             });
         }
 
+        let effective = self.effective_request_options(task);
         self.ytdlp_downloader
-            .download(task, cancel_flag, pause_flag, self.progress_tx.clone())
+            .download_with_options(
+                task,
+                cancel_flag,
+                pause_flag,
+                self.progress_tx.clone(),
+                Some(&effective),
+            )
             .await
     }
 
@@ -904,6 +1140,19 @@ impl HttpDownloader {
     async fn download_with_resume(
         &self,
         task: &mut DownloadTask,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let effective = self.effective_request_options(task);
+        let scoped_client = self.build_client_for_request(&effective)?;
+        self.download_with_resume_using_client(task, &scoped_client, cancel_flag, pause_flag)
+            .await
+    }
+
+    async fn download_with_resume_using_client(
+        &self,
+        task: &mut DownloadTask,
+        client: &Client,
         cancel_flag: Arc<AtomicBool>,
         pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
@@ -941,7 +1190,7 @@ impl HttpDownloader {
             "🟣 [DOWNLOAD_WITH_RESUME] Building GET request for: {}",
             task.url
         );
-        let mut request = self.client.get(&task.url);
+        let mut request = client.get(&task.url);
         let range_requested = existing_size > 0 && self.config.resume_enabled;
         if range_requested {
             request = request.header("Range", format!("bytes={}-", existing_size));
@@ -1285,8 +1534,9 @@ impl HttpDownloader {
             }
         }
 
-        // 确保 M3U8 下载器也能收到取消信号
+        // 确保 M3U8 / DASH 下载器也能收到取消信号
         let _ = self.m3u8_downloader.cancel_download(task_id).await;
+        let _ = self.dash_downloader.cancel_download(task_id).await;
         Ok(())
     }
 
@@ -1374,6 +1624,7 @@ impl Clone for HttpDownloader {
             is_paused: Arc::clone(&self.is_paused),
             resume_downloader: Arc::clone(&self.resume_downloader),
             m3u8_downloader: Arc::clone(&self.m3u8_downloader),
+            dash_downloader: Arc::clone(&self.dash_downloader),
             ytdlp_downloader: Arc::clone(&self.ytdlp_downloader),
             provider_router: Arc::clone(&self.provider_router),
             bandwidth_controller: self.bandwidth_controller.clone(),
@@ -1510,12 +1761,46 @@ mod tests {
             buffer_size: 32 * 1024,
             user_agent: "TestAgent/1.0".to_string(),
             resume_enabled: true,
+            headers: HashMap::new(),
+            proxy: None,
         };
 
         assert_eq!(config.max_concurrent, 5);
         assert_eq!(config.timeout, 15);
         assert_eq!(config.buffer_size, 32 * 1024);
         assert!(config.resume_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_build_client_for_request_validates_proxy_and_headers() {
+        let downloader = HttpDownloader::new(DownloaderConfig::default()).expect("downloader");
+
+        let mut bad_headers = EffectiveRequestOptions {
+            user_agent: "Agent/1.0".to_string(),
+            ..Default::default()
+        };
+        bad_headers
+            .headers
+            .insert("X-Test".to_string(), "evil\r\nInjected: 1".to_string());
+        assert!(downloader.build_client_for_request(&bad_headers).is_err());
+
+        let bad_proxy = EffectiveRequestOptions {
+            user_agent: "Agent/1.0".to_string(),
+            proxy: Some("ftp://127.0.0.1:2121".to_string()),
+            ..Default::default()
+        };
+        assert!(downloader.build_client_for_request(&bad_proxy).is_err());
+
+        let mut valid_opts = EffectiveRequestOptions {
+            user_agent: "ScopedAgent/2.0".to_string(),
+            proxy: Some("socks5://127.0.0.1:1080".to_string()),
+            ..Default::default()
+        };
+        valid_opts.headers.insert(
+            "Referer".to_string(),
+            "https://course.example.com".to_string(),
+        );
+        assert!(downloader.build_client_for_request(&valid_opts).is_ok());
     }
 
     #[tokio::test]

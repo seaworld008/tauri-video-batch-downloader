@@ -19,7 +19,13 @@ import {
   readClipboardTextCommand,
   selectOutputDirectoryCommand,
 } from '../../features/downloads/api/systemCommands';
-import type { DownloaderType, ExternalVideoInfo, SourcePlatform, VideoTask } from '../../types';
+import type {
+  DownloaderType,
+  ExternalVideoInfo,
+  SourcePlatform,
+  TaskRequestOptions,
+  VideoTask,
+} from '../../types';
 
 interface ManualUrlEntry {
   id: string;
@@ -32,17 +38,32 @@ interface ManualUrlEntry {
   error?: string;
 }
 
+const hostMatches = (host: string, domain: string): boolean =>
+  host === domain || host.endsWith(`.${domain}`);
+
 const detectSourcePlatform = (url: string): SourcePlatform => {
   try {
     const host = new URL(url).hostname.toLowerCase();
-    if (host.includes('youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be')) {
+    if (
+      hostMatches(host, 'youtube.com') ||
+      host === 'youtu.be' ||
+      hostMatches(host, 'youtube-nocookie.com')
+    ) {
       return 'youtube';
     }
-    if (host.includes('tiktok.com')) return 'tiktok';
-    if (host.includes('instagram.com')) return 'instagram';
-    if (host.includes('facebook.com') || host.includes('fb.watch') || host.includes('fb.com')) {
+    if (hostMatches(host, 'tiktok.com')) return 'tiktok';
+    if (hostMatches(host, 'instagram.com')) return 'instagram';
+    if (
+      hostMatches(host, 'facebook.com') ||
+      hostMatches(host, 'fb.watch') ||
+      hostMatches(host, 'fb.com')
+    ) {
       return 'facebook';
     }
+    if (hostMatches(host, 'bilibili.com') || hostMatches(host, 'b23.tv')) return 'bilibili';
+    if (hostMatches(host, 'twitter.com') || hostMatches(host, 'x.com')) return 'twitter';
+    if (hostMatches(host, 'vimeo.com')) return 'vimeo';
+    if (hostMatches(host, 'twitch.tv')) return 'twitch';
   } catch {
     return 'generic';
   }
@@ -52,6 +73,11 @@ const detectSourcePlatform = (url: string): SourcePlatform => {
 const isM3u8Url = (url: string) => {
   const lower = url.toLowerCase();
   return lower.includes('.m3u8') || lower.includes('m3u8');
+};
+
+const isDashUrl = (url: string) => {
+  const lower = url.toLowerCase();
+  return lower.includes('.mpd') || lower.includes('format=mpd');
 };
 
 const isDirectMediaUrl = (url: string) => {
@@ -79,6 +105,7 @@ const isDirectMediaUrl = (url: string) => {
 
 const inferDownloaderType = (url: string): DownloaderType => {
   if (isM3u8Url(url)) return 'm3u8';
+  if (isDashUrl(url)) return 'dash';
   if (detectSourcePlatform(url) !== 'generic') return 'ytdlp';
   return isDirectMediaUrl(url) ? 'http' : 'ytdlp';
 };
@@ -93,11 +120,67 @@ const platformLabel = (platform?: SourcePlatform) => {
       return 'Instagram';
     case 'facebook':
       return 'Facebook';
+    case 'bilibili':
+      return 'Bilibili';
+    case 'twitter':
+      return 'X / Twitter';
+    case 'vimeo':
+      return 'Vimeo';
+    case 'twitch':
+      return 'Twitch';
     case 'generic':
       return '网页';
     default:
       return undefined;
   }
+};
+
+const buildRequestOptions = ({
+  referer,
+  cookies,
+  proxy,
+  formatSelector,
+  customHeadersText,
+}: {
+  referer: string;
+  cookies: string;
+  proxy: string;
+  formatSelector: string;
+  customHeadersText: string;
+}): TaskRequestOptions | undefined => {
+  const headers: Record<string, string> = {};
+  for (const rawLine of customHeadersText.split(/\r?\n/)) {
+    const colonIdx = rawLine.indexOf(':');
+    if (colonIdx <= 0) continue;
+    const key = rawLine.slice(0, colonIdx).trim();
+    const val = rawLine.slice(colonIdx + 1).trim();
+    if (key && val) {
+      headers[key] = val;
+    }
+  }
+
+  const trimmedReferer = referer.trim();
+  const trimmedCookies = cookies.trim();
+  const trimmedProxy = proxy.trim();
+  const resolvedFormat = formatSelector !== 'auto' ? formatSelector : undefined;
+
+  if (
+    Object.keys(headers).length === 0 &&
+    !trimmedReferer &&
+    !trimmedCookies &&
+    !trimmedProxy &&
+    !resolvedFormat
+  ) {
+    return undefined;
+  }
+
+  return {
+    headers,
+    ...(trimmedReferer ? { referer: trimmedReferer } : {}),
+    ...(trimmedCookies ? { cookies: trimmedCookies } : {}),
+    ...(trimmedProxy ? { proxy: trimmedProxy } : {}),
+    ...(resolvedFormat ? { format_selector: resolvedFormat } : {}),
+  };
 };
 
 const AUTO_INFO_PROBE_TIMEOUT_MS = 6000;
@@ -125,6 +208,12 @@ export const ManualInputPanel: React.FC = () => {
   const [outputDir, setOutputDir] = useState<string>('');
   const [isValidatingUrls, setIsValidatingUrls] = useState(false);
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [refererInput, setRefererInput] = useState('');
+  const [cookiesInput, setCookiesInput] = useState('');
+  const [proxyInput, setProxyInput] = useState('');
+  const [formatSelector, setFormatSelector] = useState('auto');
+  const [customHeadersInput, setCustomHeadersInput] = useState('');
 
   const addTasks = useDownloadStore(state => state.addTasks);
   const enqueueDownloads = useDownloadStore(state => state.enqueueDownloads);
@@ -288,6 +377,14 @@ export const ManualInputPanel: React.FC = () => {
         return;
       }
 
+      const requestOptions = buildRequestOptions({
+        referer: refererInput,
+        cookies: cookiesInput,
+        proxy: proxyInput,
+        formatSelector,
+        customHeadersText: customHeadersInput,
+      });
+
       const videoTasks: VideoTask[] = startableUrls.map((entry, index) => ({
         id: `manual_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 9)}`,
         url: entry.url,
@@ -313,6 +410,7 @@ export const ManualInputPanel: React.FC = () => {
           title: entry.title,
           requires_auth: false,
         },
+        ...(requestOptions ? { request_options: requestOptions } : {}),
       }));
 
       const addedTasks = await addTasks(videoTasks);
@@ -437,7 +535,13 @@ export const ManualInputPanel: React.FC = () => {
                   {entry.platform && (
                     <div className='text-xs text-gray-500 mt-0.5'>
                       {platformLabel(entry.platform)} ·{' '}
-                      {inferDownloaderType(entry.url) === 'ytdlp' ? 'yt-dlp' : '原生下载器'}
+                      {inferDownloaderType(entry.url) === 'ytdlp'
+                        ? 'yt-dlp'
+                        : inferDownloaderType(entry.url) === 'dash'
+                          ? 'DASH 原生下载器'
+                          : inferDownloaderType(entry.url) === 'm3u8'
+                            ? 'HLS 原生下载器'
+                            : '原生下载器'}
                     </div>
                   )}
                   {entry.error && <div className='text-xs text-red-500 mt-0.5'>{entry.error}</div>}
@@ -459,6 +563,93 @@ export const ManualInputPanel: React.FC = () => {
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className='mt-3'>
+            <button
+              type='button'
+              onClick={() => setShowAdvancedOptions(prev => !prev)}
+              data-testid='toggle-advanced-options'
+              className='text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1 py-0.5'
+            >
+              {showAdvancedOptions
+                ? '收起高级请求参数'
+                : '高级请求参数 (Headers / Cookie / Proxy / 画质)'}
+            </button>
+
+            {showAdvancedOptions && (
+              <div className='mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'>
+                <div>
+                  <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
+                    Referer
+                  </label>
+                  <input
+                    type='url'
+                    value={refererInput}
+                    onChange={e => setRefererInput(e.target.value)}
+                    placeholder='https://example.com/'
+                    data-testid='request-referer-input'
+                    className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  />
+                </div>
+                <div>
+                  <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
+                    Cookie
+                  </label>
+                  <input
+                    type='text'
+                    value={cookiesInput}
+                    onChange={e => setCookiesInput(e.target.value)}
+                    placeholder='session=abc; token=xyz'
+                    data-testid='request-cookies-input'
+                    className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  />
+                </div>
+                <div>
+                  <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
+                    代理 Proxy
+                  </label>
+                  <input
+                    type='text'
+                    value={proxyInput}
+                    onChange={e => setProxyInput(e.target.value)}
+                    placeholder='http://127.0.0.1:7890 或 socks5://...'
+                    data-testid='request-proxy-input'
+                    className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  />
+                </div>
+                <div>
+                  <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
+                    画质 / 格式策略
+                  </label>
+                  <select
+                    value={formatSelector}
+                    onChange={e => setFormatSelector(e.target.value)}
+                    data-testid='request-format-select'
+                    className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  >
+                    <option value='auto'>自动最佳 (auto)</option>
+                    <option value='1080p'>最高 1080p</option>
+                    <option value='720p'>最高 720p</option>
+                    <option value='480p'>最高 480p</option>
+                    <option value='audio'>仅音频</option>
+                  </select>
+                </div>
+                <div className='sm:col-span-2'>
+                  <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
+                    自定义 Headers（每行 Key: Value）
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={customHeadersInput}
+                    onChange={e => setCustomHeadersInput(e.target.value)}
+                    placeholder='Authorization: Bearer ...'
+                    data-testid='request-headers-input'
+                    className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className='mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row gap-3 items-center'>

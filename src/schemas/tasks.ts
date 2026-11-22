@@ -31,8 +31,24 @@ export const SourcePlatformSchema = z.enum([
   'tiktok',
   'instagram',
   'facebook',
+  'bilibili',
+  'twitter',
+  'vimeo',
+  'twitch',
   'generic',
 ]);
+
+export const TaskRequestOptionsSchema = z.object({
+  headers: z.record(z.string(), z.string()).optional().default({}),
+  cookies: z.string().optional(),
+  cookies_from_browser: z.string().optional(),
+  referer: z.string().optional(),
+  user_agent: z.string().optional(),
+  proxy: z.string().optional(),
+  format_selector: z.string().optional(),
+  preferred_language: z.string().optional(),
+  output_container: z.string().optional(),
+});
 
 export const ExternalVideoInfoSchema = z.object({
   source_platform: SourcePlatformSchema,
@@ -65,6 +81,7 @@ export const VideoTaskBaseSchema = z.object({
   downloader_type: DownloaderTypeSchema.optional(),
   video_info: VideoInfoSchema.optional(),
   external_info: ExternalVideoInfoSchema.optional(),
+  request_options: TaskRequestOptionsSchema.optional(),
 });
 
 export const applyVideoTaskValidations = <T extends z.ZodType>(schema: T) =>
@@ -98,6 +115,7 @@ export const ProgressUpdateSchema = z.object({
 });
 
 type ExternalVideoInfoOutput = z.infer<typeof ExternalVideoInfoSchema>;
+type TaskRequestOptionsOutput = z.infer<typeof TaskRequestOptionsSchema>;
 type VideoTaskOutput = z.infer<typeof VideoTaskSchema>;
 type ProgressUpdateOutput = z.infer<typeof ProgressUpdateSchema>;
 
@@ -105,9 +123,16 @@ export type VideoInfo = z.infer<typeof VideoInfoSchema>;
 export type ExternalVideoInfo = Omit<ExternalVideoInfoOutput, 'requires_auth'> & {
   requires_auth?: boolean;
 };
-export type VideoTask = Omit<VideoTaskOutput, 'display_speed_bps' | 'external_info'> & {
+export type TaskRequestOptions = Omit<TaskRequestOptionsOutput, 'headers'> & {
+  headers?: Record<string, string>;
+};
+export type VideoTask = Omit<
+  VideoTaskOutput,
+  'display_speed_bps' | 'external_info' | 'request_options'
+> & {
   display_speed_bps?: number;
   external_info?: ExternalVideoInfo;
+  request_options?: TaskRequestOptions;
 };
 export type ProgressUpdate = Omit<ProgressUpdateOutput, 'display_speed_bps'> & {
   display_speed_bps?: number;

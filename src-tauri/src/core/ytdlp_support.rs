@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -6,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::core::downloader::{DownloadStats, DownloadTask};
-use crate::core::models::{ExternalVideoInfo, SourcePlatform, TaskStatus};
+use crate::core::models::{EffectiveRequestOptions, ExternalVideoInfo, SourcePlatform, TaskStatus};
 pub use crate::utils::file_utils::sanitize_filename;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +49,10 @@ const PLATFORM_HOST_RULES: &[PlatformHostRule] = &[
         hosts: &["youtube.com", "youtu.be", "youtube-nocookie.com"],
     },
     PlatformHostRule {
+        platform: SourcePlatform::Bilibili,
+        hosts: &["bilibili.com", "b23.tv"],
+    },
+    PlatformHostRule {
         platform: SourcePlatform::Tiktok,
         hosts: &["tiktok.com"],
     },
@@ -58,6 +63,18 @@ const PLATFORM_HOST_RULES: &[PlatformHostRule] = &[
     PlatformHostRule {
         platform: SourcePlatform::Facebook,
         hosts: &["facebook.com", "fb.watch", "fb.com"],
+    },
+    PlatformHostRule {
+        platform: SourcePlatform::Twitter,
+        hosts: &["twitter.com", "x.com"],
+    },
+    PlatformHostRule {
+        platform: SourcePlatform::Vimeo,
+        hosts: &["vimeo.com"],
+    },
+    PlatformHostRule {
+        platform: SourcePlatform::Twitch,
+        hosts: &["twitch.tv"],
     },
 ];
 
@@ -343,16 +360,170 @@ pub fn is_direct_media_url(url: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn has_control_chars(value: &str) -> bool {
+    value.chars().any(|c| c == '\r' || c == '\n' || c == '\0')
+}
+
+fn map_ytdlp_format_selector(format_selector: Option<&str>) -> Result<&'static str> {
+    match format_selector
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        None | Some("best" | "bestvideo+bestaudio") => Ok("bv*+ba/b"),
+        Some("worst") => Ok("wv*+wa/w"),
+        Some("audio" | "audio_only") => Ok("ba/b"),
+        Some("2160p" | "4k") => Ok("bv*[height<=2160]+ba/b[height<=2160]/b"),
+        Some("1080p") => Ok("bv*[height<=1080]+ba/b[height<=1080]/b"),
+        Some("720p") => Ok("bv*[height<=720]+ba/b[height<=720]/b"),
+        Some("480p") => Ok("bv*[height<=480]+ba/b[height<=480]/b"),
+        Some("360p") => Ok("bv*[height<=360]+ba/b[height<=360]/b"),
+        Some(_) => Err(anyhow::anyhow!("not preset")),
+    }
+}
+
+fn resolve_ytdlp_format_selector(format_selector: Option<&str>) -> Result<String> {
+    if let Ok(preset) = map_ytdlp_format_selector(format_selector) {
+        return Ok(preset.to_string());
+    }
+    let trimmed = format_selector.map(str::trim).unwrap_or_default();
+    if trimmed.is_empty()
+        || trimmed.starts_with('-')
+        || has_control_chars(trimmed)
+        || trimmed.len() > 256
+    {
+        bail!("非法的 yt-dlp format_selector 参数");
+    }
+    Ok(trimmed.to_string())
+}
+
+fn resolve_ytdlp_output_container(container: Option<&str>) -> Result<String> {
+    let Some(raw) = container.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok("mp4".to_string());
+    };
+    let lower = raw.to_ascii_lowercase();
+    match lower.as_str() {
+        "mp4" | "mkv" | "webm" | "mov" | "m4a" | "mp3" | "opus" => Ok(lower),
+        _ => bail!("不支持的 yt-dlp output_container 容器格式: {}", raw),
+    }
+}
+
+fn validate_cookies_from_browser(spec: &str) -> Result<String> {
+    const ALLOWED_BROWSERS: &[&str] = &[
+        "chrome", "chromium", "edge", "firefox", "safari", "brave", "opera", "vivaldi", "whale",
+    ];
+    let trimmed = spec.trim();
+    if trimmed.is_empty() || trimmed.starts_with('-') || has_control_chars(trimmed) {
+        bail!("非法的 cookies_from_browser 参数");
+    }
+    let (browser, profile_rest) = match trimmed.split_once(':') {
+        Some((b, rest)) => (b.trim(), Some(rest)),
+        None => (trimmed, None),
+    };
+    let browser_lower = browser.to_ascii_lowercase();
+    if !ALLOWED_BROWSERS.contains(&browser_lower.as_str()) {
+        bail!("不支持的 cookies_from_browser 浏览器类型: {}", browser);
+    }
+    if let Some(rest) = profile_rest {
+        let rest_trimmed = rest.trim();
+        if rest_trimmed.starts_with('-') || has_control_chars(rest_trimmed) {
+            bail!("非法的 cookies_from_browser profile 参数");
+        }
+    }
+    Ok(trimmed.to_string())
+}
+
+fn append_network_and_auth_options(
+    args: &mut Vec<String>,
+    options: Option<&EffectiveRequestOptions>,
+) -> Result<()> {
+    let Some(opts) = options else {
+        return Ok(());
+    };
+
+    if let Some(proxy_raw) = opts
+        .proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        if proxy_raw.starts_with('-') || has_control_chars(proxy_raw) {
+            bail!("非法的 yt-dlp proxy 参数");
+        }
+        let parsed = url::Url::parse(proxy_raw)
+            .map_err(|err| anyhow::anyhow!("yt-dlp proxy URL 无效: {}", err))?;
+        if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h") {
+            bail!("不支持的 yt-dlp proxy 协议: {}", parsed.scheme());
+        }
+        args.push("--proxy".into());
+        args.push(proxy_raw.to_string());
+    }
+
+    let ua = opts.user_agent.trim();
+    if !ua.is_empty() {
+        if ua.starts_with('-') || has_control_chars(ua) {
+            bail!("非法的 yt-dlp user_agent 参数");
+        }
+        args.push("--user-agent".into());
+        args.push(ua.to_string());
+    }
+
+    let mut header_pairs: Vec<(&str, &str)> = opts
+        .headers
+        .iter()
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .collect();
+    header_pairs.sort_by(|a, b| a.0.cmp(b.0));
+
+    for (key, value) in header_pairs {
+        if key.is_empty()
+            || value.is_empty()
+            || key.starts_with('-')
+            || key.contains(':')
+            || has_control_chars(key)
+            || has_control_chars(value)
+        {
+            bail!("非法的 yt-dlp HTTP 请求头: {}", key);
+        }
+        args.push("--add-header".into());
+        args.push(format!("{key}: {value}"));
+    }
+
+    if let Some(browser) = opts
+        .cookies_from_browser
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
+        let validated = validate_cookies_from_browser(browser)?;
+        args.push("--cookies-from-browser".into());
+        args.push(validated);
+    }
+
+    Ok(())
+}
+
 pub fn build_probe_args(url: &str, js_runtime_path: Option<&Path>) -> Vec<String> {
+    build_probe_args_with_options(url, js_runtime_path, None)
+        .expect("default probe args without request options cannot fail")
+}
+
+pub fn build_probe_args_with_options(
+    url: &str,
+    js_runtime_path: Option<&Path>,
+    options: Option<&EffectiveRequestOptions>,
+) -> Result<Vec<String>> {
     let mut args = vec![
         "--no-playlist".into(),
         "--newline".into(),
         "--dump-single-json".into(),
     ];
     append_js_runtime_args(&mut args, js_runtime_path);
+    append_network_and_auth_options(&mut args, options)?;
     args.push("--".into());
     args.push(url.into());
-    args
+    Ok(args)
 }
 
 pub fn build_download_args(
@@ -362,14 +533,38 @@ pub fn build_download_args(
     ffmpeg_path: Option<&Path>,
     js_runtime_path: Option<&Path>,
 ) -> Vec<String> {
+    build_download_args_with_options(
+        url,
+        output_dir,
+        output_template,
+        ffmpeg_path,
+        js_runtime_path,
+        None,
+    )
+    .expect("default download args without request options cannot fail")
+}
+
+pub fn build_download_args_with_options(
+    url: &str,
+    output_dir: &Path,
+    output_template: &str,
+    ffmpeg_path: Option<&Path>,
+    js_runtime_path: Option<&Path>,
+    options: Option<&EffectiveRequestOptions>,
+) -> Result<Vec<String>> {
+    let format_arg =
+        resolve_ytdlp_format_selector(options.and_then(|o| o.format_selector.as_deref()))?;
+    let container_arg =
+        resolve_ytdlp_output_container(options.and_then(|o| o.output_container.as_deref()))?;
+
     let mut args = vec![
         "--no-playlist".into(),
         "--newline".into(),
         "--progress".into(),
         "--format".into(),
-        "bv*+ba/b".into(),
+        format_arg,
         "--merge-output-format".into(),
-        "mp4".into(),
+        container_arg,
         "--paths".into(),
         output_dir.to_string_lossy().to_string(),
         "--output".into(),
@@ -386,9 +581,10 @@ pub fn build_download_args(
         args.push(path.to_string_lossy().to_string());
     }
     append_js_runtime_args(&mut args, js_runtime_path);
+    append_network_and_auth_options(&mut args, options)?;
     args.push("--".into());
     args.push(url.into());
-    args
+    Ok(args)
 }
 
 fn append_js_runtime_args(args: &mut Vec<String>, js_runtime_path: Option<&Path>) {
@@ -467,6 +663,23 @@ pub fn classify_error(message: &str) -> String {
         || normalized.contains("youtube extraction without a js runtime")
     {
         "js_runtime_missing: YouTube extraction requires the bundled Deno JavaScript runtime".into()
+    } else if normalized.contains("drm protected")
+        || normalized.contains("drm-protected")
+        || normalized.contains("this video is drm")
+        || normalized.contains("widevine")
+        || normalized.contains("playready")
+        || normalized.contains("encrypted stream")
+    {
+        "drm_protected: DRM-protected stream cannot be downloaded".into()
+    } else if normalized.contains("proxyerror")
+        || normalized.contains("unable to connect to proxy")
+        || normalized.contains("tunnel connection failed")
+        || (normalized.contains("proxy")
+            && (normalized.contains("failed")
+                || normalized.contains("refused")
+                || normalized.contains("error")))
+    {
+        "proxy_error: failed to connect through configured proxy".into()
     } else {
         format!("external_tool_failed: {}", message.trim())
     }

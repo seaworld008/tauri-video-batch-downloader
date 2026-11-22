@@ -11,8 +11,16 @@ export const TaskStatusSchema = z.enum([
 ]);
 
 export const DownloaderTypeSchema = z.preprocess(
-  value => (value === 'youtube' ? 'ytdlp' : value),
-  z.enum(['http', 'm3u8', 'ytdlp'])
+  value => {
+    if (value === 'youtube') return 'ytdlp';
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase();
+      if (lower === 'mpd' || lower === 'dash') return 'dash';
+      if (lower === 'hls' || lower === 'm3u8') return 'm3u8';
+    }
+    return value;
+  },
+  z.enum(['http', 'm3u8', 'dash', 'ytdlp'])
 );
 export const ViewTypeSchema = z.enum(['dashboard', 'import', 'settings', 'about']);
 export const NotificationTypeSchema = z.enum(['success', 'error', 'warning', 'info']);

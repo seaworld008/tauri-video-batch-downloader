@@ -10,7 +10,7 @@ use std::sync::{
     Arc,
 };
 
-use crate::core::models::{SourcePlatform, TaskStatus};
+use crate::core::models::{EffectiveRequestOptions, SourcePlatform, TaskStatus};
 #[cfg(unix)]
 use crate::core::ytdlp_downloader::YtDlpDownloaderConfig;
 use crate::core::{
@@ -48,6 +48,14 @@ fn detects_supported_social_platforms() {
         SourcePlatform::Youtube
     );
     assert_eq!(
+        YtDlpDownloader::detect_platform("https://www.bilibili.com/video/BV1xx411c7mD"),
+        SourcePlatform::Bilibili
+    );
+    assert_eq!(
+        YtDlpDownloader::detect_platform("https://b23.tv/abc123"),
+        SourcePlatform::Bilibili
+    );
+    assert_eq!(
         YtDlpDownloader::detect_platform("https://www.tiktok.com/@user/video/123"),
         SourcePlatform::Tiktok
     );
@@ -60,11 +68,31 @@ fn detects_supported_social_platforms() {
         SourcePlatform::Facebook
     );
     assert_eq!(
+        YtDlpDownloader::detect_platform("https://x.com/user/status/123"),
+        SourcePlatform::Twitter
+    );
+    assert_eq!(
+        YtDlpDownloader::detect_platform("https://twitter.com/user/status/123"),
+        SourcePlatform::Twitter
+    );
+    assert_eq!(
+        YtDlpDownloader::detect_platform("https://vimeo.com/123456"),
+        SourcePlatform::Vimeo
+    );
+    assert_eq!(
+        YtDlpDownloader::detect_platform("https://www.twitch.tv/videos/123456"),
+        SourcePlatform::Twitch
+    );
+    assert_eq!(
         YtDlpDownloader::detect_platform("https://example.com/watch/abc"),
         SourcePlatform::Generic
     );
     assert_eq!(
         YtDlpDownloader::detect_platform("https://youtube.com.evil.example/watch?v=abc"),
+        SourcePlatform::Generic
+    );
+    assert_eq!(
+        YtDlpDownloader::detect_platform("https://bilibili.com.evil.example/video/BV1xx"),
         SourcePlatform::Generic
     );
 }
@@ -235,6 +263,164 @@ fn classifies_external_tool_errors() {
         "WARNING: [youtube] No supported JavaScript runtime could be found"
     )
     .starts_with("js_runtime_missing"));
+    assert!(
+        YtDlpDownloader::classify_error("ERROR: This video is DRM protected (widevine)")
+            .starts_with("drm_protected")
+    );
+    assert!(
+        YtDlpDownloader::classify_error("ERROR: Unable to connect to proxy: ProxyError")
+            .starts_with("proxy_error")
+    );
+}
+
+#[test]
+fn builds_option_aware_probe_and_download_args() {
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        "Referer".to_string(),
+        "https://www.bilibili.com/".to_string(),
+    );
+    headers.insert("Cookie".to_string(), "SESSDATA=xyz".to_string());
+
+    let opts = EffectiveRequestOptions {
+        headers,
+        cookies_from_browser: Some("chrome:Default".to_string()),
+        user_agent: "CustomAgent/1.2".to_string(),
+        proxy: Some("socks5://127.0.0.1:1080".to_string()),
+        format_selector: Some("1080p".to_string()),
+        preferred_language: Some("zh".to_string()),
+        output_container: Some("mkv".to_string()),
+    };
+
+    let probe = YtDlpDownloader::build_probe_args_with_options(
+        "https://www.bilibili.com/video/BV1xx411c7mD",
+        Some(&opts),
+    )
+    .expect("probe args with options");
+    assert!(probe
+        .windows(2)
+        .any(|w| w == ["--proxy", "socks5://127.0.0.1:1080"]));
+    assert!(probe
+        .windows(2)
+        .any(|w| w == ["--user-agent", "CustomAgent/1.2"]));
+    assert!(probe
+        .windows(2)
+        .any(|w| w == ["--cookies-from-browser", "chrome:Default"]));
+    assert!(probe
+        .windows(2)
+        .any(|w| w == ["--add-header", "Cookie: SESSDATA=xyz"]));
+    assert!(probe
+        .windows(2)
+        .any(|w| w == ["--add-header", "Referer: https://www.bilibili.com/"]));
+
+    let cookie_pos = probe
+        .iter()
+        .position(|a| a == "Cookie: SESSDATA=xyz")
+        .expect("cookie header");
+    let referer_pos = probe
+        .iter()
+        .position(|a| a == "Referer: https://www.bilibili.com/")
+        .expect("referer header");
+    assert!(cookie_pos < referer_pos);
+
+    let dl = YtDlpDownloader::build_download_args_with_options(
+        "https://www.bilibili.com/video/BV1xx411c7mD",
+        Path::new("/tmp/out"),
+        "video.%(ext)s",
+        None,
+        Some(&opts),
+    )
+    .expect("download args with options");
+    assert!(dl
+        .windows(2)
+        .any(|w| w == ["--format", "bv*[height<=1080]+ba/b[height<=1080]/b"]));
+    assert!(dl.windows(2).any(|w| w == ["--merge-output-format", "mkv"]));
+    assert_eq!(
+        dl.windows(2).last(),
+        Some(
+            ["--", "https://www.bilibili.com/video/BV1xx411c7mD"]
+                .map(String::from)
+                .as_slice()
+        )
+    );
+
+    let audio_opts = EffectiveRequestOptions {
+        format_selector: Some("audio".to_string()),
+        ..Default::default()
+    };
+    let audio_dl = YtDlpDownloader::build_download_args_with_options(
+        "https://youtu.be/abc",
+        Path::new("/tmp/out"),
+        "audio.%(ext)s",
+        None,
+        Some(&audio_opts),
+    )
+    .expect("audio preset args");
+    assert!(audio_dl.windows(2).any(|w| w == ["--format", "ba/b"]));
+}
+
+#[test]
+fn rejects_unsafe_ytdlp_request_options() {
+    let mut bad_crlf_headers = std::collections::HashMap::new();
+    bad_crlf_headers.insert("X-Test".to_string(), "bad\r\nvalue".to_string());
+    let crlf_opts = EffectiveRequestOptions {
+        headers: bad_crlf_headers,
+        ..Default::default()
+    };
+    assert!(YtDlpDownloader::build_download_args_with_options(
+        "https://youtu.be/abc",
+        Path::new("/tmp/out"),
+        "v.%(ext)s",
+        None,
+        Some(&crlf_opts),
+    )
+    .is_err());
+
+    let flag_inj = EffectiveRequestOptions {
+        format_selector: Some("--exec calc".to_string()),
+        ..Default::default()
+    };
+    assert!(YtDlpDownloader::build_download_args_with_options(
+        "https://youtu.be/abc",
+        Path::new("/tmp/out"),
+        "v.%(ext)s",
+        None,
+        Some(&flag_inj),
+    )
+    .is_err());
+
+    let bad_proxy = EffectiveRequestOptions {
+        proxy: Some("file:///etc/passwd".to_string()),
+        ..Default::default()
+    };
+    assert!(YtDlpDownloader::build_probe_args_with_options(
+        "https://youtu.be/abc",
+        Some(&bad_proxy),
+    )
+    .is_err());
+
+    let bad_browser = EffectiveRequestOptions {
+        cookies_from_browser: Some("unknownbrowser".to_string()),
+        ..Default::default()
+    };
+    assert!(YtDlpDownloader::build_probe_args_with_options(
+        "https://youtu.be/abc",
+        Some(&bad_browser),
+    )
+    .is_err());
+
+    let bad_container = EffectiveRequestOptions {
+        output_container: Some("exe".to_string()),
+        ..Default::default()
+    };
+    assert!(YtDlpDownloader::build_download_args_with_options(
+        "https://youtu.be/abc",
+        Path::new("/tmp/out"),
+        "v.%(ext)s",
+        None,
+        Some(&bad_container),
+    )
+    .is_err());
 }
 
 #[test]

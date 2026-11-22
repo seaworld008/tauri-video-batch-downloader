@@ -318,6 +318,18 @@ impl ResumeDownloader {
         })
     }
 
+    /// 复用配置、缓存与限速器，但使用单任务作用域 HTTP Client
+    pub fn with_client(&self, client: Client) -> Self {
+        Self {
+            config: self.config.clone(),
+            client,
+            server_capabilities_cache: Arc::clone(&self.server_capabilities_cache),
+            _active_chunks: Arc::clone(&self._active_chunks),
+            resume_info_cache: Arc::clone(&self.resume_info_cache),
+            bandwidth_controller: self.bandwidth_controller.clone(),
+        }
+    }
+
     /// 检测服务器支持能力
     pub async fn detect_server_capabilities(&self, url: &str) -> Result<ServerCapabilities> {
         let host = self.extract_host(url)?;

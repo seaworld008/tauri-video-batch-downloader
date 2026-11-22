@@ -21,8 +21,9 @@ Rust, Tauri v2, React 19, and TypeScript.**
 ---
 
 **Video Downloader Pro** turns messy spreadsheet course lists, batch URLs,
-direct HTTP streams, HLS (`.m3u8`), and supported public video pages into an
-observable, pause/resume-safe desktop download queue powered by a Rust core.
+direct HTTP streams, HLS (`.m3u8`), MPEG-DASH (`.mpd`), and supported public
+video pages into an observable, pause/resume-safe desktop download queue powered
+by a Rust core.
 
 ## Table of Contents
 
@@ -59,14 +60,14 @@ observable, pause/resume-safe desktop download queue powered by a Rust core.
 
 ## Core Capabilities
 
-| Area                        | Current Capabilities (`v1.1.0`)                                                                                                                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch Input**             | Excel (`.xlsx`/`.xls`), CSV encoding auto-detection, field mapping, clipboard batch paste, single/multi-URL validation                                                          |
-| **Queue & Controls**        | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override                                                            |
-| **Protocols & Providers**   | Native HTTP/HTTPS (single-stream `.part` + multi-range chunked `ResumeDownloader`), native HLS (`.m3u8` AES-128 & byte-range), unified `yt-dlp` provider for public video sites |
-| **Reliability & Integrity** | Atomic `.part` commit (`sync_all` + rename), atomic config writes, `RetryExecutor` with circuit breaker, `spawn_blocking` SHA-256/MD5 verification                              |
-| **Observability**           | Live per-task speed & ETA, queue overview status badge, `average_commit_duration` / `p95_commit_duration`, one-click task diagnostic copy                                       |
-| **Cross-Platform**          | Tauri v2 desktop builds for Windows (`nsis`), macOS (`universal` `.dmg`), and Linux                                                                                             |
+| Area                        | Current Capabilities (`v1.2.0`)                                                                                                                                                                            |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Batch Input**             | Excel (`.xlsx`/`.xls`), CSV encoding auto-detection, field mapping, clipboard batch paste, single/multi-URL validation, collapsible advanced request options (`Referer`, `Cookie`, `Proxy`, etc.)          |
+| **Queue & Controls**        | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override                                                                                       |
+| **Protocols & Providers**   | Pluggable `ProviderRegistry`: HTTP/HTTPS (`ResumeDownloader`), HLS (`.m3u8` Master Playlist, fMP4, AES-128, FFmpeg mux), native MPEG-DASH (`.mpd`), `yt-dlp` (YouTube, Bilibili, TikTok, X, Vimeo, Twitch) |
+| **Reliability & Integrity** | Atomic `.part` / `.seg` commits (`sync_all` + rename), atomic config writes, `RetryExecutor` with circuit breaker, `spawn_blocking` SHA-256/MD5 verification                                               |
+| **Observability**           | Live per-task speed & ETA, queue overview status badge, `average_commit_duration` / `p95_commit_duration`, one-click task diagnostic copy                                                                  |
+| **Cross-Platform**          | Tauri v2 desktop builds for Windows (`nsis`), macOS (`universal` `.dmg`), and Linux                                                                                                                        |
 
 ---
 
@@ -74,20 +75,23 @@ observable, pause/resume-safe desktop download queue powered by a Rust core.
 
 ```mermaid
 flowchart LR
-  Input["CSV / Excel / Batch URLs"] --> UI["React 19 UnifiedView"]
+  Input["CSV / Excel / Batch URLs + Request Options"] --> UI["React 19 UnifiedView"]
   UI --> Store["Zustand Stores & Validation"]
   Store --> API["Feature-local Tauri Wrappers"]
   API --> Commands["Tauri v2 Commands + TaskEngine"]
   Commands --> Runtime["DownloadRuntimeHandle"]
   Runtime --> Manager["DownloadManager (Queue + Semaphore)"]
-  Manager --> Router["DownloadProviderRouter"]
+  Manager --> Router["ProviderRegistry (Priority DownloadProviderSpec)"]
   Router --> HTTP["HttpDownloader (Single .part)"]
   Router --> Resume["ResumeDownloader (Chunked Range)"]
-  Router --> HLS["M3U8Downloader (HLS Segments + AES-128)"]
+  Router --> HLS["M3U8Downloader (Master Playlist / fMP4 / AES-128)"]
+  Router --> DASH["DashDownloader (MPD / Multi-Track)"]
   Router --> YtDlp["YtDlp External Provider"]
+  HLS --> Mux["ffmpeg_muxer (Lossless Remux / A+V Mux)"]
+  DASH --> Mux
   HTTP --> Storage["Atomic .part -> Final File + .vdstate"]
   Resume --> Storage
-  HLS --> Storage
+  Mux --> Storage
   YtDlp --> Storage
   Manager --> EventBus["download-events Envelope"]
   EventBus --> Bridge["downloadEventBridge (Debounced Sync)"]
@@ -167,7 +171,7 @@ pnpm audit --prod --audit-level moderate
 | Topic                        | Document                                                                         |
 | ---------------------------- | -------------------------------------------------------------------------------- |
 | Full Architecture & Design   | [docs/architecture-functional-design.md](docs/architecture-functional-design.md) |
-| Live System State (`v1.1.0`) | [docs/current-state.md](docs/current-state.md)                                   |
+| Live System State (`v1.2.0`) | [docs/current-state.md](docs/current-state.md)                                   |
 | Documentation Index          | [docs/index.md](docs/index.md)                                                   |
 | Build & Release Guide        | [docs/build-release.md](docs/build-release.md)                                   |
 | Contributing Guide           | [CONTRIBUTING.md](CONTRIBUTING.md)                                               |
@@ -179,16 +183,16 @@ pnpm audit --prod --audit-level moderate
 
 ## Roadmap
 
-- **`v1.1.0` (Current)**: Core reliability hardening, per-task M3U8 isolation,
+- **`v1.1.0` (Completed)**: Core reliability hardening, per-task M3U8 isolation,
   atomic `.part` / config writes, UI settings wiring, per-row controls, and OSS
   foundation.
-- **`v1.2.0` (Next)**: Pluggable `DownloadProvider` trait registry, native HLS
-  Master Playlist (variant/audio/subtitle track selection + fMP4 + FFmpeg
-  remux), native MPEG-DASH (`.mpd`) downloader, and per-task custom headers /
-  cookies / proxy parity with `yt-dlp`.
-- **`v1.3.0`**: Full frontend & tray i18n (`zh-CN` / `en-US` parity), keyboard
-  shortcuts, desktop notifications & system tray minimize, and headless CLI
-  companion.
+- **`v1.2.0` (Current)**: Pluggable `DownloadProviderSpec` / `ProviderRegistry`,
+  native HLS Master Playlist (variant/audio selection + fMP4 + FFmpeg remux),
+  native MPEG-DASH (`.mpd`) downloader, and per-task custom headers / cookies /
+  proxy parity with `yt-dlp` (including Bilibili, X/Twitter, Vimeo, Twitch).
+- **`v1.3.0` (Next)**: Full frontend & tray i18n (`zh-CN` / `en-US` parity),
+  keyboard shortcuts, desktop notifications & system tray minimize, and headless
+  CLI companion.
 - **`v2.0.0`**: Modular Cargo Workspace separation (`core`, `providers`,
   `storage`, `tauri-app`), SQLite WAL persistent storage replacing monolithic
   JSON snapshots, and companion browser integration.

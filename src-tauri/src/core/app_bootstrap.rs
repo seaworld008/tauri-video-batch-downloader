@@ -47,6 +47,8 @@ pub fn downloader_config_from_download_config(
         buffer_size: 64 * 1024,
         user_agent: download_config.user_agent.clone(),
         resume_enabled: true,
+        headers: download_config.headers.clone(),
+        proxy: download_config.proxy.clone(),
     }
 }
 
@@ -59,6 +61,8 @@ pub fn fallback_downloader_config() -> DownloaderConfig {
         buffer_size: 16 * 1024,
         user_agent: "VideoDownloaderPro/1.0.0-fallback".to_string(),
         resume_enabled: false,
+        headers: std::collections::HashMap::new(),
+        proxy: None,
     }
 }
 
