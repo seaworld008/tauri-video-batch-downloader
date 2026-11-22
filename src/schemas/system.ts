@@ -34,6 +34,27 @@ export const DownloadStatsSchema = z
     message: '任务统计数据不一致',
   });
 
+type DownloadStatsOutput = z.infer<typeof DownloadStatsSchema>;
+
 export type NetworkSpeed = z.infer<typeof NetworkSpeedSchema>;
 export type SystemInfo = z.infer<typeof SystemInfoSchema>;
-export type DownloadStats = z.infer<typeof DownloadStatsSchema>;
+export type DownloadStats = Omit<
+  DownloadStatsOutput,
+  | 'display_total_speed_bps'
+  | 'queue_paused'
+  | 'average_transfer_duration'
+  | 'average_commit_duration'
+  | 'p95_commit_duration'
+  | 'failed_commit_count'
+  | 'commit_warning_count'
+  | 'commit_elevated_warning_count'
+> & {
+  display_total_speed_bps?: number;
+  queue_paused?: boolean;
+  average_transfer_duration?: number;
+  average_commit_duration?: number;
+  p95_commit_duration?: number;
+  failed_commit_count?: number;
+  commit_warning_count?: number;
+  commit_elevated_warning_count?: number;
+};

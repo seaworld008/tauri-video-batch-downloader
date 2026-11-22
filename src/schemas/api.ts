@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const createApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+export const createApiResponseSchema = <T extends z.ZodType>(dataSchema: T) =>
   z
     .object({
       success: z.boolean(),

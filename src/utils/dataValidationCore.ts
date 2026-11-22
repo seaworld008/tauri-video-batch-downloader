@@ -41,9 +41,9 @@ export class DataValidator {
     return DataValidator.instance;
   }
 
-  private transformZodErrors(zodErrors: z.ZodError['errors']): ValidationError[] {
+  private transformZodErrors(zodErrors: z.ZodError['issues']): ValidationError[] {
     return zodErrors.map(error => ({
-      field: error.path.join('.') || 'root',
+      field: error.path.map(String).join('.') || 'root',
       message: error.message,
       code: error.code,
       receivedValue: (error as any).received,
@@ -65,7 +65,7 @@ export class DataValidator {
     AppErrorHandler.handle(`数据验证失败 [${context}]`, new Error(JSON.stringify(errors)), false);
   }
 
-  public validate<T extends z.ZodTypeAny>(
+  public validate<T extends z.ZodType>(
     schema: T,
     data: unknown,
     options: {
@@ -111,7 +111,7 @@ export class DataValidator {
     }
   }
 
-  public validateBatch<T extends z.ZodTypeAny>(
+  public validateBatch<T extends z.ZodType>(
     schema: T,
     dataArray: unknown[],
     options: {
