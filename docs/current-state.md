@@ -341,8 +341,8 @@ tests，并用 GitNexus 查看影响面。
 - `pnpm exec vite build`：构建通过
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check`
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings`
-- `cargo test --manifest-path src-tauri/Cargo.toml --workspace`：209个测试通过（`vdpro-core`
-  34 + `vdpro-providers` 11 + `vdpro-storage` 7 + `video-downloader-pro` 157）
+- `cargo test --manifest-path src-tauri/Cargo.toml --workspace`：210 个测试通过（`vdpro-core`
+  34 + `vdpro-providers` 11 + `vdpro-storage` 7 + `video-downloader-pro` 158）
 - `cargo build --manifest-path src-tauri/Cargo.toml -p vdpro-cli --bin vdpro-cli`：`vdpro-cli 2.0.0`
   构建与 `--version` 验证通过
 - `pnpm sidecars:check:local`：允许占位文件的本地 smoke 预检通过
