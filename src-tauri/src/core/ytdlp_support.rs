@@ -7,8 +7,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::core::downloader::{DownloadStats, DownloadTask};
-use crate::core::models::{EffectiveRequestOptions, ExternalVideoInfo, SourcePlatform, TaskStatus};
+use crate::core::models::{EffectiveRequestOptions, ExternalVideoInfo, TaskStatus};
 pub use crate::utils::file_utils::sanitize_filename;
+pub use vdpro_providers::platform::detect_platform;
+#[cfg(test)]
+pub use vdpro_providers::platform::platform_host_rules;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -36,47 +39,6 @@ pub struct ParsedYtDlpProgress {
     pub progress: Option<f64>,
     pub status_hint: Option<TaskStatus>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlatformHostRule {
-    pub platform: SourcePlatform,
-    pub hosts: &'static [&'static str],
-}
-
-const PLATFORM_HOST_RULES: &[PlatformHostRule] = &[
-    PlatformHostRule {
-        platform: SourcePlatform::Youtube,
-        hosts: &["youtube.com", "youtu.be", "youtube-nocookie.com"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Bilibili,
-        hosts: &["bilibili.com", "b23.tv"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Tiktok,
-        hosts: &["tiktok.com"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Instagram,
-        hosts: &["instagram.com"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Facebook,
-        hosts: &["facebook.com", "fb.watch", "fb.com"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Twitter,
-        hosts: &["twitter.com", "x.com"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Vimeo,
-        hosts: &["vimeo.com"],
-    },
-    PlatformHostRule {
-        platform: SourcePlatform::Twitch,
-        hosts: &["twitch.tv"],
-    },
-];
 
 impl Default for YtDlpDownloaderConfig {
     fn default() -> Self {
@@ -318,46 +280,6 @@ where
             }
         });
     }
-}
-
-pub fn platform_host_rules() -> &'static [PlatformHostRule] {
-    PLATFORM_HOST_RULES
-}
-
-pub fn detect_platform(url: &str) -> SourcePlatform {
-    let host = url::Url::parse(url)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(|host| host.to_lowercase()))
-        .unwrap_or_default();
-
-    platform_host_rules()
-        .iter()
-        .find(|rule| {
-            rule.hosts
-                .iter()
-                .any(|candidate| host_matches(&host, candidate))
-        })
-        .map(|rule| rule.platform.clone())
-        .unwrap_or(SourcePlatform::Generic)
-}
-
-fn host_matches(host: &str, candidate: &str) -> bool {
-    host == candidate || host.ends_with(&format!(".{candidate}"))
-}
-
-pub fn is_direct_media_url(url: &str) -> bool {
-    url::Url::parse(url)
-        .ok()
-        .map(|parsed| {
-            let path = parsed.path().to_lowercase();
-            [
-                ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv", ".mp3", ".m4a",
-                ".aac", ".wav", ".ogg",
-            ]
-            .iter()
-            .any(|ext| path.ends_with(ext))
-        })
-        .unwrap_or(false)
 }
 
 fn has_control_chars(value: &str) -> bool {

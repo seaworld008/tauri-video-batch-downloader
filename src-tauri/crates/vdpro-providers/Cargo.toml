@@ -1,0 +1,19 @@
+[package]
+name = "vdpro-providers"
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+description = "Pluggable protocol registry, platform detection, DASH MPD parser, and FFmpeg muxing helpers"
+
+[dependencies]
+anyhow = "1.0"
+quick-xml = "0.42"
+tokio = { version = "1", features = ["fs", "process", "rt"] }
+tracing = "0.1"
+url = "2.5.9"
+vdpro-core = { path = "../vdpro-core" }
+vdpro-storage = { path = "../vdpro-storage" }
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

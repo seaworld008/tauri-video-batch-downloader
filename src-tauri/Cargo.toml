@@ -1,6 +1,6 @@
 [package]
 name = "video-downloader-pro"
-version = "1.3.0"
+version = "2.0.0"
 description = "Professional batch video downloader"
 authors = ["Video Downloader Team"]
 edition = "2021"
@@ -12,6 +12,11 @@ autobins = false
 tauri-build = { version = "~2.6.1", features = [] }
 
 [dependencies]
+# Workspace crates
+vdpro-core = { path = "crates/vdpro-core" }
+vdpro-storage = { path = "crates/vdpro-storage" }
+vdpro-providers = { path = "crates/vdpro-providers" }
+
 # Tauri 核心
 tauri = { version = "~2.11.1", features = ["tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -103,3 +108,12 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/vdpro-core",
+    "crates/vdpro-storage",
+    "crates/vdpro-providers",
+]

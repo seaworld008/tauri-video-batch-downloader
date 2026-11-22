@@ -1,0 +1,21 @@
+[package]
+name = "vdpro-storage"
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+description = "SQLite WAL persistent state store and atomic .part file staging for Video Downloader Pro"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["fs", "io-util", "rt", "sync"] }
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+vdpro-core = { path = "../vdpro-core" }
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

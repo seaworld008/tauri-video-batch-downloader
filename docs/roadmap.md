@@ -63,17 +63,21 @@
 
 ---
 
-## Phase 4 (`v2.0.0`) — Cargo Workspace 分层与 SQLite WAL 存储（下一阶段）
+## Phase 4 (`v2.0.0`) — Cargo Workspace 分层与 SQLite WAL 存储（已完成）
 
 - **Cargo Workspace 多 Crate 架构**：拆分为
-  `vdpro-core`（模型、配置、错误、事件）、`vdpro-providers`（HTTP / Range / HLS
-  / DASH / yt-dlp）、`vdpro-storage`（状态持久化与文件原子提交）与
-  `src-tauri`（IPC 与桌面壳），提升编译增量速度与第三方嵌入式复用度。
-- **SQLite (WAL) 存储替代全量 JSON 快照**：通过带自动迁移的路径将旧
-  `download_manager_state.json` 无损升级至 SQLite
-  WAL，消除上万任务下的全量序列化 O(N) 瓶颈。
-- **产品 showcase 与录制指南**：补充各平台实机截图 /
-  GIF 演示，并完善贡献者测试矩阵。
+  `src-tauri/crates/vdpro-core`（模型、配置、错误、校验、完整性校验与进程辅助）、`src-tauri/crates/vdpro-storage`（`PartFileWriter`
+  与
+  `SqliteStateStore`）、`src-tauri/crates/vdpro-providers`（平台探测、`ProviderRegistry`、MPEG-DASH
+  MPD 解析器与 `ffmpeg_muxer`）与 `src-tauri`（IPC、桌面壳、活跃传输器与
+  `vdpro-cli`）。
+- **SQLite (WAL) 存储替代全量 JSON 快照**：通过
+  `SqliteStateStore`（`download_state.db` +
+  `PRAGMA journal_mode = WAL`）实现增量单条/批量持久化，并在首次打开时无损迁移旧
+  `download_state.json`（保留 `.migrated.*.bak` 与损坏 `.corrupt.*` 备份）。
+- **全量发布与质量门禁**：CI / Release / Security 工作流已全面切换至
+  `cargo clippy --workspace --all-targets -- -D warnings` 与
+  `cargo test --workspace`。
 
 ---
 
