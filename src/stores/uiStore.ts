@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Notification } from '../types';
 import { useConfigStore } from './configStore';
+import { playNotificationChime, sendDesktopNotification } from '../utils/notificationEffects';
 
 interface UIState {
   notifications: Notification[];
@@ -73,6 +74,8 @@ export const notify = {
       message: message || '',
       duration,
     });
+    playNotificationChime('success');
+    sendDesktopNotification(title, message);
   },
 
   error: (title: string, message?: string, duration = 6000) => {
@@ -82,6 +85,10 @@ export const notify = {
       message: message || '',
       duration,
     });
+    playNotificationChime('error');
+    if (areNotificationsEnabled()) {
+      sendDesktopNotification(title, message);
+    }
   },
 
   warning: (title: string, message?: string, duration = 5000) => {

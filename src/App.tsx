@@ -8,6 +8,7 @@ import { Toaster } from 'react-hot-toast';
 import { reportFrontendIssue } from './utils/frontendLogging';
 import { checkExternalToolUpdatesCommand } from './features/downloads/api/systemCommands';
 import { notify } from './stores/uiStore';
+import { translate, useI18n } from './i18n/hooks';
 
 const TOOL_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TOOL_UPDATE_CHECKED_AT_KEY = 'video-downloader:last-external-tool-update-check';
@@ -43,13 +44,18 @@ const checkExternalToolUpdatesInBackground = async () => {
       .map(tool => `${tool.display_name} ${tool.current_version} -> ${tool.latest_version}`)
       .join('，');
 
-    notify.warning('外部工具可更新', `${message}。可在设置中手动更新。`, 8000);
+    notify.warning(
+      translate('app.externalToolsUpdateTitle'),
+      translate('app.externalToolsUpdateMessage', { details: message }),
+      8000
+    );
   } catch (error) {
     reportFrontendIssue('warn', 'app_bootstrap:external_tool_update_check_failed', error);
   }
 };
 
 function App() {
+  const { t } = useI18n();
   const [isInitialized, setIsInitialized] = useState(false);
 
   const initDownloadStore = useDownloadStore(state => state.initializeStore);
@@ -90,7 +96,7 @@ function App() {
         <div className='text-center'>
           <div className='w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4'></div>
           <h2 className='text-xl font-semibold mb-2'>Video Downloader Pro</h2>
-          <p className='text-gray-600 dark:text-gray-400'>正在启动...</p>
+          <p className='text-gray-600 dark:text-gray-400'>{t('app.starting')}</p>
         </div>
       </div>
     );

@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowPathIcon, CheckCircleIcon, PlayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useDownloadStore } from '../../stores/downloadStore';
+import { useI18n } from '../../i18n/hooks';
 
 const buttonFocusClass =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 export const SessionRecoveryBanner: React.FC = () => {
+  const { t } = useI18n();
   const tasks = useDownloadStore(state => state.tasks);
   const recoveredSessionTaskIds = useDownloadStore(state => state.recoveredSessionTaskIds);
   const startAllDownloads = useDownloadStore(state => state.startAllDownloads);
@@ -65,11 +67,15 @@ export const SessionRecoveryBanner: React.FC = () => {
         <div className='min-w-0'>
           <div className='flex items-center gap-2 text-sm font-medium text-sky-900 dark:text-sky-100'>
             <ArrowPathIcon className='w-4 h-4 shrink-0' />
-            <span>上次会话已恢复</span>
+            <span>{t('recovery.title')}</span>
           </div>
           <div className='mt-1 text-xs text-sky-800/80 dark:text-sky-100/75'>
-            {counts.paused} 个可继续，{counts.pending} 个等待，{counts.failed} 个失败，
-            {counts.completed} 个已完成。继续时会从可用缓存或断点恢复，必要时重新请求。
+            {t('recovery.summary', {
+              paused: counts.paused,
+              pending: counts.pending,
+              failed: counts.failed,
+              completed: counts.completed,
+            })}
           </div>
         </div>
 
@@ -81,7 +87,9 @@ export const SessionRecoveryBanner: React.FC = () => {
             className={`inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50 ${buttonFocusClass}`}
           >
             <PlayIcon className='w-3.5 h-3.5' />
-            {busyAction === 'resume' ? '提交中' : `继续 ${resumableCount} 个`}
+            {busyAction === 'resume'
+              ? t('recovery.submitting')
+              : t('recovery.resumeCount', { count: resumableCount })}
           </button>
           <button
             type='button'
@@ -90,7 +98,9 @@ export const SessionRecoveryBanner: React.FC = () => {
             className={`inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100 dark:hover:bg-sky-900 ${buttonFocusClass}`}
           >
             <ArrowPathIcon className='w-3.5 h-3.5' />
-            {busyAction === 'retry' ? '重试中' : `重试失败 ${counts.failed} 个`}
+            {busyAction === 'retry'
+              ? t('recovery.retrying')
+              : t('recovery.retryFailedCount', { count: counts.failed })}
           </button>
           <button
             type='button'
@@ -99,7 +109,7 @@ export const SessionRecoveryBanner: React.FC = () => {
             className={`inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100 dark:hover:bg-sky-900 ${buttonFocusClass}`}
           >
             <CheckCircleIcon className='w-3.5 h-3.5' />
-            清理完成 {counts.completed} 个
+            {t('recovery.clearCompletedCount', { count: counts.completed })}
           </button>
           <button
             type='button'
@@ -108,8 +118,8 @@ export const SessionRecoveryBanner: React.FC = () => {
               clearRecoveredSession();
             }}
             className={`rounded-md p-1.5 text-sky-700 hover:bg-sky-100 dark:text-sky-100 dark:hover:bg-sky-900 ${buttonFocusClass}`}
-            title='暂时隐藏'
-            aria-label='暂时隐藏上次会话提示'
+            title={t('recovery.hide')}
+            aria-label={t('recovery.hideAriaLabel')}
           >
             <XMarkIcon className='w-4 h-4' />
           </button>

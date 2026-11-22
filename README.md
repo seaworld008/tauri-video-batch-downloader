@@ -60,13 +60,15 @@ by a Rust core.
 
 ## Core Capabilities
 
-| Area                        | Current Capabilities (`v1.2.0`)                                                                                                                                                                            |
+| Area                        | Current Capabilities (`v1.3.0`)                                                                                                                                                                            |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Batch Input**             | Excel (`.xlsx`/`.xls`), CSV encoding auto-detection, field mapping, clipboard batch paste, single/multi-URL validation, collapsible advanced request options (`Referer`, `Cookie`, `Proxy`, etc.)          |
-| **Queue & Controls**        | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override                                                                                       |
+| **Queue & Controls**        | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override, global keyboard shortcuts (`?` modal)                                                |
 | **Protocols & Providers**   | Pluggable `ProviderRegistry`: HTTP/HTTPS (`ResumeDownloader`), HLS (`.m3u8` Master Playlist, fMP4, AES-128, FFmpeg mux), native MPEG-DASH (`.mpd`), `yt-dlp` (YouTube, Bilibili, TikTok, X, Vimeo, Twitch) |
+| **Desktop UX & i18n**       | 100% `zh-CN` / `en-US` parity with live header switcher, native system tray (`minimize_to_tray`, `start_minimized`, Start/Pause/Quit), notification chime & hidden-window desktop notifications            |
+| **Headless CLI**            | Companion `vdpro-cli` binary sharing the Rust core (`download` from URLs or `.txt`/`.csv`/`.xlsx`/`.xls`, `probe`, `doctor`, `--json`, `--rate-limit`, request options)                                    |
 | **Reliability & Integrity** | Atomic `.part` / `.seg` commits (`sync_all` + rename), atomic config writes, `RetryExecutor` with circuit breaker, `spawn_blocking` SHA-256/MD5 verification                                               |
-| **Observability**           | Live per-task speed & ETA, queue overview status badge, `average_commit_duration` / `p95_commit_duration`, one-click task diagnostic copy                                                                  |
+| **Observability**           | Live per-task speed & ETA, queue overview status badge, `average_commit_duration` / `p95_commit_duration`, 500ms coalesced terminal alerts, one-click task diagnostic copy                                 |
 | **Cross-Platform**          | Tauri v2 desktop builds for Windows (`nsis`), macOS (`universal` `.dmg`), and Linux                                                                                                                        |
 
 ---
@@ -122,6 +124,24 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
+### Headless CLI (`vdpro-cli`)
+
+Build and run the headless companion binary directly against the Rust core for
+servers, scripts, and batch automation:
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli
+
+# Inspect resolved provider & media headers
+./src-tauri/target/debug/vdpro-cli probe "https://example.com/video.mp4" --json
+
+# Check yt-dlp / ffmpeg / deno availability
+./src-tauri/target/debug/vdpro-cli doctor
+
+# Batch download from CSV/Excel/TXT with concurrency & bandwidth cap
+./src-tauri/target/debug/vdpro-cli download -f courses.xlsx -o ./downloads -c 4 --rate-limit 2M
+```
+
 ### Build Production Bundles
 
 Production builds require real external sidecars (`yt-dlp`, `ffmpeg`, `deno`)
@@ -171,7 +191,7 @@ pnpm audit --prod --audit-level moderate
 | Topic                        | Document                                                                         |
 | ---------------------------- | -------------------------------------------------------------------------------- |
 | Full Architecture & Design   | [docs/architecture-functional-design.md](docs/architecture-functional-design.md) |
-| Live System State (`v1.2.0`) | [docs/current-state.md](docs/current-state.md)                                   |
+| Live System State (`v1.3.0`) | [docs/current-state.md](docs/current-state.md)                                   |
 | Documentation Index          | [docs/index.md](docs/index.md)                                                   |
 | Build & Release Guide        | [docs/build-release.md](docs/build-release.md)                                   |
 | Contributing Guide           | [CONTRIBUTING.md](CONTRIBUTING.md)                                               |
@@ -186,16 +206,18 @@ pnpm audit --prod --audit-level moderate
 - **`v1.1.0` (Completed)**: Core reliability hardening, per-task M3U8 isolation,
   atomic `.part` / config writes, UI settings wiring, per-row controls, and OSS
   foundation.
-- **`v1.2.0` (Current)**: Pluggable `DownloadProviderSpec` / `ProviderRegistry`,
-  native HLS Master Playlist (variant/audio selection + fMP4 + FFmpeg remux),
-  native MPEG-DASH (`.mpd`) downloader, and per-task custom headers / cookies /
-  proxy parity with `yt-dlp` (including Bilibili, X/Twitter, Vimeo, Twitch).
-- **`v1.3.0` (Next)**: Full frontend & tray i18n (`zh-CN` / `en-US` parity),
-  keyboard shortcuts, desktop notifications & system tray minimize, and headless
-  CLI companion.
-- **`v2.0.0`**: Modular Cargo Workspace separation (`core`, `providers`,
-  `storage`, `tauri-app`), SQLite WAL persistent storage replacing monolithic
-  JSON snapshots, and companion browser integration.
+- **`v1.2.0` (Completed)**: Pluggable `DownloadProviderSpec` /
+  `ProviderRegistry`, native HLS Master Playlist (variant/audio selection +
+  fMP4 + FFmpeg remux), native MPEG-DASH (`.mpd`) downloader, and per-task
+  custom headers / cookies / proxy parity with `yt-dlp` (including Bilibili,
+  X/Twitter, Vimeo, Twitch).
+- **`v1.3.0` (Current)**: Full frontend `zh-CN` / `en-US` i18n parity with
+  header switcher, native system tray (`minimize_to_tray`, `start_minimized`),
+  notification chimes & hidden-window desktop alerts, global keyboard shortcuts,
+  and headless companion CLI (`vdpro-cli`).
+- **`v2.0.0` (Next)**: Modular Cargo Workspace separation (`vdpro-core`,
+  `vdpro-providers`, `vdpro-storage`, `src-tauri`), SQLite WAL persistent
+  storage replacing monolithic JSON snapshots, and release polish.
 
 See [docs/roadmap.md](docs/roadmap.md) for detailed milestones.
 

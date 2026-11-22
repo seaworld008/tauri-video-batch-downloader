@@ -115,6 +115,10 @@ async fn update_config_impl(state: &State<'_, AppState>, new_config: AppConfig) 
         let mut config = state.config.write().await;
         *config = new_config.clone();
     }
+    state.minimize_to_tray.store(
+        new_config.ui.as_ref().is_some_and(|ui| ui.minimize_to_tray),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Save to disk
     new_config
@@ -139,6 +143,13 @@ async fn reset_config_impl(state: &State<'_, AppState>) -> AppResult<AppConfig> 
         let mut config = state.config.write().await;
         *config = default_config.clone();
     }
+    state.minimize_to_tray.store(
+        default_config
+            .ui
+            .as_ref()
+            .is_some_and(|ui| ui.minimize_to_tray),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Save to disk
     default_config
@@ -199,6 +210,13 @@ async fn import_config_impl(state: &State<'_, AppState>, file_path: &str) -> App
         let mut config = state.config.write().await;
         *config = imported_config.clone();
     }
+    state.minimize_to_tray.store(
+        imported_config
+            .ui
+            .as_ref()
+            .is_some_and(|ui| ui.minimize_to_tray),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Save to default location
     imported_config

@@ -22,6 +22,7 @@ import {
   UiSettingsSection,
 } from './SettingsSections';
 import { SettingsSaveBar } from './SettingsSaveBar';
+import { useI18n } from '../../i18n/hooks';
 
 interface SettingsViewProps {}
 
@@ -29,6 +30,7 @@ const formatErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 export const SettingsView: React.FC<SettingsViewProps> = () => {
+  const { t } = useI18n();
   const config = useConfigStore(state => state.config);
   const updateConfig = useConfigStore(state => state.updateConfig);
   const resetConfig = useConfigStore(state => state.resetConfig);
@@ -51,11 +53,11 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       setExternalTools(await getExternalToolStatusCommand());
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tools_refresh_failed', error);
-      notify.error('工具检测失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.toolsRefreshFailed'), formatErrorMessage(error));
     } finally {
       setIsLoadingTools(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void refreshExternalTools();
@@ -85,7 +87,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       setHasChanges(false);
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:save_failed', error);
-      notify.error('保存失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.saveFailed'), formatErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -98,7 +100,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       setHasChanges(false);
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:reset_failed', error);
-      notify.error('重置失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.resetFailed'), formatErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -112,7 +114,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       }
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:select_output_directory_failed', error);
-      notify.error('选择目录失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.selectDirFailed'), formatErrorMessage(error));
     }
   };
 
@@ -121,10 +123,13 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     try {
       const updated = await checkExternalToolUpdatesCommand();
       setExternalTools(updated);
-      notify.success('检查完成', '外部工具版本状态已更新');
+      notify.success(
+        t('settings.toasts.checkCompleteTitle'),
+        t('settings.toasts.checkCompleteMessage')
+      );
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tools_check_failed', error);
-      notify.error('检查更新失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.checkUpdatesFailed'), formatErrorMessage(error));
     } finally {
       setIsLoadingTools(false);
     }
@@ -135,10 +140,13 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     try {
       const updated = await updateExternalToolCommand(tool);
       setExternalTools(current => current.map(item => (item.id === tool ? updated : item)));
-      notify.success('工具已更新', `${updated.display_name} 已更新到可用版本`);
+      notify.success(
+        t('settings.toasts.toolUpdatedTitle'),
+        t('settings.toasts.toolUpdatedMessage', { name: updated.display_name })
+      );
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_update_failed', error);
-      notify.error('工具更新失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.toolUpdateFailed'), formatErrorMessage(error));
     } finally {
       setUpdatingTool(null);
     }
@@ -149,10 +157,13 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     try {
       const updated = await rollbackExternalToolCommand(tool);
       setExternalTools(current => current.map(item => (item.id === tool ? updated : item)));
-      notify.success('工具已回退', `${updated.display_name} 已切回上一个 App 管理版本`);
+      notify.success(
+        t('settings.toasts.toolRolledBackTitle'),
+        t('settings.toasts.toolRolledBackMessage', { name: updated.display_name })
+      );
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_rollback_failed', error);
-      notify.error('工具回退失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.toolRollbackFailed'), formatErrorMessage(error));
     } finally {
       setUpdatingTool(null);
     }
@@ -164,10 +175,13 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       if (!selected) return;
       const updated = await setExternalToolOverrideCommand(tool, selected);
       setExternalTools(current => current.map(item => (item.id === tool ? updated : item)));
-      notify.success('工具路径已更新', `${updated.display_name} 将优先使用指定文件`);
+      notify.success(
+        t('settings.toasts.toolOverrideUpdatedTitle'),
+        t('settings.toasts.toolOverrideUpdatedMessage', { name: updated.display_name })
+      );
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_override_failed', error);
-      notify.error('设置工具路径失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.toolOverrideFailed'), formatErrorMessage(error));
     }
   };
 
@@ -175,10 +189,13 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     try {
       const updated = await clearExternalToolOverrideCommand(tool);
       setExternalTools(current => current.map(item => (item.id === tool ? updated : item)));
-      notify.success('工具路径已清除', `${updated.display_name} 已恢复自动检测`);
+      notify.success(
+        t('settings.toasts.toolOverrideClearedTitle'),
+        t('settings.toasts.toolOverrideClearedMessage', { name: updated.display_name })
+      );
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_clear_failed', error);
-      notify.error('清除工具路径失败', formatErrorMessage(error));
+      notify.error(t('settings.toasts.toolClearFailed'), formatErrorMessage(error));
     }
   };
 
@@ -187,7 +204,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       <div className='h-full flex items-center justify-center'>
         <div className='text-center'>
           <div className='w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4'></div>
-          <p className='text-gray-600 dark:text-gray-400'>加载配置中...</p>
+          <p className='text-gray-600 dark:text-gray-400'>{t('settings.loadingConfig')}</p>
         </div>
       </div>
     );

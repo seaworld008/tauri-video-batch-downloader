@@ -44,6 +44,12 @@ if (
   }
 }
 
+if (typeof window !== 'undefined' && typeof window.localStorage?.getItem === 'function') {
+  if (!window.localStorage.getItem('video-downloader-language')) {
+    window.localStorage.setItem('video-downloader-language', 'zh');
+  }
+}
+
 // Mock Tauri APIs that are used in the application
 vi.mock('@tauri-apps/api/core', async () => {
   const actual =

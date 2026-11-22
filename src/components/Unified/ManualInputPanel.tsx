@@ -26,6 +26,7 @@ import type {
   TaskRequestOptions,
   VideoTask,
 } from '../../types';
+import { useI18n } from '../../i18n/hooks';
 
 interface ManualUrlEntry {
   id: string;
@@ -203,6 +204,7 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<
   });
 
 export const ManualInputPanel: React.FC = () => {
+  const { t } = useI18n();
   const [manualUrls, setManualUrls] = useState<ManualUrlEntry[]>([]);
   const [newUrlInput, setNewUrlInput] = useState('');
   const [outputDir, setOutputDir] = useState<string>('');
@@ -249,7 +251,7 @@ export const ManualInputPanel: React.FC = () => {
         .filter(line => line && /^https?:\/\//.test(line));
 
       if (urls.length === 0) {
-        notify.error('剪贴板中没有找到有效的URL', '');
+        notify.error(t('manualInput.clipboardEmpty'), '');
         return;
       }
 
@@ -261,9 +263,12 @@ export const ManualInputPanel: React.FC = () => {
       }));
 
       setManualUrls(prev => [...prev, ...newEntries]);
-      notify.success('添加成功', `从剪贴板添加了 ${urls.length} 个链接`);
+      notify.success(
+        t('manualInput.clipboardAddedTitle'),
+        t('manualInput.clipboardAddedMessage', { count: urls.length })
+      );
     } catch (error) {
-      notify.error('读取剪贴板失败', '请检查系统剪贴板是否可用');
+      notify.error(t('manualInput.clipboardErrorTitle'), t('manualInput.clipboardErrorMessage'));
     }
   };
 
@@ -311,7 +316,7 @@ export const ManualInputPanel: React.FC = () => {
       platform,
       externalInfo,
       isProcessing: false,
-      error: isValidUrl ? undefined : '无效的URL格式',
+      error: isValidUrl ? undefined : t('manualInput.invalidUrlFormat'),
     };
   };
 
@@ -329,7 +334,7 @@ export const ManualInputPanel: React.FC = () => {
         updateUrlEntry(entry.id, {
           isValid: false,
           isProcessing: false,
-          error: '验证失败',
+          error: t('manualInput.validationFailed'),
         });
       }
     }
@@ -345,14 +350,17 @@ export const ManualInputPanel: React.FC = () => {
         setOutputDir(selected);
       }
     } catch (error) {
-      notify.error('选择目录失败', error instanceof Error ? error.message : String(error));
+      notify.error(
+        t('manualInput.selectDirFailed'),
+        error instanceof Error ? error.message : String(error)
+      );
     }
   };
 
   const startDownload = async () => {
     const validUrls = manualUrls.filter(entry => entry.isValid !== false); // Allow undefined (not validated yet)
     if (validUrls.length === 0) {
-      notify.error('没有有效的URL', '请先添加URL');
+      notify.error(t('manualInput.noValidUrlTitle'), t('manualInput.noValidUrlAddHint'));
       return;
     }
 
@@ -373,7 +381,7 @@ export const ManualInputPanel: React.FC = () => {
 
       const startableUrls = resolvedUrls.filter(entry => entry.isValid !== false);
       if (startableUrls.length === 0) {
-        notify.error('没有有效的URL', '请检查链接格式后重试');
+        notify.error(t('manualInput.noValidUrlTitle'), t('manualInput.noValidUrlRetryHint'));
         return;
       }
 
@@ -388,7 +396,7 @@ export const ManualInputPanel: React.FC = () => {
       const videoTasks: VideoTask[] = startableUrls.map((entry, index) => ({
         id: `manual_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 9)}`,
         url: entry.url,
-        title: entry.title || `任务_${index + 1}`,
+        title: entry.title || t('manualInput.defaultTaskTitle', { index: index + 1 }),
         output_path: targetDir,
         status: 'pending' as const,
         progress: 0,
@@ -399,10 +407,10 @@ export const ManualInputPanel: React.FC = () => {
         downloader_type: inferDownloaderType(entry.url),
         video_info: {
           zl_id: entry.id,
-          zl_name: '手动添加',
+          zl_name: t('manualInput.manualSourceName'),
           record_url: entry.url,
           kc_id: entry.id,
-          kc_name: entry.title || '手动添加下载',
+          kc_name: entry.title || t('manualInput.manualDefaultCourse'),
         },
         external_info: entry.externalInfo ?? {
           source_platform: entry.platform ?? detectSourcePlatform(entry.url),
@@ -415,7 +423,7 @@ export const ManualInputPanel: React.FC = () => {
 
       const addedTasks = await addTasks(videoTasks);
       if (addedTasks.length === 0) {
-        notify.error('添加任务失败', '未能添加任务，请检查链接或重试');
+        notify.error(t('manualInput.addFailedTitle'), t('manualInput.addFailedMessage'));
         return;
       }
 
@@ -434,14 +442,17 @@ export const ManualInputPanel: React.FC = () => {
       }
 
       notify.success(
-        '任务已添加',
+        t('manualInput.addedSuccessTitle'),
         autoStartDownloads
-          ? `成功添加 ${addedTasks.length} 个任务并开始下载`
-          : `成功添加 ${addedTasks.length} 个任务到队列`
+          ? t('manualInput.addedAndStarted', { count: addedTasks.length })
+          : t('manualInput.addedToQueue', { count: addedTasks.length })
       );
       setManualUrls([]);
     } catch (error) {
-      notify.error('启动下载失败', error instanceof Error ? error.message : String(error));
+      notify.error(
+        t('manualInput.startFailedTitle'),
+        error instanceof Error ? error.message : String(error)
+      );
     } finally {
       setIsPreparingDownload(false);
     }
@@ -463,7 +474,7 @@ export const ManualInputPanel: React.FC = () => {
                 addNewUrlEntry();
               }
             }}
-            placeholder='输入视频链接 (HTTP/HTTPS/Bilibili...)'
+            placeholder={t('manualInput.placeholder')}
             data-testid='url-input'
             className='block w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg leading-5 bg-white dark:bg-gray-700 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-all shadow-sm'
           />
@@ -475,12 +486,12 @@ export const ManualInputPanel: React.FC = () => {
           className='px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors flex items-center shadow-sm'
         >
           <PlusIcon className='w-5 h-5' />
-          <span className='ml-2 hidden sm:inline'>添加</span>
+          <span className='ml-2 hidden sm:inline'>{t('manualInput.add')}</span>
         </button>
         <button
           onClick={addFromClipboard}
           className='px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg font-medium transition-colors flex items-center shadow-sm'
-          title='从剪贴板粘贴'
+          title={t('manualInput.pasteClipboard')}
         >
           <ClipboardDocumentListIcon className='w-5 h-5' />
         </button>
@@ -490,7 +501,7 @@ export const ManualInputPanel: React.FC = () => {
         <div className='bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700 p-4'>
           <div className='flex items-center justify-between mb-3 px-1'>
             <span className='text-sm font-medium text-gray-500 dark:text-gray-400'>
-              待添加列表 ({manualUrls.length})
+              {t('manualInput.pendingList', { count: manualUrls.length })}
             </span>
             <div className='flex gap-2'>
               <button
@@ -503,13 +514,13 @@ export const ManualInputPanel: React.FC = () => {
                 ) : (
                   <SparklesIcon className='w-3 h-3 mr-1' />
                 )}
-                验证链接
+                {t('manualInput.validateUrls')}
               </button>
               <button
                 onClick={() => setManualUrls([])}
                 className='text-xs text-red-500 hover:text-red-600'
               >
-                清空
+                {t('manualInput.clear')}
               </button>
             </div>
           </div>
@@ -534,14 +545,17 @@ export const ManualInputPanel: React.FC = () => {
                   )}
                   {entry.platform && (
                     <div className='text-xs text-gray-500 mt-0.5'>
-                      {platformLabel(entry.platform)} ·{' '}
+                      {entry.platform === 'generic'
+                        ? t('manualInput.platformGeneric')
+                        : platformLabel(entry.platform)}{' '}
+                      ·{' '}
                       {inferDownloaderType(entry.url) === 'ytdlp'
                         ? 'yt-dlp'
                         : inferDownloaderType(entry.url) === 'dash'
-                          ? 'DASH 原生下载器'
+                          ? t('manualInput.providerDash')
                           : inferDownloaderType(entry.url) === 'm3u8'
-                            ? 'HLS 原生下载器'
-                            : '原生下载器'}
+                            ? t('manualInput.providerHls')
+                            : t('manualInput.providerNative')}
                     </div>
                   )}
                   {entry.error && <div className='text-xs text-red-500 mt-0.5'>{entry.error}</div>}
@@ -573,15 +587,15 @@ export const ManualInputPanel: React.FC = () => {
               className='text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1 py-0.5'
             >
               {showAdvancedOptions
-                ? '收起高级请求参数'
-                : '高级请求参数 (Headers / Cookie / Proxy / 画质)'}
+                ? t('manualInput.toggleAdvancedHide')
+                : t('manualInput.toggleAdvancedShow')}
             </button>
 
             {showAdvancedOptions && (
               <div className='mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'>
                 <div>
                   <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
-                    Referer
+                    {t('manualInput.referer')}
                   </label>
                   <input
                     type='url'
@@ -594,7 +608,7 @@ export const ManualInputPanel: React.FC = () => {
                 </div>
                 <div>
                   <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
-                    Cookie
+                    {t('manualInput.cookie')}
                   </label>
                   <input
                     type='text'
@@ -607,20 +621,20 @@ export const ManualInputPanel: React.FC = () => {
                 </div>
                 <div>
                   <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
-                    代理 Proxy
+                    {t('manualInput.proxy')}
                   </label>
                   <input
                     type='text'
                     value={proxyInput}
                     onChange={e => setProxyInput(e.target.value)}
-                    placeholder='http://127.0.0.1:7890 或 socks5://...'
+                    placeholder={t('manualInput.proxyPlaceholder')}
                     data-testid='request-proxy-input'
                     className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
                   />
                 </div>
                 <div>
                   <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
-                    画质 / 格式策略
+                    {t('manualInput.formatStrategy')}
                   </label>
                   <select
                     value={formatSelector}
@@ -628,16 +642,16 @@ export const ManualInputPanel: React.FC = () => {
                     data-testid='request-format-select'
                     className='w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
                   >
-                    <option value='auto'>自动最佳 (auto)</option>
-                    <option value='1080p'>最高 1080p</option>
-                    <option value='720p'>最高 720p</option>
-                    <option value='480p'>最高 480p</option>
-                    <option value='audio'>仅音频</option>
+                    <option value='auto'>{t('manualInput.formatAuto')}</option>
+                    <option value='1080p'>{t('manualInput.format1080p')}</option>
+                    <option value='720p'>{t('manualInput.format720p')}</option>
+                    <option value='480p'>{t('manualInput.format480p')}</option>
+                    <option value='audio'>{t('manualInput.formatAudio')}</option>
                   </select>
                 </div>
                 <div className='sm:col-span-2'>
                   <label className='block text-xs text-gray-500 dark:text-gray-400 mb-1'>
-                    自定义 Headers（每行 Key: Value）
+                    {t('manualInput.customHeaders')}
                   </label>
                   <textarea
                     rows={2}
@@ -674,7 +688,11 @@ export const ManualInputPanel: React.FC = () => {
               ) : (
                 <ArrowDownTrayIcon className='w-5 h-5 mr-2' />
               )}
-              {isPreparingDownload ? '识别中' : autoStartDownloads ? '立即下载' : '添加到队列'}
+              {isPreparingDownload
+                ? t('manualInput.identifying')
+                : autoStartDownloads
+                  ? t('manualInput.downloadNow')
+                  : t('manualInput.addToQueue')}
             </button>
           </div>
         </div>

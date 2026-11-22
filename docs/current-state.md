@@ -2,8 +2,8 @@
 
 更新日期：2026-11-22
 
-当前基线：`v1.2.0`（Phase
-2 可插拔多流媒体引擎与 HLS/DASH/yt-dlp 参数一致性基线）
+当前基线：`v1.3.0`（Phase 3 全量国际化、系统托盘、桌面通知、快捷键与 `vdpro-cli`
+基线）
 
 这份文档是当前仓库的事实源摘要。它只描述现在仍应维护的主链行为，不再承载历史计划、旧评审记录或已完成阶段的流水账。
 
@@ -282,6 +282,23 @@ GitNexus 对当前未提交工作树的影响检查：
     / `YtDlpDownloader`），并扩展 Bilibili / X(Twitter) / Vimeo /
     Twitch 平台识别与 `drm_protected` / `proxy_error` 错误分类。
   - 升级 `url` crate 至 `2.5.9` 修复 `RUSTSEC-2026-0592`。
+- `v1.3.0` 桌面融合、全量国际化与 Headless CLI 已完成收敛：
+  - 前端核心面板（`UnifiedView`、`StatusBar`、`SessionRecoveryBanner`、`ManualInputPanel`、`FileImportPanel`、`DashboardToolbar`、`ToolbarActions`、`ToolbarFilters`、确认弹窗、`TaskListItem`、`SettingsView`、`SettingsSections`、`ExternalToolsSection`、`SettingsSaveBar`、`App`
+    与事件桥接通知）已全部接入 `useI18n()` /
+    `translate()`，支持顶部一键中英文切换，`en.json` / `zh.json`
+    已通过自动化键名/占位符/非空叶子一致性校验。
+  - 原生系统托盘（`src-tauri/src/infra/tray.rs`）已接入 `"main"`
+    托盘图标、`ui.minimize_to_tray` 关闭隐藏、`ui.start_minimized`
+    启动最小化，以及托盘菜单（显示/隐藏、全部开始、全部暂停、5 秒优雅停机退出）。
+  - 通知音效与桌面通知（`src/utils/notificationEffects.ts`、`src/stores/uiStore.ts`、`src/features/downloads/state/downloadEventBridge.ts`）已打通
+    `ui.notification_sound`、后台窗口 `Notification` 与 500ms 终态合并通知。
+  - 全局快捷键体系（`src/hooks/useKeyboardShortcuts.ts` 与
+    `KeyboardShortcutsModal`）支持 `Ctrl/Cmd+K` / `/` 搜索、`Ctrl/Cmd+,`
+    设置、`Ctrl/Cmd+A` 全选、`Space` 队列切换、`?` 帮助面板与 `Esc`
+    退出，并跳过可编辑控件与按钮误触。
+  - 无头伴生 CLI（`src-tauri/src/cli/mod.rs`、`src-tauri/src/bin/vdpro_cli.rs`）提供
+    `download`（URL 与 `.txt`/`.csv`/`.xlsx`/`.xls`
+    导入）、`probe`、`doctor`、`--json`、`--rate-limit` 与 `Ctrl+C` 信号中止。
 
 ---
 
@@ -302,16 +319,18 @@ cargo test --manifest-path src-tauri/Cargo.toml
 如果改动涉及下载核心、恢复、导入或事件契约，应再跑对应 focused
 tests，并用 GitNexus 查看影响面。
 
-2026-11-22 当前 `v1.2.0` 已验证通过：
+2026-11-22 当前 `v1.3.0` 已验证通过：
 
 - `pnpm type-check`
 - `pnpm lint`（`--max-warnings 0`）
-- `pnpm exec vitest run`：54 个测试文件，303 个测试通过
+- `pnpm exec vitest run`：55 个测试文件，312 个测试通过
 - `pnpm exec vitest run --config vitest.config.integration.ts`：2 个测试文件，14 个测试通过
 - `pnpm exec vite build`：构建通过
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check`
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- `cargo test --manifest-path src-tauri/Cargo.toml`：199 个测试通过
+- `cargo test --manifest-path src-tauri/Cargo.toml`：204 个测试通过
+- `cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli`：`vdpro-cli 1.3.0`
+  构建与 `--version` 验证通过
 - `pnpm sidecars:check:local`：允许占位文件的本地 smoke 预检通过
 - `git diff --check`
 
@@ -335,9 +354,9 @@ tests，并用 GitNexus 查看影响面。
 
 优先级与多阶段规划见 `docs/roadmap.md`：
 
-- **`v1.3.0`**：前端完整国际化 (`zh-CN` /
-  `en-US`)、系统托盘与原生桌面通知、快捷键与 Headless CLI。
-- **`v2.0.0`**：Cargo Workspace 模块化拆分与 SQLite WAL 持久化存储引擎。
+- **`v2.0.0`**：Cargo Workspace 模块化拆分（`vdpro-core` / `vdpro-providers` /
+  `vdpro-storage` / `src-tauri`）、SQLite
+  WAL 持久化存储引擎与最终 Release 发布。
 
 ---
 

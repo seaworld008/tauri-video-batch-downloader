@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-22
+
+### Added
+
+- **Full `zh-CN` / `en-US` Frontend i18n Parity & Header Toggle**:
+  - Added header language toggle button (`nav-language-toggle`) and unified
+    `zh.json` / `en.json` dictionaries covering `UnifiedView`, `StatusBar`,
+    `SessionRecoveryBanner`, `ManualInputPanel`, `FileImportPanel`,
+    `DashboardToolbar`, `ToolbarActions`, `ToolbarFilters`, confirmation
+    dialogs, `TaskListItem`, `SettingsView`, `SettingsSections`,
+    `ExternalToolsSection`, `SettingsSaveBar`, `KeyboardShortcutsModal`, `App`,
+    and coalesced notification messages.
+  - Added automated recursive key, non-empty leaf, and `{{placeholder}}` parity
+    verification in `src/__tests__/i18n/i18n.test.tsx`.
+- **Native System Tray (`infra/tray.rs`) & Close/Start Minimized Behavior**:
+  - Wired `ui.minimize_to_tray` and `ui.start_minimized` end-to-end across
+    `AppState`, `commands/config.rs`, and Tauri `CloseRequested` / `.setup`
+    lifecycle hooks.
+  - Reuses the Tauri `"main"` tray icon with native menu controls
+    (`Show / Hide`, `Start All`, `Pause All`, `Quit` with 5-second
+    `DownloadManager::stop()` graceful shutdown) and left-click restore.
+- **Notification Sound, Desktop Notifications & Coalesced Terminal Alerts**:
+  - Added `src/utils/notificationEffects.ts` (`playNotificationChime` via Web
+    Audio gated by `ui.notification_sound`, `sendDesktopNotification` when
+    `document.hidden && Notification.permission === 'granted'`).
+  - Wired 500ms coalesced single/batch completion and failure notifications into
+    `downloadEventBridge.ts` and exposed `notification_sound`,
+    `minimize_to_tray`, and `start_minimized` toggles in `UiSettingsSection`.
+- **Global Keyboard Shortcuts & Help Modal**:
+  - Added `src/hooks/useKeyboardShortcuts.ts` (`Ctrl/Cmd+K` and `/` search
+    focus, `Ctrl/Cmd+,` settings toggle, `Ctrl/Cmd+A` select all, `Space` queue
+    toggle, `?` shortcut help modal, `Esc` dismiss/clear) with editable and
+    interactive element guards, plus `KeyboardShortcutsModal`.
+- **Headless Companion CLI (`vdpro-cli`)**:
+  - Added `src-tauri/src/cli/mod.rs` and `src-tauri/src/bin/vdpro_cli.rs`
+    sharing the Rust download core (`DownloadProviderRouter`, `HttpDownloader`,
+    `YtDlpDownloader`, `FileParser`, `external_tools`).
+  - Supports `download` (`.txt` / `.csv` / `.xlsx` / `.xls` import, `--output`,
+    `--concurrent`, `--header`, `--cookie`, `--cookies-from-browser`,
+    `--referer`, `--user-agent`, `--proxy`, `--format`, `--lang`, `--container`,
+    `--rate-limit`), `probe`, `doctor`, `--json`, and `Ctrl+C` abort.
+
 ## [1.2.0] - 2026-11-22
 
 ### Added
