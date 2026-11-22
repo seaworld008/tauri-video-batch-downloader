@@ -134,6 +134,9 @@ export const ManualInputPanel: React.FC = () => {
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
   );
+  const autoStartDownloads = useConfigStore(
+    state => state?.config?.ui?.auto_start_downloads ?? false
+  );
 
   const addNewUrlEntry = () => {
     if (newUrlInput.trim()) {
@@ -327,10 +330,17 @@ export const ManualInputPanel: React.FC = () => {
       setFilterStatus('all');
       setSearchQuery('');
 
-      // Enqueue
-      enqueueDownloads(addedTasks.map(task => task.id));
+      // Enqueue only when auto_start_downloads is enabled
+      if (autoStartDownloads) {
+        enqueueDownloads(addedTasks.map(task => task.id));
+      }
 
-      notify.success('任务已添加', `成功添加 ${addedTasks.length} 个任务到队列`);
+      notify.success(
+        '任务已添加',
+        autoStartDownloads
+          ? `成功添加 ${addedTasks.length} 个任务并开始下载`
+          : `成功添加 ${addedTasks.length} 个任务到队列`
+      );
       setManualUrls([]);
     } catch (error) {
       notify.error('启动下载失败', error instanceof Error ? error.message : String(error));
@@ -473,7 +483,7 @@ export const ManualInputPanel: React.FC = () => {
               ) : (
                 <ArrowDownTrayIcon className='w-5 h-5 mr-2' />
               )}
-              {isPreparingDownload ? '识别中' : '立即下载'}
+              {isPreparingDownload ? '识别中' : autoStartDownloads ? '立即下载' : '添加到队列'}
             </button>
           </div>
         </div>

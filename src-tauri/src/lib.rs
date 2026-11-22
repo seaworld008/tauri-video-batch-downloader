@@ -186,6 +186,7 @@ pub fn run() {
     info!("🚀 Starting Video Downloader Pro v{}", VERSION);
 
     let app_state = AppState::new();
+    let is_closing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
 
@@ -298,19 +299,30 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event {
+        .on_window_event(move |window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if is_closing.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 info!("📦 Application closing requested");
+                api.prevent_close();
 
+                let window_clone = window.clone();
                 let download_manager = window.state::<AppState>().download_manager.clone();
                 tauri::async_runtime::spawn(async move {
-                    let mut manager = download_manager.write().await;
-                    if let Err(err) = manager.stop().await {
-                        warn!("Failed to stop download manager on close: {}", err);
+                    match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        let mut manager = download_manager.write().await;
+                        if let Err(err) = manager.stop().await {
+                            warn!("Failed to stop download manager on close: {}", err);
+                        }
+                    })
+                    .await
+                    {
+                        Ok(()) => info!("🔚 Application closed cleanly"),
+                        Err(_) => warn!("Timed out waiting for download manager stop on close"),
                     }
+                    let _ = window_clone.destroy();
                 });
-
-                info!("🔚 Application closing normally");
             }
         })
         .run(tauri::generate_context!())

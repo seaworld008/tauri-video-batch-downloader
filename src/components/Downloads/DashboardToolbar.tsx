@@ -42,7 +42,6 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
   const searchQuery = useDownloadStore(state => state.searchQuery);
   const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
-  const refreshStats = useDownloadStore(state => state.refreshStats);
   const forceSync = useDownloadStore(state => state.forceSync);
   const backendStats = useDownloadStore(state => state.stats);
   const config = useConfigStore(state => state.config);
@@ -382,11 +381,10 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
 
   const handleRefresh = React.useCallback(async () => {
     await forceSync();
-    await refreshStats();
     if (onRefresh) {
       onRefresh();
     }
-  }, [forceSync, onRefresh, refreshStats]);
+  }, [forceSync, onRefresh]);
 
   return (
     <>

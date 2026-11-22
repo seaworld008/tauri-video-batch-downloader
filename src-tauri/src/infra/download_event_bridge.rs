@@ -16,8 +16,13 @@ pub fn spawn_download_event_bridge(
         let mut progress_event_count = 0u64;
 
         while let Some(event) = receiver.recv().await {
-            if let Err(sync_err) = download_runtime.apply_event(event.clone()).await {
-                error!("[EVENT_BRIDGE] Failed to sync manager state: {}", sync_err);
+            if !matches!(
+                event,
+                DownloadEvent::StatsUpdated { .. } | DownloadEvent::EnhancedProgress { .. }
+            ) {
+                if let Err(sync_err) = download_runtime.apply_event(event.clone()).await {
+                    error!("[EVENT_BRIDGE] Failed to sync manager state: {}", sync_err);
+                }
             }
 
             match event {

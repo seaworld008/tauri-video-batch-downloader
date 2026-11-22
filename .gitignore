@@ -171,6 +171,9 @@ src-tauri/gen/
 .planning/
 graphify-out/
 .codex/
+.cursor/
+.env.localtest
+vitest-errors.log
 
 docs/auto-continue-completion-evidence.md
 .gitnexus/

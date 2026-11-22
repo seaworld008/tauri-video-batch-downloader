@@ -1,76 +1,79 @@
 # Roadmap
 
-更新日期：2026-05-07
+更新日期：2026-11-22
 
-这份路线图只保留当前仍有价值的后续优化方向。历史阶段计划已经清理；如果未来某个路线项完成，应把结果合并回
-`current-state.md` 或对应功能文档，而不是长期保留已完成待办。
+这份路线图记录 **Video Downloader Pro** 从 `v1.1.0` 到 `v2.0.0`
+的多阶段演进规划。已完成项会合并回 `docs/current-state.md` 与 `CHANGELOG.md`。
 
 ---
 
-## P0：下载可靠性
+## Phase 1 (`v1.1.0`) — 核心可靠性加固与开源基线（已完成）
 
-- 已补齐第一批下载边界测试：HTTP 429、服务器截断响应、输出路径冲突、Range
-  416、Range ignored。
-- 已补强：`.part` 过大时隔离为 `.corrupt-*` 并重下，`.part`
-  截断时按实际长度回收分片进度。
-- 继续补齐：断网中途重试、最终文件已存在和更接近真实磁盘权限不足的跨平台场景。
-- 已补强：服务端忽略 Range 时安全重下，不追加污染本地 `.part`。
-- 继续强化状态机测试：`Downloading -> Paused -> Resumed -> Completed`、`Failed -> Pending -> Downloading`、`Queued -> Cancelled`。
-- 启动恢复保持当前原则：恢复任务和文件状态，但等待用户明确点击开始/恢复。
-- 完善重复导入后的任务归类提示，让已完成、可续传、等待、失败任务更容易被用户理解。
+- 原子性落盘：`AppConfig::save()` 与单流 `download_with_resume` 通过临时 `.tmp`
+  / `.part` + `sync_all()` + 原子重命名提交。
+- HLS/M3U8 任务隔离：`download_m3u8_with_context`
+  隔离每任务的取消、暂停、进度与令牌桶限速通道，暂停时保留并复用分片文件。
+- 并发与窗口安全：Tauri `CloseRequested` 优雅退出（5s 超时）、`spawn_blocking`
+  异步卸载哈希计算、`RetryExecutor` 熔断器闭环、去除事件总线内部统计回环与无效
+  `5` 状态误判。
+- 前端全链路闭环：主题 `theme`、语言
+  `language`、`show_completed_tasks`、`auto_start_downloads`、`show_notifications`、行级开始/暂停/重试/删除操作与错误原因展示、实时队列徽标、250ms 终态刷新防抖与
+  `rAF` 虚拟滚动节流。
+- 开源社区体系：MIT `LICENSE`、双语 README (`README.md` /
+  `README.zh-CN.md`)、`CHANGELOG.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md`
+  与合规的 `.github/dependabot.yml`。
 
-## P1：协议与工具链
+---
 
-- 已抽离：`DownloadProviderRouter`
-  统一负责 M3U8、直链媒体、社媒网页和 HEAD 后 HTML 页面的 provider 选择，避免新增平台规则牵动 HTTP
-  Range/M3U8 主路径。
-- 继续强化 M3U8/HLS：直播/超长 playlist、失败 segment 重试。
-- 已补强：M3U8 相对 segment、相对 key URI、byte-range
-  Range 响应校验、同一 playlist 多 AES key 下载与缓存。
-- 已接入：通用 `YtDlp`
-  provider，覆盖 YouTube、TikTok、Instagram、Facebook 和未知复杂网页。
-- 已预留：`yt-dlp` 平台 host registry，新增平台时集中扩展 host 规则和 schema。
-- 已接入：`yt-dlp` / `ffmpeg` sidecar 配置、工具状态探测、`yt-dlp`
-  手动更新、兼容性契约检查和回退。
-- 已拆分：external tools service 按 registry/resolver/status/update/config
-  store 分层，后续更新/回滚策略变化不再集中修改单个大模块。
-- 已接入：严格 sidecar 发布预检，覆盖 macOS/Windows/Linux target
-  triple、capability、可执行权限和占位文件拦截。
-- 已接入：`sidecars:prepare` 发布准备链路，release runner 会在打包前准备真实
-  `yt-dlp` / `ffmpeg` sidecar 并严格校验。
-- 待完成：替换或确认项目最终采用的 `ffmpeg`
-  可信分发来源后补跑真实公开视频下载回归。
-- 已补强：`yt-dlp`
-  App 管理更新最终替换失败时自动恢复旧版本；设置页解释自动更新、兼容性探测、回退和
-  `ffmpeg` 可信本地文件手动更新流程。
-- 继续增加外部工具缺失、版本不兼容、执行失败、checksum 失败、回退失败的诊断提示。
+## Phase 2 (`v1.2.0`) — 可插拔多流媒体引擎（下一阶段）
 
-## P2：产品体验
+- **Trait 化 `DownloadProvider` 注册中心**：将硬编码的 `DownloadProviderRouter`
+  重构为基于优先级匹配与插件注册表的 `DownloadProvider` /
+  `ProviderRegistry`，解耦 HTTP / Range / HLS / DASH / `yt-dlp`。
+- **完整 HLS Master Playlist + fMP4 + FFmpeg 无损混流**：
+  - 支持 `#EXT-X-STREAM-INF` / `#EXT-X-MEDIA` 码率与音视频/字幕轨选择。
+  - 支持 `#EXT-X-MAP` (fMP4 init segment)、AES-128 默认 Media Sequence
+    IV 推导与自动 FFmpeg 无损封装为 `.mp4` / `.mkv`。
+  - 支持分片级指数退避重试与直播滑窗拉流支持。
+- **原生 MPEG-DASH (`.mpd`) 下载器**：原生解析 MPD Manifest / `SegmentTemplate`
+  / `SegmentList` / `BaseURL`，并发拉取音频与视频表示轨并用 FFmpeg 无损混流。
+- **单任务协议参数与 `yt-dlp` 深度对齐**：支持任务级 `headers` / `cookies` /
+  `referer` / `proxy` 透传，统一 HTTP、HLS、DASH 与 `yt-dlp`
+  字幕/封面/音质参数策略，支持用户覆盖格式选择器与网络异常分类增强。
 
-- 已增加“上次会话恢复”状态条，展示可继续、等待、失败、已完成任务，并提供继续、重试失败、清理完成入口。
-- 增强并发数量修改反馈：调高后立即补位，调低后说明不会强杀已在下载的任务。
-- 已改进错误报告：任务列表可一键复制任务诊断，包含 URL、状态、错误分类、平台信息、输出路径和日志位置。
-- 增加任务分组、标签、搜索和批量筛选能力。
+---
 
-## P3：发布与社区
+## Phase 3 (`v1.3.0`) — 全球化 UX 抛光、桌面融合与 CLI
 
-- 已新增：`pnpm risk:gitnexus` 本地风险门禁，普通 PR 默认不允许 `critical`
-  影响面；核心迁移需显式放行并说明验证范围。
-- 已建立真实 Tauri MCP Bridge
-  smoke，避免只靠普通浏览器或 jsdom；后续补下载链路 E2E。
-- 补充真实截图、短视频或 demo GIF。
-- 添加明确 License。
-- 完善 Windows/Linux release 验证说明。
-- 定期刷新 Graphify/GitNexus 摘要，避免架构文档再次漂移。
-- 持续维护 issue labels、issue templates、PR template 和贡献说明。
+- **全量国际化覆盖**：消除硬编码中文文案，打通 Settings / Toolbar / UnifiedView
+  / Dialogs / 状态文案的完整 `zh-CN` 与 `en-US`
+  双语覆盖，并向社区开放多语言贡献。
+- **桌面原生体验深化**：真正接入系统托盘最小化（`minimize_to_tray`）、系统级下载完成/失败通知（`notification_sound`）与可访问性键盘快捷键体系（`Ctrl/Cmd+V`、全选、空格暂停/恢复、焦点管理）。
+- **无头伴生 CLI
+  (`vdpro-cli`)**：复用同一 Rust 下载引擎核心，提供面向脚本与服务器批处理的命令行模式。
+
+---
+
+## Phase 4 (`v2.0.0`) — Cargo Workspace 分层与 SQLite WAL 存储
+
+- **Cargo Workspace 多 Crate 架构**：拆分为
+  `vdpro-core`（模型、配置、错误、事件）、`vdpro-providers`（HTTP / Range / HLS
+  / DASH / yt-dlp）、`vdpro-storage`（状态持久化与文件原子提交）与
+  `src-tauri`（IPC 与桌面壳），提升编译增量速度与第三方嵌入式复用度。
+- **SQLite (WAL) 存储替代全量 JSON 快照**：通过带自动迁移的路径将旧
+  `download_manager_state.json` 无损升级至 SQLite
+  WAL，消除上万任务下的全量序列化 O(N) 瓶颈。
+- **产品 showcase 与录制指南**：补充各平台实机截图 /
+  GIF 演示，并完善贡献者测试矩阵。
 
 ---
 
 ## 执行原则
 
 1. 下载核心行为必须 test-first。
-2. 涉及事件契约时，Rust/TypeScript schema 和前端 reducer 测试必须同步更新。
+2. 涉及事件契约时，Rust / TypeScript schema 和前端 reducer 测试必须同步更新。
 3. 涉及持久化或断点续传时，必须覆盖关闭重开和本地文件不一致场景。
 4. 涉及 UI 状态时，前端不抢写后端真相状态。
-5. 每轮完成后同步更新 README、`docs/index.md`、`docs/current-state.md`
+5. 每轮完成后同步更新
+   `README.md`、`README.zh-CN.md`、`CHANGELOG.md`、`docs/index.md`、`docs/current-state.md`
    和本路线图。

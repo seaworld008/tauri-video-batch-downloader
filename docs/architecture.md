@@ -36,13 +36,15 @@
 
 常规任务从 `Pending` 进入队列，队列未暂停且 semaphore 有余量时转为
 `Downloading`。暂停请求只发往后端，前端不直接破坏性改为
-`paused`；真实状态由后端事件或 `refreshTasks` 同步。完成前会进入
-`Committing`，写入完成 marker 后再转
+`paused`；真实状态由后端事件或 `refreshTasks` 同步（终态事件经
+`downloadEventBridge` 250ms 防抖刷新，避免并发完成时 IPC 风暴）。完成前会进入
+`Committing`，通过单流 `.part` / `.ts.tmp` 分片与
+`sync_all()` + 原子重命名写入，生成完成 marker 后再转
 `Completed`，这样启动恢复时可以根据 marker 与文件大小 hydrate 已完成文件。
 
-失败任务必须保留 `error_message`，`retryFailedTasks`
-会把失败任务重新提交到下载队列。取消或暂停活跃任务会移除 active
-handle，并触发队列补位，避免 active download 清理时丢失等待队列状态。
+失败任务保留 `error_message`
+并在任务行内联显示，同时支持工具栏批量重试 (`retryFailedTasks`) 与行级单个重试/继续/暂停/删除操作；取消或暂停活跃任务会移除 active
+handle 并保留暂停上下文以便续传，同时触发队列补位。
 
 ## 任务状态与排序
 

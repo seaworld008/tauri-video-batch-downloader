@@ -39,6 +39,58 @@ export const StatusBar: React.FC = () => {
     [tasks]
   );
 
+  const overviewBadge = React.useMemo(() => {
+    if (stats.queue_paused) {
+      return {
+        label: '队列已暂停',
+        className:
+          'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+        dotClass: 'bg-amber-500',
+        kind: 'dot' as const,
+      };
+    }
+    if (activeStats.downloading > 0 || activeStats.committing > 0) {
+      return {
+        label: '下载中',
+        className:
+          'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+        dotClass: 'bg-blue-500 animate-pulse',
+        kind: 'dot' as const,
+      };
+    }
+    if (activeStats.failed > 0) {
+      return {
+        label: '存在失败',
+        className:
+          'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300',
+        dotClass: '',
+        kind: 'error' as const,
+      };
+    }
+    if (activeStats.pending > 0) {
+      return {
+        label: '待开始',
+        className:
+          'border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+        dotClass: 'bg-yellow-500',
+        kind: 'dot' as const,
+      };
+    }
+    return {
+      label: '就绪',
+      className:
+        'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-900/30 dark:text-green-400',
+      dotClass: '',
+      kind: 'ready' as const,
+    };
+  }, [
+    stats.queue_paused,
+    activeStats.downloading,
+    activeStats.committing,
+    activeStats.failed,
+    activeStats.pending,
+  ]);
+
   return (
     <div
       className='bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-4 py-2 text-xs text-gray-600 dark:text-gray-400 select-none shrink-0 z-20'
@@ -120,9 +172,18 @@ export const StatusBar: React.FC = () => {
             <span className='text-[11px] font-medium text-gray-500 dark:text-gray-400'>
               任务总览
             </span>
-            <span className='inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[11px] text-green-700 dark:border-green-800 dark:bg-green-900/30 dark:text-green-400'>
-              <CheckCircleIcon className='w-3 h-3' />
-              就绪
+            <span
+              data-testid='status-overview-badge'
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${overviewBadge.className}`}
+            >
+              {overviewBadge.kind === 'error' ? (
+                <ExclamationTriangleIcon className='w-3 h-3' />
+              ) : overviewBadge.kind === 'ready' ? (
+                <CheckCircleIcon className='w-3 h-3' />
+              ) : (
+                <span className={`w-1.5 h-1.5 rounded-full ${overviewBadge.dotClass}`} />
+              )}
+              {overviewBadge.label}
             </span>
           </div>
 

@@ -15,15 +15,13 @@ pub struct BandwidthController {
 
 #[derive(Debug)]
 struct BandwidthState {
-    window_start: Instant,
-    bytes_in_window: u64,
+    next_available: Instant,
 }
 
 impl BandwidthState {
     fn new() -> Self {
         Self {
-            window_start: Instant::now(),
-            bytes_in_window: 0,
+            next_available: Instant::now(),
         }
     }
 }
@@ -47,21 +45,19 @@ impl BandwidthController {
     pub async fn throttle(&self, bytes: u64) {
         let limit_value = *self.limit.read().await;
         if let Some(limit) = limit_value {
-            if limit == 0 {
+            if limit == 0 || bytes == 0 {
                 return;
             }
-            let mut state = self.state.lock().await;
-            let elapsed = state.window_start.elapsed();
-            if elapsed >= Duration::from_secs(1) {
-                state.window_start = Instant::now();
-                state.bytes_in_window = 0;
-            }
-            state.bytes_in_window += bytes;
-            if state.bytes_in_window > limit {
-                let excess = state.bytes_in_window - limit;
-                let sleep_secs = excess as f64 / limit as f64;
-                drop(state);
-                sleep(Duration::from_secs_f64(sleep_secs)).await;
+            let wait = {
+                let mut state = self.state.lock().await;
+                let now = Instant::now();
+                let cost = Duration::from_secs_f64(bytes as f64 / limit as f64);
+                let slot = state.next_available.max(now);
+                state.next_available = slot + cost;
+                slot.saturating_duration_since(now)
+            };
+            if !wait.is_zero() {
+                sleep(wait).await;
             }
         }
     }
@@ -328,8 +324,7 @@ impl HttpDownloader {
 
     /// 设置进度回调
     pub fn set_progress_callback(&mut self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
-        self.progress_tx = Some(tx.clone());
-        self.m3u8_downloader.set_progress_callback(tx);
+        self.progress_tx = Some(tx);
     }
 
     pub fn update_max_concurrent(&self, new_limit: usize) {
@@ -384,9 +379,19 @@ impl HttpDownloader {
     }
 
     fn resolve_resume_dir() -> std::path::PathBuf {
-        ProjectDirs::from("com", "video-downloader", "VideoDownloaderPro")
-            .map(|dirs| dirs.data_local_dir().join("resume"))
-            .unwrap_or_else(|| std::env::temp_dir().join("video_downloader_resume"))
+        let canonical = ProjectDirs::from("com", "videodownloader", "pro")
+            .map(|dirs| dirs.data_local_dir().join("resume"));
+        let legacy = ProjectDirs::from("com", "video-downloader", "VideoDownloaderPro")
+            .map(|dirs| dirs.data_local_dir().join("resume"));
+
+        match canonical {
+            Some(dir) if dir.exists() => dir,
+            Some(dir) => match legacy {
+                Some(old) if old.exists() => old,
+                _ => dir,
+            },
+            None => legacy.unwrap_or_else(|| std::env::temp_dir().join("video_downloader_resume")),
+        }
     }
 
     /// 开始下载单个文件
@@ -705,6 +710,7 @@ impl HttpDownloader {
         ));
 
         let start_time = Instant::now();
+        let mut last_update = start_time;
         let mut downloaded = task.stats.downloaded_bytes;
         let total_hint = task.stats.total_bytes;
 
@@ -726,10 +732,16 @@ impl HttpDownloader {
                         Some(delta) => {
                             downloaded = downloaded.saturating_add(delta);
                             let total = total_hint.unwrap_or(downloaded);
-                            if total_hint.is_some() && downloaded >= total {
+                            let mut force_emit = false;
+                            if total_hint.is_some() && downloaded >= total && task.status != TaskStatus::Committing {
                                 task.status = TaskStatus::Committing;
+                                force_emit = true;
                             }
-                            self.update_progress(task, downloaded, total, start_time).await;
+                            let now = Instant::now();
+                            if force_emit || now.duration_since(last_update) >= Duration::from_millis(200) {
+                                self.update_progress(task, downloaded, total, start_time).await;
+                                last_update = now;
+                            }
                         }
                         None => {
                             if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
@@ -852,9 +864,17 @@ impl HttpDownloader {
 
         tracing::info!("使用M3U8Downloader开始流媒体下载: {}", task.filename);
 
-        // 调用M3U8Downloader的下载方法
+        // 传入每任务独立的进度/取消/限速上下文，避免并发 M3U8 任务串台
         self.m3u8_downloader
-            .download_m3u8(&task.id, &task.url, &output_path_str, pause_flag)
+            .download_m3u8_with_context(
+                &task.id,
+                &task.url,
+                &output_path_str,
+                cancel_flag,
+                pause_flag,
+                self.progress_tx.clone(),
+                Some(self.bandwidth_controller.clone()),
+            )
             .await?;
 
         tracing::info!("M3U8流媒体下载完成: {}", task.filename);
@@ -905,8 +925,12 @@ impl HttpDownloader {
             tracing::info!("[DOWNLOAD_TRACE] Created output directory: {:?}", parent);
         }
 
-        // 检查现有文件大小以支持断点续传
-        let mut existing_size = if full_path.exists() {
+        let part_path = crate::core::part_file::derive_part_path(&full_path);
+
+        // 检查现有 .part 或历史半成品文件大小以支持断点续传
+        let mut existing_size = if part_path.exists() {
+            tokio::fs::metadata(&part_path).await?.len()
+        } else if self.config.resume_enabled && full_path.exists() {
             tokio::fs::metadata(&full_path).await?.len()
         } else {
             0
@@ -982,14 +1006,17 @@ impl HttpDownloader {
         };
         task.stats.downloaded_bytes = existing_size;
 
-        // 打开文件准备写入
+        // 将下载字节写入临时 .part 文件，仅在完整落盘后再原子提交到目标路径
+        if server_honored_range && !part_path.exists() && full_path.exists() {
+            tokio::fs::rename(&full_path, &part_path).await?;
+        }
         let mut file = if existing_size > 0 && server_honored_range {
             tokio::fs::OpenOptions::new()
                 .append(true)
-                .open(&full_path)
+                .open(&part_path)
                 .await?
         } else {
-            File::create(&full_path).await?
+            File::create(&part_path).await?
         };
 
         // 开始流式下载
@@ -1058,9 +1085,11 @@ impl HttpDownloader {
         self.update_progress(task, downloaded, total_size, start_time)
             .await;
 
-        // 确保文件数据写入磁盘
+        // 确保文件数据写入磁盘后再原子重命名为最终文件
         file.flush().await?;
         file.sync_all().await?;
+        drop(file);
+        tokio::fs::rename(&part_path, &full_path).await?;
 
         tracing::info!("文件下载完成: {} ({} 字节)", task.filename, downloaded);
         Ok(())
@@ -1955,6 +1984,7 @@ mod integration_tests {
 
         assert_eq!(result.status, TaskStatus::Failed);
         assert!(result.error_message.is_some());
+        assert!(!temp_dir.path().join("truncated.bin").exists());
     }
 
     #[tokio::test]
@@ -2054,5 +2084,22 @@ mod integration_tests {
         // 验证嵌套目录被创建
         assert!(nested_path.exists());
         assert!(nested_path.join("nested_file.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn test_bandwidth_controller_monotonic_token_bucket() {
+        let controller = BandwidthController::new();
+        *controller.limit_handle().write().await = Some(10_000); // 10 KB/s
+
+        let started = Instant::now();
+        let c1 = controller.clone();
+        let c2 = controller.clone();
+        tokio::join!(async move { c1.throttle(1_000).await }, async move {
+            c2.throttle(1_000).await
+        },);
+        let elapsed = started.elapsed();
+        // First 1KB passes immediately, second 1KB schedules ~100ms later; should never stall seconds
+        assert!(elapsed >= Duration::from_millis(70));
+        assert!(elapsed < Duration::from_millis(800));
     }
 }

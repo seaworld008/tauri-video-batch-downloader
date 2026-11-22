@@ -48,7 +48,7 @@ pnpm build:local
 相关配置：
 
 - `src-tauri/tauri.conf.local.json`
-- `.env.localtest`
+- 本地未跟踪环境变量（例如 `VITE_LOCAL_LOGGING=true`）
 
 本地测试包允许保留 sidecar 占位文件，便于先验证桌面壳、IPC 和普通下载链路：
 

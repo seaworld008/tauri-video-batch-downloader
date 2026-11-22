@@ -88,5 +88,38 @@ describe('Unified StatusBar', () => {
     render(<StatusBar />);
 
     expect(screen.getByText('0 B/s')).toBeInTheDocument();
+    expect(screen.getByTestId('status-overview-badge')).toHaveTextContent('就绪');
+  });
+
+  it('shows active downloading and queue-paused states in overview badge', () => {
+    render(<StatusBar />);
+    expect(screen.getByTestId('status-overview-badge')).toHaveTextContent('下载中');
+
+    const pausedQueueState = {
+      tasks: [{ id: 'paused-1', status: 'paused', downloaded_size: 256 }],
+      stats: {
+        total_tasks: 1,
+        completed_tasks: 0,
+        failed_tasks: 0,
+        total_downloaded: 256,
+        average_speed: 0,
+        display_total_speed_bps: 0,
+        active_downloads: 0,
+        queue_paused: true,
+        average_commit_duration: 0,
+        p95_commit_duration: 0,
+        failed_commit_count: 0,
+        commit_warning_count: 0,
+        commit_elevated_warning_count: 0,
+      },
+    };
+    mockUseDownloadStore.mockImplementation((selector?: unknown) =>
+      typeof selector === 'function'
+        ? (selector as (state: typeof pausedQueueState) => unknown)(pausedQueueState)
+        : pausedQueueState
+    );
+
+    render(<StatusBar />);
+    expect(screen.getAllByTestId('status-overview-badge')[1]).toHaveTextContent('队列已暂停');
   });
 });

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useConfigStore } from '../stores/configStore';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -11,10 +12,18 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const configTheme = useConfigStore(state => state?.config?.ui?.theme);
   const [theme, setTheme] = useState<Theme>(() => {
     // 从 localStorage 读取用户偏好，默认为系统主题
     return (localStorage.getItem('theme') as Theme) || 'system';
   });
+
+  useEffect(() => {
+    if (configTheme === 'light' || configTheme === 'dark' || configTheme === 'system') {
+      setTheme(configTheme);
+      localStorage.setItem('theme', configTheme);
+    }
+  }, [configTheme]);
 
   const [isDark, setIsDark] = useState(false);
 
