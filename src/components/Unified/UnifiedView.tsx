@@ -341,7 +341,7 @@ export const UnifiedView: React.FC = () => {
               Video Downloader Pro
             </h2>
             <p className='text-gray-500 dark:text-gray-400 mb-6 font-mono text-sm'>
-              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.3.0'}
+              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '2.0.0'}
             </p>
             <p className='text-gray-600 dark:text-gray-300 mb-8 text-sm leading-relaxed'>
               {t('app.aboutDescriptionLine1')}

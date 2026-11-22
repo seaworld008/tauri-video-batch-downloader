@@ -35,8 +35,9 @@ use crate::core::integrity_checker::{
 };
 use crate::core::models::{
     AppError, AppResult, DownloadConfig, DownloadStats as ModelsDownloadStats, DownloaderType,
-    ProgressUpdate, TaskRequestOptions, TaskStatus, VideoTask,
+    PersistedManagerState, ProgressUpdate, TaskPriority, TaskRequestOptions, TaskStatus, VideoTask,
 };
+use vdpro_storage::SqliteStateStore;
 
 use self::state::{
     decide_pause_transition, decide_queue_admission, decide_resume_transition,
@@ -157,28 +158,8 @@ const QUEUE_PRIORITY_RESTORE: u8 = 10;
 pub type EventSender = mpsc::UnboundedSender<DownloadEvent>;
 pub type EventReceiver = mpsc::UnboundedReceiver<DownloadEvent>;
 
-/// Priority queue for task scheduling
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TaskPriority {
-    pub task_id: String,
-    pub priority: u8, // Higher number = higher priority
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl PartialOrd for TaskPriority {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for TaskPriority {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // First by priority (higher first), then by creation time (older first)
-        self.priority
-            .cmp(&other.priority)
-            .then_with(|| other.created_at.cmp(&self.created_at))
-    }
-}
+/// Re-exported priority queue item for task scheduling
+pub use crate::core::models::TaskPriority as QueueTaskPriority;
 
 /// Main download manager that orchestrates all download operations
 pub struct DownloadManager {
@@ -213,6 +194,8 @@ pub struct DownloadManager {
     queue_paused: bool,
     /// Persisted state file path
     state_path: PathBuf,
+    /// SQLite WAL state store handle (when persistence is enabled)
+    state_store: Option<Arc<SqliteStateStore>>,
     /// Whether persistence is enabled for this manager instance
     persistence_enabled: bool,
 
@@ -246,13 +229,6 @@ struct CompletionMarker {
     url: String,
     file_size: u64,
     completed_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct PersistedManagerState {
-    tasks: Vec<VideoTask>,
-    queue: Vec<TaskPriority>,
-    queue_paused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -439,6 +415,7 @@ impl DownloadManager {
             task_queue: Arc::new(Mutex::new(std::collections::BinaryHeap::new())),
             queue_paused: false,
             state_path,
+            state_store: None,
             persistence_enabled,
             rate_limit: rate_limit_handle,
             is_running: false,
@@ -460,43 +437,18 @@ impl DownloadManager {
     fn default_state_path() -> AppResult<PathBuf> {
         let data_dir = AppConfig::get_data_dir()
             .map_err(|e| AppError::System(format!("Failed to get data dir: {}", e)))?;
-        Ok(data_dir.join("download_state.json"))
+        Ok(data_dir.join("download_state.db"))
     }
 
     fn load_persisted_state(&mut self) -> AppResult<()> {
         if !self.persistence_enabled {
             return Ok(());
         }
-        if !self.state_path.exists() {
-            return Ok(());
-        }
 
-        let content = std::fs::read_to_string(&self.state_path).map_err(|e| {
-            AppError::System(format!(
-                "Failed to read persisted state {:?}: {}",
-                self.state_path, e
-            ))
-        })?;
-        let mut state: PersistedManagerState = serde_json::from_str(&content).map_err(|e| {
-            let backup_path = self
-                .state_path
-                .with_extension(format!("json.corrupt.{}", chrono::Utc::now().timestamp()));
-            if let Err(backup_err) = std::fs::copy(&self.state_path, &backup_path) {
-                warn!(
-                    "Failed to back up corrupt state file {:?} to {:?}: {}",
-                    self.state_path, backup_path, backup_err
-                );
-            } else {
-                warn!(
-                    "Backed up corrupt persisted state file {:?} to {:?}",
-                    self.state_path, backup_path
-                );
-            }
-            AppError::System(format!(
-                "Failed to parse persisted state {:?}: {}",
-                self.state_path, e
-            ))
-        })?;
+        let store = SqliteStateStore::open_for_state_path(&self.state_path)?;
+        let db_path = store.db_path().to_path_buf();
+        let mut state = store.load_state_sync()?;
+        self.state_store = Some(Arc::new(store));
 
         self.tasks = state
             .tasks
@@ -538,7 +490,7 @@ impl DownloadManager {
         self.recompute_stats();
         info!(
             "Loaded persisted manager state from {:?}: total={}, pending={}, paused={}, failed={}, completed={}, queued={}, queue_paused={}",
-            self.state_path,
+            db_path,
             self.tasks.len(),
             self.tasks
                 .values()
@@ -562,16 +514,64 @@ impl DownloadManager {
         Ok(())
     }
 
-    async fn persist_state(&self) -> AppResult<()> {
+    fn active_state_store(&self) -> Option<Arc<SqliteStateStore>> {
         if !self.persistence_enabled {
+            return None;
+        }
+        self.state_store.clone()
+    }
+
+    async fn persist_task(&self, task: &VideoTask) -> AppResult<()> {
+        let Some(store) = self.active_state_store() else {
+            return Ok(());
+        };
+        store.upsert_task(task.clone()).await
+    }
+
+    async fn persist_tasks_batch(&self, tasks: &[VideoTask]) -> AppResult<()> {
+        if tasks.is_empty() {
             return Ok(());
         }
+        let Some(store) = self.active_state_store() else {
+            return Ok(());
+        };
+        store.upsert_tasks_batch(tasks.to_vec()).await
+    }
 
-        if let Some(parent) = self.state_path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| AppError::System(format!("Failed to create data dir: {}", e)))?;
+    async fn delete_persisted_task(&self, task_id: &str) -> AppResult<()> {
+        let Some(store) = self.active_state_store() else {
+            return Ok(());
+        };
+        store.delete_task(task_id.to_string()).await
+    }
+
+    async fn delete_persisted_tasks_batch(&self, task_ids: &[String]) -> AppResult<()> {
+        if task_ids.is_empty() {
+            return Ok(());
         }
+        let Some(store) = self.active_state_store() else {
+            return Ok(());
+        };
+        store.delete_tasks_batch(task_ids.to_vec()).await
+    }
+
+    async fn persist_queue_state(&self) -> AppResult<()> {
+        let Some(store) = self.active_state_store() else {
+            return Ok(());
+        };
+        let queue_items = {
+            let queue = self.task_queue.lock().await;
+            queue.iter().cloned().collect::<Vec<_>>()
+        };
+        store
+            .replace_queue_and_paused(queue_items, self.queue_paused)
+            .await
+    }
+
+    async fn persist_state(&self) -> AppResult<()> {
+        let Some(store) = self.active_state_store() else {
+            return Ok(());
+        };
 
         let queue_items = {
             let queue = self.task_queue.lock().await;
@@ -584,23 +584,7 @@ impl DownloadManager {
             queue_paused: self.queue_paused,
         };
 
-        let json = serde_json::to_string(&state)
-            .map_err(|e| AppError::System(format!("Failed to serialize persisted state: {}", e)))?;
-
-        let tmp_path = self
-            .state_path
-            .with_extension(format!("json.tmp.{}", Uuid::new_v4()));
-        fs::write(&tmp_path, json).await.map_err(|e| {
-            AppError::System(format!("Failed to write persisted state temp file: {}", e))
-        })?;
-        if let Err(e) = fs::rename(&tmp_path, &self.state_path).await {
-            let _ = fs::remove_file(&tmp_path).await;
-            return Err(AppError::System(format!(
-                "Failed to atomically replace persisted state: {}",
-                e
-            )));
-        }
-        Ok(())
+        store.save_snapshot(state).await
     }
 
     /// Start the download manager
@@ -720,7 +704,7 @@ impl DownloadManager {
         }
 
         if !updated_tasks.is_empty() {
-            if let Err(err) = self.persist_state().await {
+            if let Err(err) = self.persist_tasks_batch(&updated_tasks).await {
                 warn!(
                     "Failed to persist state after updating output paths: {}",
                     err
@@ -738,17 +722,17 @@ impl DownloadManager {
         let mut manager = manager.write().await;
 
         let mut stored_tasks = Vec::with_capacity(tasks.len());
-        let mut added_any = false;
+        let mut created_tasks = Vec::new();
         for task in tasks {
             let result = manager.add_video_task_internal(task, false).await?;
             if result.created {
-                added_any = true;
+                created_tasks.push(result.task.clone());
             }
             stored_tasks.push(result.task);
         }
 
-        if added_any {
-            if let Err(err) = manager.persist_state().await {
+        if !created_tasks.is_empty() {
+            if let Err(err) = manager.persist_tasks_batch(&created_tasks).await {
                 warn!("Failed to persist state after batch add tasks: {}", err);
             }
         }
@@ -770,6 +754,7 @@ impl DownloadManager {
     ) -> AppResult<usize> {
         let mut manager = manager.write().await;
         let mut removed = 0usize;
+        let mut removed_ids = Vec::new();
         let mut errors = Vec::new();
 
         for task_id in task_ids {
@@ -784,13 +769,16 @@ impl DownloadManager {
                 let _ = manager.progress_tracker.stop_tracking(&task_id).await;
             }
             match manager.remove_task_internal(&task_id, false).await {
-                Ok(()) => removed += 1,
+                Ok(()) => {
+                    removed_ids.push(task_id);
+                    removed += 1;
+                }
                 Err(err) => errors.push(format!("{}: {}", task_id, err)),
             }
         }
 
-        if removed > 0 {
-            if let Err(err) = manager.persist_state().await {
+        if !removed_ids.is_empty() {
+            if let Err(err) = manager.delete_persisted_tasks_batch(&removed_ids).await {
                 warn!("Failed to persist state after batch remove tasks: {}", err);
             }
         }
@@ -863,7 +851,7 @@ impl DownloadManager {
             .insert(stored_task.id.clone(), stored_task.clone());
 
         if persist {
-            if let Err(err) = self.persist_state().await {
+            if let Err(err) = self.persist_task(&stored_task).await {
                 warn!("Failed to persist state after adding task: {}", err);
             }
         }
@@ -939,7 +927,7 @@ impl DownloadManager {
         self.tasks
             .insert(stored_task.id.clone(), stored_task.clone());
 
-        if let Err(err) = self.persist_state().await {
+        if let Err(err) = self.persist_task(&stored_task).await {
             warn!("Failed to persist state after adding task: {}", err);
         }
 
@@ -1011,7 +999,7 @@ impl DownloadManager {
         self.tasks.insert(task_id.clone(), task.clone());
 
         self.update_stats().await;
-        if let Err(err) = self.persist_state().await {
+        if let Err(err) = self.persist_task(&task).await {
             warn!("Failed to persist state after adding task: {}", err);
         }
 
@@ -1084,15 +1072,19 @@ impl DownloadManager {
         // 即使 semaphore 仍有可用 permit，也要遵守当前并发配置，避免降配后短时间超发。
         if self.active_downloads.len() >= self.config.concurrent_downloads {
             self.enqueue_task(task_id, QUEUE_PRIORITY_MANUAL).await;
+            let mut updated_snapshot = None;
             if let Some(task) = self.tasks.get_mut(task_id) {
                 if task.status == TaskStatus::Failed {
                     task.status = TaskStatus::Pending;
                     task.error_message = None;
                     task.updated_at = chrono::Utc::now();
-                    self.update_stats().await;
-                    if let Err(err) = self.persist_state().await {
-                        warn!("Failed to persist state after queueing task: {}", err);
-                    }
+                    updated_snapshot = Some(task.clone());
+                }
+            }
+            if let Some(snapshot) = updated_snapshot {
+                self.update_stats().await;
+                if let Err(err) = self.persist_task(&snapshot).await {
+                    warn!("Failed to persist state after queueing task: {}", err);
                 }
             }
             return Err(AppError::Download(
@@ -1105,15 +1097,19 @@ impl DownloadManager {
             Ok(permit) => permit,
             Err(_) => {
                 self.enqueue_task(task_id, QUEUE_PRIORITY_MANUAL).await;
+                let mut updated_snapshot = None;
                 if let Some(task) = self.tasks.get_mut(task_id) {
                     if task.status == TaskStatus::Failed {
                         task.status = TaskStatus::Pending;
                         task.error_message = None;
                         task.updated_at = chrono::Utc::now();
-                        self.update_stats().await;
-                        if let Err(err) = self.persist_state().await {
-                            warn!("Failed to persist state after queueing task: {}", err);
-                        }
+                        updated_snapshot = Some(task.clone());
+                    }
+                }
+                if let Some(snapshot) = updated_snapshot {
+                    self.update_stats().await;
+                    if let Err(err) = self.persist_task(&snapshot).await {
+                        warn!("Failed to persist state after queueing task: {}", err);
                     }
                 }
                 return Err(AppError::Download(
@@ -1309,23 +1305,33 @@ impl DownloadManager {
             } else {
                 self.drop_active_handle(task_id);
                 self.start_download(task_id).await?;
-                if let Some(task) = self.tasks.get_mut(task_id) {
+                let resumed_snapshot = if let Some(task) = self.tasks.get_mut(task_id) {
                     task.paused_at = None;
                     task.paused_from_active = false;
-                }
-                if let Err(err) = self.persist_state().await {
-                    warn!("Failed to persist state after resume download: {}", err);
+                    Some(task.clone())
+                } else {
+                    None
+                };
+                if let Some(snapshot) = resumed_snapshot {
+                    if let Err(err) = self.persist_task(&snapshot).await {
+                        warn!("Failed to persist state after resume download: {}", err);
+                    }
                 }
             }
         } else {
             // Resume is essentially the same as starting
             self.start_download(task_id).await?;
-            if let Some(task) = self.tasks.get_mut(task_id) {
+            let resumed_snapshot = if let Some(task) = self.tasks.get_mut(task_id) {
                 task.paused_at = None;
                 task.paused_from_active = false;
-            }
-            if let Err(err) = self.persist_state().await {
-                warn!("Failed to persist state after resume download: {}", err);
+                Some(task.clone())
+            } else {
+                None
+            };
+            if let Some(snapshot) = resumed_snapshot {
+                if let Err(err) = self.persist_task(&snapshot).await {
+                    warn!("Failed to persist state after resume download: {}", err);
+                }
             }
         }
 
@@ -1384,6 +1390,7 @@ impl DownloadManager {
         let pause_moment = chrono::Utc::now();
 
         let task_ids: Vec<String> = self.active_downloads.keys().cloned().collect();
+        let mut paused_tasks = Vec::with_capacity(task_ids.len());
         for task_id in &task_ids {
             let _ = downloader.pause_task(task_id).await;
             if let Some(task) = self.tasks.get_mut(task_id) {
@@ -1392,6 +1399,7 @@ impl DownloadManager {
                 task.paused_from_active = true;
                 task.status = TaskStatus::Paused;
                 task.updated_at = pause_moment;
+                paused_tasks.push(task.clone());
             }
         }
         self.update_stats().await;
@@ -1400,8 +1408,11 @@ impl DownloadManager {
             "Paused {} active downloads (queue remains pending)",
             task_ids.len()
         );
-        if let Err(err) = self.persist_state().await {
-            warn!("Failed to persist state after pause-all: {}", err);
+        if let Err(err) = self.persist_tasks_batch(&paused_tasks).await {
+            warn!("Failed to persist paused tasks after pause-all: {}", err);
+        }
+        if let Err(err) = self.persist_queue_state().await {
+            warn!("Failed to persist queue state after pause-all: {}", err);
         }
         Ok(task_ids.len())
     }
@@ -1563,13 +1574,25 @@ impl DownloadManager {
         guard.remove_task_from_queue(task_id).await
     }
 
-    async fn runtime_persist_state_best_effort(manager: &Arc<RwLock<Self>>, context: &str) {
-        let persist_result = {
+    async fn runtime_persist_task_best_effort(
+        manager: &Arc<RwLock<Self>>,
+        task_id: &str,
+        context: &str,
+    ) {
+        let (store, snapshot) = {
             let guard = manager.read().await;
-            guard.persist_state().await
+            (
+                guard.active_state_store(),
+                guard.tasks.get(task_id).cloned(),
+            )
         };
-        if let Err(err) = persist_result {
-            warn!("Failed to persist state after {}: {}", context, err);
+        if let (Some(store), Some(task)) = (store, snapshot) {
+            if let Err(err) = store.upsert_task(task).await {
+                warn!(
+                    "Failed to persist task {} after {}: {}",
+                    task_id, context, err
+                );
+            }
         }
     }
 
@@ -1846,8 +1869,12 @@ impl DownloadManager {
                     }
                     guard.recompute_stats();
                 }
-                Self::runtime_persist_state_best_effort(manager, "runtime_start_resume_active")
-                    .await;
+                Self::runtime_persist_task_best_effort(
+                    manager,
+                    task_id,
+                    "runtime_start_resume_active",
+                )
+                .await;
 
                 if let Some(sender) = Self::runtime_event_sender(manager).await {
                     let _ = sender.send(DownloadEvent::TaskResumed {
@@ -1879,8 +1906,9 @@ impl DownloadManager {
                     }
                     guard.recompute_stats();
                 }
-                Self::runtime_persist_state_best_effort(
+                Self::runtime_persist_task_best_effort(
                     manager,
+                    task_id,
                     "persist state after queueing stale active task (runtime start limit)",
                 )
                 .await;
@@ -1899,8 +1927,9 @@ impl DownloadManager {
                 }
                 guard.recompute_stats();
             }
-            Self::runtime_persist_state_best_effort(
+            Self::runtime_persist_task_best_effort(
                 manager,
+                task_id,
                 "persist state after queueing (runtime start limit)",
             )
             .await;
@@ -1920,8 +1949,9 @@ impl DownloadManager {
                     }
                     guard.recompute_stats();
                 }
-                Self::runtime_persist_state_best_effort(
+                Self::runtime_persist_task_best_effort(
                     manager,
+                    task_id,
                     "persist state after queueing (runtime start semaphore)",
                 )
                 .await;
@@ -1974,7 +2004,7 @@ impl DownloadManager {
             WorkerLifecycleAction::EmitSyntheticEvent => {}
         }
 
-        Self::runtime_persist_state_best_effort(manager, "runtime_pause_download").await;
+        Self::runtime_persist_task_best_effort(manager, task_id, "runtime_pause_download").await;
 
         if pause_worker_action == WorkerLifecycleAction::EmitSyntheticEvent {
             if let Some(sender) = Self::runtime_event_sender(manager).await {
@@ -2047,7 +2077,8 @@ impl DownloadManager {
                 }
                 guard.recompute_stats();
             }
-            Self::runtime_persist_state_best_effort(manager, "runtime_resume_download").await;
+            Self::runtime_persist_task_best_effort(manager, task_id, "runtime_resume_download")
+                .await;
         } else {
             return Self::runtime_start_download(manager, task_id).await;
         }
@@ -2089,7 +2120,7 @@ impl DownloadManager {
             }
             guard.recompute_stats();
         }
-        Self::runtime_persist_state_best_effort(manager, "runtime_cancel_download").await;
+        Self::runtime_persist_task_best_effort(manager, task_id, "runtime_cancel_download").await;
 
         if !is_active {
             if let Some(sender) = Self::runtime_event_sender(manager).await {
@@ -2295,7 +2326,7 @@ impl DownloadManager {
                 self.tasks.remove(task_id);
                 self.update_stats().await;
                 if persist {
-                    if let Err(err) = self.persist_state().await {
+                    if let Err(err) = self.delete_persisted_task(task_id).await {
                         warn!("Failed to persist state after removing task: {}", err);
                     }
                 }
@@ -2382,16 +2413,21 @@ impl DownloadManager {
 
     /// Clear all completed tasks
     pub async fn clear_completed(&mut self) -> AppResult<usize> {
-        let initial_count = self.tasks.len();
+        let completed_ids: Vec<String> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| task.status == TaskStatus::Completed)
+            .map(|(id, _)| id.clone())
+            .collect();
 
         self.tasks
             .retain(|_id, task| task.status != TaskStatus::Completed);
         self.update_stats().await;
-        if let Err(err) = self.persist_state().await {
+        if let Err(err) = self.delete_persisted_tasks_batch(&completed_ids).await {
             warn!("Failed to persist state after clear_completed: {}", err);
         }
 
-        let removed_count = initial_count - self.tasks.len();
+        let removed_count = completed_ids.len();
         info!("🧹 Cleared {} completed tasks", removed_count);
 
         Ok(removed_count)
@@ -2619,7 +2655,7 @@ impl DownloadManager {
 
     /// Update task status
     pub async fn update_task_status(&mut self, task_id: &str, status: TaskStatus) -> AppResult<()> {
-        if let Some(task) = self.tasks.get_mut(task_id) {
+        let updated_snapshot = if let Some(task) = self.tasks.get_mut(task_id) {
             task.status = status;
             if matches!(task.status, TaskStatus::Committing) {
                 task.speed = 0.0;
@@ -2630,10 +2666,15 @@ impl DownloadManager {
                 }
             }
             task.updated_at = chrono::Utc::now();
+            Some(task.clone())
+        } else {
+            None
+        };
+        if let Some(snapshot) = updated_snapshot {
             self.update_stats().await;
-        }
-        if let Err(err) = self.persist_state().await {
-            warn!("Failed to persist state after status update: {}", err);
+            if let Err(err) = self.persist_task(&snapshot).await {
+                warn!("Failed to persist state after status update: {}", err);
+            }
         }
         Ok(())
     }
@@ -2863,12 +2904,15 @@ impl DownloadManager {
             );
         }
 
+        let finalized_snapshot = self.tasks.get(task_id).cloned();
         self.update_stats().await;
-        if let Err(err) = self.persist_state().await {
-            warn!(
-                "Failed to persist state after finalizing task state: {}",
-                err
-            );
+        if let Some(snapshot) = finalized_snapshot {
+            if let Err(err) = self.persist_task(&snapshot).await {
+                warn!(
+                    "Failed to persist state after finalizing task state: {}",
+                    err
+                );
+            }
         }
         Ok(())
     }
@@ -4699,5 +4743,60 @@ mod tests {
             }
             other => panic!("expected ExternalService server_error, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_legacy_json_state_migrates_seamlessly_into_sqlite_wal() -> AppResult<()> {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let legacy_json_path = temp_dir.path().join("download_state.json");
+        let db_path = temp_dir.path().join("download_state.db");
+        let now = chrono::Utc::now();
+
+        let legacy_state = PersistedManagerState {
+            tasks: vec![VideoTask {
+                id: "legacy-active-1".to_string(),
+                url: "https://example.com/legacy.mp4".to_string(),
+                title: "Legacy Video".to_string(),
+                output_path: temp_dir.path().to_string_lossy().to_string(),
+                resolved_path: None,
+                status: TaskStatus::Downloading,
+                progress: 42.0,
+                file_size: Some(2048),
+                downloaded_size: 860,
+                speed: 0.0,
+                display_speed_bps: 0,
+                eta: None,
+                error_message: None,
+                created_at: now,
+                updated_at: now,
+                paused_at: None,
+                paused_from_active: false,
+                downloader_type: None,
+                video_info: None,
+                external_info: None,
+                request_options: None,
+            }],
+            queue: Vec::new(),
+            queue_paused: false,
+        };
+        std::fs::write(
+            &legacy_json_path,
+            serde_json::to_string(&legacy_state).unwrap(),
+        )
+        .unwrap();
+
+        let manager =
+            DownloadManager::new_with_state_path(DownloadConfig::default(), db_path.clone())?;
+        assert!(db_path.exists());
+        assert!(!legacy_json_path.exists());
+        assert!(manager.queue_paused);
+
+        let migrated = manager.tasks.get("legacy-active-1").expect("migrated task");
+        assert_eq!(migrated.status, TaskStatus::Paused);
+        assert!(migrated.paused_from_active);
+
+        Ok(())
     }
 }

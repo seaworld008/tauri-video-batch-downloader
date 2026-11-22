@@ -223,11 +223,11 @@ jobs:
         working-directory: ./src-tauri
 
       - name: Run Rust clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
         working-directory: ./src-tauri
 
       - name: Run Rust tests
-        run: cargo test
+        run: cargo test --workspace
         working-directory: ./src-tauri
 
   build-release:

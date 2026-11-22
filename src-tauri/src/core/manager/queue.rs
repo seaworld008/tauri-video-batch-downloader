@@ -30,7 +30,7 @@ impl DownloadManager {
         let changed = self.enqueue_task_without_persist(task_id, priority).await;
 
         if changed {
-            if let Err(err) = self.persist_state().await {
+            if let Err(err) = self.persist_queue_state().await {
                 warn!("Failed to persist state after enqueue: {}", err);
             }
         }
@@ -60,7 +60,7 @@ impl DownloadManager {
         let removed = self.remove_task_from_queue_without_persist(task_id).await;
 
         if removed {
-            if let Err(err) = self.persist_state().await {
+            if let Err(err) = self.persist_queue_state().await {
                 warn!("Failed to persist state after dequeue: {}", err);
             }
         }

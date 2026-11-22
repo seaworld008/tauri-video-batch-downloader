@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-11-22
+
+### Added
+
+- **4-Crate Cargo Workspace Modularization**:
+  - `src-tauri/crates/vdpro-core`: Pure domain models (`VideoTask`,
+    `TaskStatus`, `TaskPriority`, `PersistedManagerState`, `AppError`),
+    configuration (`AppConfig`), retry/circuit-breaker error handling, URL/file
+    validation, cross-platform hidden process helpers, progress tracking, and
+    cryptographic integrity checking.
+  - `src-tauri/crates/vdpro-storage`: `PartFileWriter` atomic `.part` staging
+    and `SqliteStateStore` persistent SQLite WAL backend (`rusqlite` `0.43`
+    bundled).
+  - `src-tauri/crates/vdpro-providers`: Platform URL detection (`platform.rs`),
+    priority `ProviderRegistry` (`registry.rs`), native MPEG-DASH MPD parser
+    (`dash_parser.rs`), and shared FFmpeg remux/mux layer (`ffmpeg_muxer.rs`).
+  - `src-tauri` (`video-downloader-pro` & `vdpro-cli`): Tauri v2 IPC commands,
+    tray/lifecycle integration, active transport engines, and companion CLI.
+- **SQLite WAL Persistent State Store & Lossless JSON Migration**:
+  - Replaced monolithic full-file JSON snapshot serialization in
+    `DownloadManager` with `SqliteStateStore` (`download_state.db` in WAL mode
+    with `synchronous = NORMAL`, indexed `tasks` table, `queue_items`, and
+    `manager_meta`).
+  - Added O(1) single-task upserts/deletes and single-transaction batch
+    mutations (`upsert_tasks_batch`, `delete_tasks_batch`,
+    `replace_queue_and_paused`) dispatched off async worker threads via
+    `tokio::task::spawn_blocking`.
+  - Added one-time lossless migration importing existing `download_state.json`
+    into SQLite WAL with `.json.migrated.<ts>.bak` archival and `.json.corrupt`
+    backup recovery on malformed legacy JSON.
+
+### Changed
+
+- Updated CI (`ci.yml`), Release (`release.yml`), Security (`security.yml`), and
+  `package.json#scripts#test:all` to execute `cargo clippy --workspace` and
+  `cargo test --workspace`.
+
 ## [1.3.0] - 2026-11-22
 
 ### Added

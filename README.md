@@ -60,16 +60,17 @@ by a Rust core.
 
 ## Core Capabilities
 
-| Area                        | Current Capabilities (`v1.3.0`)                                                                                                                                                                            |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch Input**             | Excel (`.xlsx`/`.xls`), CSV encoding auto-detection, field mapping, clipboard batch paste, single/multi-URL validation, collapsible advanced request options (`Referer`, `Cookie`, `Proxy`, etc.)          |
-| **Queue & Controls**        | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override, global keyboard shortcuts (`?` modal)                                                |
-| **Protocols & Providers**   | Pluggable `ProviderRegistry`: HTTP/HTTPS (`ResumeDownloader`), HLS (`.m3u8` Master Playlist, fMP4, AES-128, FFmpeg mux), native MPEG-DASH (`.mpd`), `yt-dlp` (YouTube, Bilibili, TikTok, X, Vimeo, Twitch) |
-| **Desktop UX & i18n**       | 100% `zh-CN` / `en-US` parity with live header switcher, native system tray (`minimize_to_tray`, `start_minimized`, Start/Pause/Quit), notification chime & hidden-window desktop notifications            |
-| **Headless CLI**            | Companion `vdpro-cli` binary sharing the Rust core (`download` from URLs or `.txt`/`.csv`/`.xlsx`/`.xls`, `probe`, `doctor`, `--json`, `--rate-limit`, request options)                                    |
-| **Reliability & Integrity** | Atomic `.part` / `.seg` commits (`sync_all` + rename), atomic config writes, `RetryExecutor` with circuit breaker, `spawn_blocking` SHA-256/MD5 verification                                               |
-| **Observability**           | Live per-task speed & ETA, queue overview status badge, `average_commit_duration` / `p95_commit_duration`, 500ms coalesced terminal alerts, one-click task diagnostic copy                                 |
-| **Cross-Platform**          | Tauri v2 desktop builds for Windows (`nsis`), macOS (`universal` `.dmg`), and Linux                                                                                                                        |
+| Area                       | Current Capabilities (`v2.0.0`)                                                                                                                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Modular Rust Workspace** | 4-crate Cargo Workspace (`vdpro-core`, `vdpro-storage`, `vdpro-providers`, `video-downloader-pro` / `vdpro-cli`) with decoupled domain, persistence, routing, and desktop IPC boundaries                   |
+| **Batch Input**            | Excel (`.xlsx`/`.xls`), CSV encoding auto-detection, field mapping, clipboard batch paste, single/multi-URL validation, collapsible advanced request options (`Referer`, `Cookie`, `Proxy`, etc.)          |
+| **Queue & Controls**       | Global Start/Pause/Retry/Clear, per-row Start/Pause/Resume/Retry/Delete, batch selection & output directory override, global keyboard shortcuts (`?` modal)                                                |
+| **Protocols & Providers**  | Pluggable `ProviderRegistry`: HTTP/HTTPS (`ResumeDownloader`), HLS (`.m3u8` Master Playlist, fMP4, AES-128, FFmpeg mux), native MPEG-DASH (`.mpd`), `yt-dlp` (YouTube, Bilibili, TikTok, X, Vimeo, Twitch) |
+| **Desktop UX & i18n**      | 100% `zh-CN` / `en-US` parity with live header switcher, native system tray (`minimize_to_tray`, `start_minimized`, Start/Pause/Quit), notification chime & hidden-window desktop notifications            |
+| **Headless CLI**           | Companion `vdpro-cli` binary sharing the Rust core (`download` from URLs or `.txt`/`.csv`/`.xlsx`/`.xls`, `probe`, `doctor`, `--json`, `--rate-limit`, request options)                                    |
+| **Reliability & Storage**  | SQLite WAL (`download_state.db`) incremental persistence with automatic legacy JSON migration, atomic `.part` / `.seg` commits (`sync_all` + rename), `RetryExecutor` circuit breaker, SHA-256/MD5 checks  |
+| **Observability**          | Live per-task speed & ETA, queue overview status badge, `average_commit_duration` / `p95_commit_duration`, 500ms coalesced terminal alerts, one-click task diagnostic copy                                 |
+| **Cross-Platform**         | Tauri v2 desktop builds for Windows (`nsis`), macOS (`universal` `.dmg`), and Linux                                                                                                                        |
 
 ---
 
@@ -89,9 +90,9 @@ flowchart LR
   Router --> HLS["M3U8Downloader (Master Playlist / fMP4 / AES-128)"]
   Router --> DASH["DashDownloader (MPD / Multi-Track)"]
   Router --> YtDlp["YtDlp External Provider"]
-  HLS --> Mux["ffmpeg_muxer (Lossless Remux / A+V Mux)"]
+  HLS --> Mux["vdpro-providers::ffmpeg_muxer"]
   DASH --> Mux
-  HTTP --> Storage["Atomic .part -> Final File + .vdstate"]
+  HTTP --> Storage["vdpro-storage (SQLite WAL + Atomic .part)"]
   Resume --> Storage
   Mux --> Storage
   YtDlp --> Storage
@@ -191,7 +192,7 @@ pnpm audit --prod --audit-level moderate
 | Topic                        | Document                                                                         |
 | ---------------------------- | -------------------------------------------------------------------------------- |
 | Full Architecture & Design   | [docs/architecture-functional-design.md](docs/architecture-functional-design.md) |
-| Live System State (`v1.3.0`) | [docs/current-state.md](docs/current-state.md)                                   |
+| Live System State (`v2.0.0`) | [docs/current-state.md](docs/current-state.md)                                   |
 | Documentation Index          | [docs/index.md](docs/index.md)                                                   |
 | Build & Release Guide        | [docs/build-release.md](docs/build-release.md)                                   |
 | Contributing Guide           | [CONTRIBUTING.md](CONTRIBUTING.md)                                               |
@@ -211,13 +212,14 @@ pnpm audit --prod --audit-level moderate
   fMP4 + FFmpeg remux), native MPEG-DASH (`.mpd`) downloader, and per-task
   custom headers / cookies / proxy parity with `yt-dlp` (including Bilibili,
   X/Twitter, Vimeo, Twitch).
-- **`v1.3.0` (Current)**: Full frontend `zh-CN` / `en-US` i18n parity with
+- **`v1.3.0` (Completed)**: Full frontend `zh-CN` / `en-US` i18n parity with
   header switcher, native system tray (`minimize_to_tray`, `start_minimized`),
   notification chimes & hidden-window desktop alerts, global keyboard shortcuts,
   and headless companion CLI (`vdpro-cli`).
-- **`v2.0.0` (Next)**: Modular Cargo Workspace separation (`vdpro-core`,
-  `vdpro-providers`, `vdpro-storage`, `src-tauri`), SQLite WAL persistent
-  storage replacing monolithic JSON snapshots, and release polish.
+- **`v2.0.0` (Current)**: Modular 4-crate Cargo Workspace (`vdpro-core`,
+  `vdpro-providers`, `vdpro-storage`, `video-downloader-pro`), SQLite WAL
+  persistent state storage (`download_state.db`) with automatic lossless
+  migration from legacy JSON snapshots, and release pipeline polish.
 
 See [docs/roadmap.md](docs/roadmap.md) for detailed milestones.
 

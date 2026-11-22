@@ -2,8 +2,8 @@
 
 更新日期：2026-11-22
 
-当前基线：`v1.3.0`（Phase 3 全量国际化、系统托盘、桌面通知、快捷键与 `vdpro-cli`
-基线）
+当前基线：`v2.0.0`（Phase 4 4-crate Cargo Workspace 模块化拆分与 SQLite
+WAL 持久化引擎基线）
 
 这份文档是当前仓库的事实源摘要。它只描述现在仍应维护的主链行为，不再承载历史计划、旧评审记录或已完成阶段的流水账。
 
@@ -299,6 +299,18 @@ GitNexus 对当前未提交工作树的影响检查：
   - 无头伴生 CLI（`src-tauri/src/cli/mod.rs`、`src-tauri/src/bin/vdpro_cli.rs`）提供
     `download`（URL 与 `.txt`/`.csv`/`.xlsx`/`.xls`
     导入）、`probe`、`doctor`、`--json`、`--rate-limit` 与 `Ctrl+C` 信号中止。
+  - `v2.0.0` Cargo Workspace 架构模块化与 SQLite
+    WAL 存储升级已完成收敛：后端拆分为
+    `vdpro-core`（模型/配置/错误处理/校验/进度追踪/完整性校验）、`vdpro-storage`（`SqliteStateStore`
+    SQLite WAL 状态存储与原子 `.part`
+    暂存）、`vdpro-providers`（协议注册表/平台探测/DASH
+    MPD 解析/FFmpeg 混流辅助）与 `video-downloader-pro`（Tauri 应用、引擎编排与
+    `vdpro-cli`）；状态持久化升级为 `download_state.db`（WAL 模式、`tasks` /
+    `queue_items` / `manager_meta` 三表 + 状态索引），支持从旧版
+    `download_state.json` 一次性无损迁移并自动归档为
+    `.migrated.<ts>.bak`（异常 JSON 备份为 `.corrupt.<ts>`），`DownloadManager`
+    支持按任务 O(1)/批量增量写入及快照兜底，`ci.yml` / `release.yml` /
+    `security.yml` 与 `pnpm test:all` 已接入 `--workspace` 门禁。
 
 ---
 
@@ -312,14 +324,14 @@ pnpm lint
 pnpm exec vitest run
 pnpm exec vitest run --config vitest.config.integration.ts
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --workspace
 ```
 
 如果改动涉及下载核心、恢复、导入或事件契约，应再跑对应 focused
 tests，并用 GitNexus 查看影响面。
 
-2026-11-22 当前 `v1.3.0` 已验证通过：
+2026-11-22 当前 `v2.0.0` 已验证通过：
 
 - `pnpm type-check`
 - `pnpm lint`（`--max-warnings 0`）
@@ -327,9 +339,10 @@ tests，并用 GitNexus 查看影响面。
 - `pnpm exec vitest run --config vitest.config.integration.ts`：2 个测试文件，14 个测试通过
 - `pnpm exec vite build`：构建通过
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check`
-- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- `cargo test --manifest-path src-tauri/Cargo.toml`：204 个测试通过
-- `cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli`：`vdpro-cli 1.3.0`
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings`
+- `cargo test --manifest-path src-tauri/Cargo.toml --workspace`：209个测试通过（`vdpro-core`
+  34 + `vdpro-providers` 11 + `vdpro-storage` 7 + `video-downloader-pro` 157）
+- `cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli`：`vdpro-cli 2.0.0`
   构建与 `--version` 验证通过
 - `pnpm sidecars:check:local`：允许占位文件的本地 smoke 预检通过
 - `git diff --check`
@@ -352,11 +365,10 @@ tests，并用 GitNexus 查看影响面。
 
 ## 9. 下一阶段规划方向
 
-优先级与多阶段规划见 `docs/roadmap.md`：
+当前 `v2.0.0` 四阶段路线图已全部落地并完成收敛；后续演进方向见
+`docs/roadmap.md`：
 
-- **`v2.0.0`**：Cargo Workspace 模块化拆分（`vdpro-core` / `vdpro-providers` /
-  `vdpro-storage` / `src-tauri`）、SQLite
-  WAL 持久化存储引擎与最终 Release 发布。
+- **发布后生态演进**：跨平台桌面端 E2E 测试矩阵、更多流媒体站点 Showcase 适配器与可插拔 Provider 扩展接口。
 
 ---
 

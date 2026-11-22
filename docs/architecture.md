@@ -10,31 +10,25 @@
 - 后端（Rust/Tauri + CLI）：负责任务队列、下载执行、文件解析、系统托盘与无头
   `vdpro-cli` 二进制
 
-## 关键模块
+## 关键模块（Cargo Workspace）
 
-- `src-tauri/src/infra/tray.rs`：系统托盘菜单、`minimize_to_tray` 与优雅关闭控制
-- `src-tauri/src/cli/mod.rs` &
-  `src-tauri/src/bin/vdpro_cli.rs`：复用 Rust 核心的无头命令行模式（`download` /
-  `probe` / `doctor`）
-- `src-tauri/src/core/`：下载核心与运行时
-  - `manager.rs`：DownloadManager 主类型、任务生命周期入口与兼容 API
-  - `manager/queue.rs`：入队、出队、队列调度与 semaphore 收敛
-  - `manager/stats.rs`：统计聚合、progress/lifecycle duration 指标
-  - `manager/integrity.rs`：expected hash 与完整性校验配置/执行
-  - `manager/events.rs`：DownloadEvent 发送辅助
-  - `download_provider.rs`：`DownloadProviderSpec` Trait 与优先级
-    `ProviderRegistry`
-  - `downloader.rs`：统一下载调度、作用域请求构造与单流下载
-  - `resume_downloader.rs`：HTTP Range 分片断点续传（支持作用域 `Client` 覆盖）
-  - `m3u8_downloader.rs`：HLS/M3U8 解析、Master Playlist 选流、fMP4
-    INIT 与 AES-128 解密
-  - `dash_parser.rs` & `dash_downloader.rs`：MPEG-DASH
-    MPD 解析、分片断点与双轨下载
-  - `ffmpeg_muxer.rs`：单轨重封装与音视频无损混流公共层
-  - `ytdlp_downloader.rs` & `ytdlp_support.rs`：统一多站点 `yt-dlp`
-    适配与安全参数构造
-- `src-tauri/src/commands/`：Tauri 命令入口
-- `src-tauri/src/parsers/`：CSV/Excel 解析
+- `src-tauri/crates/vdpro-core`：基础领域模型（`models` / `TaskPriority` /
+  `PersistedManagerState`）、`AppConfig`、重试熔断器（`error_handling`）、URL/路径/进程安全辅助、进度统计与哈希完整性校验
+- `src-tauri/crates/vdpro-storage`：SQLite
+  WAL 持久化状态库（`SqliteStateStore`，支持单任务/批量增量提交及旧
+  `download_state.json` 无损迁移）与 `.part` 原子 staging（`PartFileWriter`）
+- `src-tauri/crates/vdpro-providers`：多站点平台识别（`platform`）、优先级
+  `ProviderRegistry` 路由（`registry`）、MPEG-DASH
+  MPD 解析器（`dash_parser`）与共享 `ffmpeg_muxer` 无损混流层
+- `src-tauri/src/`（`video-downloader-pro` & `vdpro-cli`）：
+  - `infra/tray.rs`：系统托盘菜单、`minimize_to_tray` 与优雅关闭控制
+  - `cli/mod.rs` &
+    `bin/vdpro_cli.rs`：复用 Rust 核心的无头命令行模式（`download` / `probe` /
+    `doctor`）
+  - `core/`：DownloadManager 调度器（接入
+    `SqliteStateStore`）、传输实现（`downloader` / `resume_downloader` /
+    `m3u8_downloader` / `dash_downloader` / `ytdlp_downloader`）与重导出兼容层
+  - `commands/` & `parsers/`：Tauri IPC 命令入口与 CSV/Excel 解析
 
 ## 数据流（简化）
 
