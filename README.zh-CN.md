@@ -55,17 +55,17 @@ CSV 表格、批量粘贴 URL、HTTP 直链、HLS (`.m3u8`)、MPEG-DASH
 
 ## 功能矩阵
 
-| 模块                       | 当前支持能力 (`v2.0.0`)                                                                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Rust Workspace 分层**    | 4 crate Cargo Workspace（`vdpro-core` / `vdpro-storage` / `vdpro-providers` / `video-downloader-pro` & `vdpro-cli`），清晰解耦领域模型、存储、路由协议与桌面壳           |
-| **批量导入**               | Excel (`.xlsx` / `.xls`)、CSV 编码识别、字段映射预览、剪贴板批量粘贴、单/多 URL 探测、任务级高级请求参数 (`Referer` / `Cookie` / `Proxy` / 清晰度)                       |
-| **队列与行级控制**         | 全局开始/暂停/重试/清理、单行开始/暂停/继续/重试/删除、批量勾选与临时输出目录覆盖、全局键盘快捷键与 `?` 面板                                                             |
-| **协议与站点适配**         | 插件化 `ProviderRegistry`：HTTP/Range (`ResumeDownloader`)、HLS (`.m3u8` Master / fMP4 / AES-128 / FFmpeg)、原生 MPEG-DASH (`.mpd`)、`yt-dlp` (YT/B站/TK/X/Vimeo/Twitch) |
-| **桌面原生与国际化**       | `zh-CN` / `en-US` 全量双语与顶部一键切换、系统托盘（`minimize_to_tray`、`start_minimized`、显示/全部开始/全部暂停/退出）、提示音与后台原生桌面通知                       |
-| **无头 CLI (`vdpro-cli`)** | 复用统一 Rust 内核，支持 URL 与 `.txt`/`.csv`/`.xlsx`/`.xls` 批量下载、`probe`、`doctor`、`--json`、`--rate-limit` 与请求参数透传                                        |
-| **持久化与可靠性**         | SQLite WAL (`download_state.db`) 增量状态持久化与旧 JSON 无损自动迁移、`.part` / `.seg` + `sync_all()` 原子提交、`RetryExecutor` 熔断、SHA-256 / MD5 校验                |
-| **可观测性**               | 单任务实时速度与 ETA、底部实时态势状态徽标、平均/P95 提交耗时、500ms 终端状态合并通知、单任务一键复制诊断报告                                                            |
-| **跨平台桌面端**           | Tauri v2 桌面端覆盖 Windows (`nsis`)、macOS (`universal` `.dmg`) 与 Linux                                                                                                |
+| 模块                       | 当前支持能力 (`v2.0.0`)                                                                                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rust Workspace 分层**    | 5 crate Cargo Workspace（`vdpro-core` / `vdpro-storage` / `vdpro-providers` / `video-downloader-pro` / `vdpro-cli`），清晰解耦领域模型、存储、路由协议、桌面壳与命令行二进制 |
+| **批量导入**               | Excel (`.xlsx` / `.xls`)、CSV 编码识别、字段映射预览、剪贴板批量粘贴、单/多 URL 探测、任务级高级请求参数 (`Referer` / `Cookie` / `Proxy` / 清晰度)                           |
+| **队列与行级控制**         | 全局开始/暂停/重试/清理、单行开始/暂停/继续/重试/删除、批量勾选与临时输出目录覆盖、全局键盘快捷键与 `?` 面板                                                                 |
+| **协议与站点适配**         | 插件化 `ProviderRegistry`：HTTP/Range (`ResumeDownloader`)、HLS (`.m3u8` Master / fMP4 / AES-128 / FFmpeg)、原生 MPEG-DASH (`.mpd`)、`yt-dlp` (YT/B站/TK/X/Vimeo/Twitch)     |
+| **桌面原生与国际化**       | `zh-CN` / `en-US` 全量双语与顶部一键切换、系统托盘（`minimize_to_tray`、`start_minimized`、显示/全部开始/全部暂停/退出）、提示音与后台原生桌面通知                           |
+| **无头 CLI (`vdpro-cli`)** | 复用统一 Rust 内核，支持 URL 与 `.txt`/`.csv`/`.xlsx`/`.xls` 批量下载、`probe`、`doctor`、`--json`、`--rate-limit` 与请求参数透传                                            |
+| **持久化与可靠性**         | SQLite WAL (`download_state.db`) 增量状态持久化与旧 JSON 无损自动迁移、`.part` / `.seg` + `sync_all()` 原子提交、`RetryExecutor` 熔断、SHA-256 / MD5 校验                    |
+| **可观测性**               | 单任务实时速度与 ETA、底部实时态势状态徽标、平均/P95 提交耗时、500ms 终端状态合并通知、单任务一键复制诊断报告                                                                |
+| **跨平台桌面端**           | Tauri v2 桌面端覆盖 Windows (`nsis`)、macOS (`universal` `.dmg`) 与 Linux                                                                                                    |
 
 ---
 
@@ -125,7 +125,7 @@ pnpm dev
 直接基于统一 Rust 下载核心构建并运行无头命令行模式，适用于脚本与服务器批量下载：
 
 ```bash
-cargo build --manifest-path src-tauri/Cargo.toml --bin vdpro-cli
+cargo build --manifest-path src-tauri/Cargo.toml -p vdpro-cli --bin vdpro-cli
 
 # 探测链接匹配的 Provider 与媒体响应头
 ./src-tauri/target/debug/vdpro-cli probe "https://example.com/video.mp4" --json
@@ -207,8 +207,9 @@ pnpm audit --prod --audit-level moderate
 - **`v1.3.0`（已完成）**：前端全量 `zh-CN` / `en-US`
   双语对齐与顶部切换、原生系统托盘（`minimize_to_tray` /
   `start_minimized`）、提示音与后台原生桌面通知、全局快捷键与无头伴生 CLI（`vdpro-cli`）。
-- **`v2.0.0`（当前版本）**：Rust Cargo Workspace 4 crate 分层（`vdpro-core` /
-  `vdpro-providers` / `vdpro-storage` / `video-downloader-pro`）、SQLite
+- **`v2.0.0`（当前版本）**：Rust Cargo Workspace 5 crate 分层（`vdpro-core` /
+  `vdpro-providers` / `vdpro-storage` / `video-downloader-pro` /
+  `vdpro-cli`）、SQLite
   WAL 持久化存储引擎（`download_state.db` + 旧 JSON 无损自动迁移）与发布流水线完善。
 
 完整规划详见 [docs/roadmap.md](docs/roadmap.md)。

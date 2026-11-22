@@ -1,0 +1,14 @@
+[package]
+name = "vdpro-cli"
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+description = "Headless companion CLI binary for Video Downloader Pro"
+
+[[bin]]
+name = "vdpro-cli"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+video-downloader-pro = { path = "../.." }
