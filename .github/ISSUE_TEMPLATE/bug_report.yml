@@ -61,10 +61,10 @@ body:
       label: Environment
       description: OS, app build, architecture, and whether you used a release build or dev mode.
       placeholder: |
-        OS:
-        App version:
-        CPU architecture:
-        Build mode:
+        OS: Windows 11 / macOS 15 / Ubuntu 24.04
+        App version: v1.1.0
+        CPU architecture: x64 / arm64
+        Build mode: release / dev
     validations:
       required: true
   - type: textarea

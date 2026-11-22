@@ -10,6 +10,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDownloadStore } from '../../stores/downloadStore';
+import { useConfigStore } from '../../stores/configStore';
 import type { VideoTask, TaskStatus } from '../../types';
 import { TaskItem } from './TaskListItem';
 
@@ -49,6 +50,9 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
   const selectedTasks = useDownloadStore(state => state.selectedTasks);
   const sortBy = useDownloadStore(state => state.sortBy);
   const sortDirection = useDownloadStore(state => state.sortDirection);
+  const showCompletedTasks = useConfigStore(
+    state => state?.config?.ui?.show_completed_tasks ?? true
+  );
 
   // 本地计算过滤列表 (如果 Store 没有直接提供)
   const filteredTasks = useMemo(() => {
@@ -61,6 +65,8 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
           ? t.status === 'downloading' || t.status === 'committing'
           : t.status === filterStatus
       );
+    } else if (!showCompletedTasks) {
+      result = result.filter(t => t.status !== 'completed');
     }
 
     // 搜索过滤
@@ -72,7 +78,7 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
     }
 
     return result;
-  }, [tasks, filterStatus, searchQuery]);
+  }, [tasks, filterStatus, searchQuery, showCompletedTasks]);
 
   const selectedTaskSet = useMemo(() => new Set(selectedTasks), [selectedTasks]);
 
@@ -166,8 +172,28 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
 
   const totalHeight = sortedTasks.length * itemHeight;
 
+  const scrollRafRef = useRef<number | null>(null);
+  const latestScrollTopRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
+  }, []);
+
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollTop(e.currentTarget.scrollTop);
+    latestScrollTopRef.current = e.currentTarget.scrollTop;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      setScrollTop(latestScrollTopRef.current);
+      return;
+    }
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      setScrollTop(latestScrollTopRef.current);
+    });
   }, []);
 
   const handleTaskSelect = useCallback((taskId: string, selected: boolean) => {

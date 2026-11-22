@@ -52,8 +52,7 @@ impl DownloadProviderRouter {
             Some(size) if size >= self.large_file_threshold_bytes => {
                 ResolvedProviderDecision::HttpResumable
             }
-            Some(_) => ResolvedProviderDecision::HttpSimple,
-            None => ResolvedProviderDecision::HttpResumable,
+            Some(_) | None => ResolvedProviderDecision::HttpSimple,
         }
     }
 }
@@ -178,7 +177,7 @@ mod tests {
                     content_type: Some("application/octet-stream".into()),
                 },
             ),
-            ResolvedProviderDecision::HttpResumable
+            ResolvedProviderDecision::HttpSimple
         );
     }
 

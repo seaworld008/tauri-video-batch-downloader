@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
+import { useConfigStore } from '../configStore';
 import { notify, useUIStore } from '../uiStore';
 
 describe('uiStore', () => {
@@ -9,6 +10,16 @@ describe('uiStore', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    const currentConfig = useConfigStore.getState().config;
+    useConfigStore.setState({
+      config: {
+        ...currentConfig,
+        ui: {
+          ...currentConfig.ui,
+          show_notifications: true,
+        },
+      },
+    });
   });
 
   it('adds and removes notifications', () => {
@@ -50,5 +61,31 @@ describe('uiStore', () => {
     clearAllNotifications();
 
     expect(useUIStore.getState().notifications).toEqual([]);
+  });
+
+  it('suppresses success, info, and warning notifications when show_notifications is false while keeping errors', () => {
+    const currentConfig = useConfigStore.getState().config;
+    useConfigStore.setState({
+      config: {
+        ...currentConfig,
+        ui: {
+          ...currentConfig.ui,
+          show_notifications: false,
+        },
+      },
+    });
+
+    notify.success('完成', '不应显示');
+    notify.info('提示', '不应显示');
+    notify.warning('警告', '不应显示');
+    expect(useUIStore.getState().notifications).toEqual([]);
+
+    notify.error('严重错误', '仍应显示');
+    const [errorNotification] = useUIStore.getState().notifications;
+    expect(errorNotification).toMatchObject({
+      type: 'error',
+      title: '严重错误',
+      message: '仍应显示',
+    });
   });
 });

@@ -7,7 +7,7 @@
 //! - 支持AES加密的HLS流
 //! - 实时进度跟踪
 
-use crate::core::downloader::DownloadStats;
+use crate::core::downloader::{BandwidthController, DownloadStats};
 use crate::core::models::TaskStatus;
 use aes::Aes128;
 use anyhow::{anyhow, bail, Result};
@@ -163,7 +163,7 @@ impl M3U8Downloader {
         }
     }
 
-    /// 设置进度回调
+    /// 设置默认进度回调（兼容旧测试调用，推荐改用 download_m3u8_with_context 传入每任务回调）
     pub fn set_progress_callback(&self, tx: mpsc::UnboundedSender<(String, DownloadStats)>) {
         *self.progress_tx.write() = Some(tx);
     }
@@ -175,6 +175,31 @@ impl M3U8Downloader {
         m3u8_url: &str,
         output_path: &str,
         pause_flag: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let fallback_progress_tx = self.progress_tx.read().clone();
+        self.download_m3u8_with_context(
+            task_id,
+            m3u8_url,
+            output_path,
+            Arc::new(AtomicBool::new(false)),
+            pause_flag,
+            fallback_progress_tx,
+            None,
+        )
+        .await
+    }
+
+    /// 使用每任务上下文下载 M3U8 流，避免并发任务间进度串台并支持取消/限速/断点恢复
+    #[allow(clippy::too_many_arguments)]
+    pub async fn download_m3u8_with_context(
+        &self,
+        task_id: &str,
+        m3u8_url: &str,
+        output_path: &str,
+        cancel_flag: Arc<AtomicBool>,
+        pause_flag: Arc<AtomicBool>,
+        progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
+        bandwidth_controller: Option<BandwidthController>,
     ) -> Result<()> {
         crate::utils::validation::assert_http_url(m3u8_url)?;
         tracing::info!("开始下载M3U8流: {}", m3u8_url);
@@ -194,7 +219,6 @@ impl M3U8Downloader {
         let task_temp_dir = Self::resolve_safe_task_temp_dir(&self.config.temp_dir, task_id)?;
         tokio::fs::create_dir_all(&task_temp_dir).await?;
 
-        let cancel_flag = Arc::new(AtomicBool::new(false));
         {
             let mut downloads = self.active_downloads.write().await;
             downloads.insert(task_id.to_string(), cancel_flag.clone());
@@ -213,6 +237,8 @@ impl M3U8Downloader {
                     &task_temp_dir,
                     cancel_flag.clone(),
                     Arc::clone(&pause_flag),
+                    progress_tx,
+                    bandwidth_controller,
                 )
                 .await?;
 
@@ -244,10 +270,19 @@ impl M3U8Downloader {
                 Ok(())
             }
             Err(e) => {
-                if !self.config.keep_temp_files {
-                    self.cleanup_temp_files(&task_temp_dir).await.ok();
+                let is_paused = e.to_string().contains("download_paused");
+                if is_paused || self.config.keep_temp_files {
+                    tracing::info!(
+                        "保留 M3U8 已下载分片以便后续恢复 ({}): {}",
+                        if is_paused {
+                            "paused"
+                        } else {
+                            "keep_temp_files"
+                        },
+                        task_temp_dir.display()
+                    );
                 } else {
-                    tracing::warn!("下载失败，临时分片保留在: {}", task_temp_dir.display());
+                    self.cleanup_temp_files(&task_temp_dir).await.ok();
                 }
                 Err(e)
             }
@@ -545,6 +580,7 @@ impl M3U8Downloader {
     }
 
     /// 下载所有片段
+    #[allow(clippy::too_many_arguments)]
     async fn download_segments(
         &self,
         task_id: &str,
@@ -552,11 +588,13 @@ impl M3U8Downloader {
         temp_dir: &Path,
         cancel_flag: Arc<AtomicBool>,
         pause_flag: Arc<AtomicBool>,
+        progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>>,
+        bandwidth_controller: Option<BandwidthController>,
     ) -> Result<Vec<PathBuf>> {
         tracing::info!("开始下载 {} 个片段", playlist.segments.len());
 
         let mut segment_files = Vec::with_capacity(playlist.segments.len());
-        let mut handles = Vec::new();
+        let mut handles: Vec<tokio::task::JoinHandle<Result<()>>> = Vec::new();
 
         let total_segments = playlist.segments.len();
         let downloaded_count = Arc::new(AtomicU64::new(0));
@@ -576,6 +614,9 @@ impl M3U8Downloader {
 
         for (index, segment) in playlist.segments.iter().enumerate() {
             if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+                for handle in handles {
+                    handle.abort();
+                }
                 return Err(if cancel_flag.load(Ordering::Relaxed) {
                     anyhow::anyhow!("download_cancelled")
                 } else {
@@ -593,55 +634,109 @@ impl M3U8Downloader {
             let downloaded_count = Arc::clone(&downloaded_count);
             let downloaded_bytes = Arc::clone(&downloaded_bytes);
             let task_id = task_id.to_string();
-            let progress_tx: Option<mpsc::UnboundedSender<(String, DownloadStats)>> =
-                { self.progress_tx.read().clone() };
+            let progress_tx = progress_tx.clone();
+            let bandwidth_controller = bandwidth_controller.clone();
             let byte_range = segment.byte_range;
             let encryption = segment.encryption.clone();
             let segment_index = segment.index;
             let pause_flag = Arc::clone(&pause_flag);
 
             let handle = tokio::spawn(async move {
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .map_err(|_| anyhow::anyhow!("segment semaphore closed"))?;
-
-                if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
-                    return Err(if cancel_flag.load(Ordering::Relaxed) {
-                        anyhow::anyhow!("download_cancelled")
+                let bytes_written = if let Ok(meta) = tokio::fs::metadata(&segment_file).await {
+                    if meta.is_file() && meta.len() > 0 {
+                        tracing::debug!(
+                            "复用已下载片段 #{}/{}: {}",
+                            segment_index,
+                            total_segments,
+                            segment_file.display()
+                        );
+                        meta.len()
                     } else {
-                        anyhow::anyhow!("download_paused")
-                    });
-                }
+                        let _permit = semaphore
+                            .acquire()
+                            .await
+                            .map_err(|_| anyhow::anyhow!("segment semaphore closed"))?;
+                        if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed)
+                        {
+                            return Err(if cancel_flag.load(Ordering::Relaxed) {
+                                anyhow::anyhow!("download_cancelled")
+                            } else {
+                                anyhow::anyhow!("download_paused")
+                            });
+                        }
+                        let written = Self::download_segment_static(
+                            &client,
+                            &config,
+                            &segment_url,
+                            &segment_file,
+                            byte_range,
+                            segment_index,
+                            encryption,
+                            cancel_flag.clone(),
+                            pause_flag.clone(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "片段 #{}/{} ({}) 下载失败: {}",
+                                segment_index,
+                                total_segments,
+                                segment_url,
+                                e
+                            )
+                        })?;
+                        if let Some(ref bw) = bandwidth_controller {
+                            bw.throttle(written).await;
+                        }
+                        written
+                    }
+                } else {
+                    let _permit = semaphore
+                        .acquire()
+                        .await
+                        .map_err(|_| anyhow::anyhow!("segment semaphore closed"))?;
 
-                tracing::debug!(
-                    "开始下载片段 #{}/{}: {}",
-                    segment_index,
-                    total_segments,
-                    segment_url
-                );
+                    if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
+                        return Err(if cancel_flag.load(Ordering::Relaxed) {
+                            anyhow::anyhow!("download_cancelled")
+                        } else {
+                            anyhow::anyhow!("download_paused")
+                        });
+                    }
 
-                let bytes_written = Self::download_segment_static(
-                    &client,
-                    &config,
-                    &segment_url,
-                    &segment_file,
-                    byte_range,
-                    segment_index,
-                    encryption,
-                    cancel_flag.clone(),
-                    pause_flag.clone(),
-                )
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "片段 #{}/{} ({}) 下载失败: {}",
+                    tracing::debug!(
+                        "开始下载片段 #{}/{}: {}",
                         segment_index,
                         total_segments,
-                        segment_url,
-                        e
+                        segment_url
+                    );
+
+                    let written = Self::download_segment_static(
+                        &client,
+                        &config,
+                        &segment_url,
+                        &segment_file,
+                        byte_range,
+                        segment_index,
+                        encryption,
+                        cancel_flag.clone(),
+                        pause_flag.clone(),
                     )
-                })?;
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "片段 #{}/{} ({}) 下载失败: {}",
+                            segment_index,
+                            total_segments,
+                            segment_url,
+                            e
+                        )
+                    })?;
+                    if let Some(ref bw) = bandwidth_controller {
+                        bw.throttle(written).await;
+                    }
+                    written
+                };
 
                 let current_downloaded = downloaded_count.fetch_add(1, Ordering::Relaxed) + 1;
                 let total_written =
@@ -707,8 +802,23 @@ impl M3U8Downloader {
             handles.push(handle);
         }
 
-        for handle in handles {
-            handle.await??;
+        let mut iter = handles.into_iter();
+        while let Some(handle) = iter.next() {
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    for remaining in iter {
+                        remaining.abort();
+                    }
+                    return Err(err);
+                }
+                Err(join_err) => {
+                    for remaining in iter {
+                        remaining.abort();
+                    }
+                    return Err(join_err.into());
+                }
+            }
         }
 
         tracing::info!("所有片段下载完成");
@@ -834,9 +944,19 @@ impl M3U8Downloader {
             }
         }
 
-        let mut file = File::create(output_file).await?;
-        file.write_all(&data).await?;
-        file.flush().await?;
+        let temp_file = output_file.with_extension("ts.tmp");
+        let write_result: Result<()> = async {
+            let mut file = File::create(&temp_file).await?;
+            file.write_all(&data).await?;
+            file.flush().await?;
+            Ok(())
+        }
+        .await;
+        if let Err(err) = write_result {
+            let _ = tokio::fs::remove_file(&temp_file).await;
+            return Err(err);
+        }
+        tokio::fs::rename(&temp_file, output_file).await?;
 
         Ok(data.len() as u64)
     }
@@ -1277,5 +1397,110 @@ segment000.ts
         let resolved =
             M3U8Downloader::resolve_safe_task_temp_dir(base, "../../etc/passwd").unwrap();
         assert!(resolved.starts_with(base));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_m3u8_tasks_do_not_cross_contaminate_progress_channels() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("/");
+                    let (ctype, body): (&str, Vec<u8>) = if path.ends_with(".m3u8") {
+                        let seg_name = if path.contains("a.m3u8") {
+                            "seg_a.ts"
+                        } else {
+                            "seg_b.ts"
+                        };
+                        (
+                            "application/vnd.apple.mpegurl",
+                            format!("#EXTM3U\n#EXTINF:1.0,\n{}\n#EXT-X-ENDLIST\n", seg_name)
+                                .into_bytes(),
+                        )
+                    } else {
+                        ("video/mp2t", vec![0x47; 64])
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        ctype,
+                        body.len()
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                    let _ = socket.write_all(&body).await;
+                });
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let cfg = M3U8DownloaderConfig {
+            temp_dir: temp.path().join("tmp"),
+            keep_temp_files: false,
+            ..Default::default()
+        };
+        let downloader = Arc::new(M3U8Downloader::new(cfg).unwrap());
+
+        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+
+        let out_a = temp.path().join("a.ts");
+        let out_b = temp.path().join("b.ts");
+
+        let d1 = Arc::clone(&downloader);
+        let d2 = Arc::clone(&downloader);
+        let url_a = format!("http://{}/a.m3u8", addr);
+        let url_b = format!("http://{}/b.m3u8", addr);
+        let oa = out_a.to_string_lossy().to_string();
+        let ob = out_b.to_string_lossy().to_string();
+
+        let (res_a, res_b) = tokio::join!(
+            d1.download_m3u8_with_context(
+                "task-a",
+                &url_a,
+                &oa,
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
+                Some(tx_a),
+                None,
+            ),
+            d2.download_m3u8_with_context(
+                "task-b",
+                &url_b,
+                &ob,
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
+                Some(tx_b),
+                None,
+            ),
+        );
+
+        res_a.unwrap();
+        res_b.unwrap();
+        server.await.unwrap();
+
+        let mut a_ids = Vec::new();
+        while let Ok((id, _)) = rx_a.try_recv() {
+            a_ids.push(id);
+        }
+        let mut b_ids = Vec::new();
+        while let Ok((id, _)) = rx_b.try_recv() {
+            b_ids.push(id);
+        }
+
+        assert!(!a_ids.is_empty());
+        assert!(!b_ids.is_empty());
+        assert!(a_ids.iter().all(|id| id == "task-a"));
+        assert!(b_ids.iter().all(|id| id == "task-b"));
     }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Notification } from '../types';
+import { useConfigStore } from './configStore';
 
 interface UIState {
   notifications: Notification[];
@@ -53,8 +54,19 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
 }));
 
+const areNotificationsEnabled = (): boolean => {
+  try {
+    return typeof useConfigStore?.getState === 'function'
+      ? (useConfigStore.getState()?.config?.ui?.show_notifications ?? true)
+      : true;
+  } catch {
+    return true;
+  }
+};
+
 export const notify = {
   success: (title: string, message?: string, duration = 4000) => {
+    if (!areNotificationsEnabled()) return;
     useUIStore.getState().addNotification({
       type: 'success',
       title,
@@ -73,6 +85,7 @@ export const notify = {
   },
 
   warning: (title: string, message?: string, duration = 5000) => {
+    if (!areNotificationsEnabled()) return;
     useUIStore.getState().addNotification({
       type: 'warning',
       title,
@@ -82,6 +95,7 @@ export const notify = {
   },
 
   info: (title: string, message?: string, duration = 4000) => {
+    if (!areNotificationsEnabled()) return;
     useUIStore.getState().addNotification({
       type: 'info',
       title,

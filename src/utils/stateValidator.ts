@@ -5,6 +5,7 @@
 import { handleError } from './errorHandler';
 import type { VideoTask, DownloadStats } from '../types';
 import { ensureDownloadStats } from './downloadStats';
+import { normalizeBackendTask } from '../features/downloads/model/runtimeTaskMapping';
 import {
   getDownloadStatsCommand,
   getDownloadTasksCommand,
@@ -53,11 +54,12 @@ export class StateValidator {
 
       reportFrontendDiagnosticIfEnabled('info', 'state_validator:validate:start');
 
-      // 获取后端状态
-      const [backendTasks, backendStats] = await Promise.all([
+      // 获取后端状态并统一标准化任务结构
+      const [rawBackendTasks, backendStats] = await Promise.all([
         getDownloadTasksCommand<VideoTask>(),
         getDownloadStatsCommand().then(stats => ensureDownloadStats(stats) as DownloadStats),
       ]);
+      const backendTasks = rawBackendTasks.map(normalizeBackendTask);
 
       // 比较任务状态
       const taskIssues = this.compareTasks(frontendTasks, backendTasks);

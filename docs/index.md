@@ -1,24 +1,23 @@
 # 文档导航
 
-更新日期：2026-05-07
+更新日期：2026-11-22
 
 这份目录只保留当前仍应维护的文档。2 月、4 月的一次性计划、过期评审和旧交接记录已经清理；其中仍有价值的结论已合并到
 `current-state.md`、`architecture-functional-design.md`、`roadmap.md`、`code-quality.md`
-和 AI handoff 文档。
+和 `../CHANGELOG.md`。
 
 ---
 
 ## 1. 第一次接手推荐阅读
 
-1. `../README.md` — 项目总览、亮点、快速开始和社区入口
-2. `architecture-functional-design.md`
+1. `../README.md` / `../README.zh-CN.md` — 项目总览、亮点、快速开始和社区入口
+2. `../CHANGELOG.md` — `v1.1.0` 起的版本变更记录
+3. `architecture-functional-design.md`
    — 当前完整架构、功能设计、状态机和技术决策
-3. `current-state.md` — 当前真实主链、已完成收敛、仍需优化项
-4. `large-codebase-ai-handoff-analysis-2026-05-06.md`
-   — 面向 AI/新维护者的大型代码库接手报告
-5. `app-regression-test-plan-2026-05-06.md` — 真实 App 回归测试方案
-6. `roadmap.md` — 当前后续优化路线
-7. `code-quality.md` — 当前质量门禁、安全状态和提交前检查
+4. `current-state.md` — 当前真实主链、已完成收敛与验证基线
+5. `roadmap.md` — `v1.2.0` ~ `v2.0.0` 多阶段演进路线
+6. `code-quality.md` — 当前质量门禁、安全状态和提交前检查
+7. `../SECURITY.md` 与 `../CODE_OF_CONDUCT.md` — 安全漏洞上报与社区规范
 
 ---
 

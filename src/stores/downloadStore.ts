@@ -94,7 +94,6 @@ const isTaskSnapshotUnchanged = (prev: VideoTask, next: VideoTask): boolean =>
   prev.display_speed_bps === next.display_speed_bps &&
   prev.eta === next.eta &&
   prev.error_message === next.error_message &&
-  prev.updated_at === next.updated_at &&
   prev.downloader_type === next.downloader_type;
 
 interface StartDownloadOptions {

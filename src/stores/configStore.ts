@@ -11,6 +11,7 @@ import {
   updateConfigCommand,
 } from '../features/downloads/api/configCommands';
 import { useDownloadStore } from './downloadStore';
+import i18n from '../i18n';
 
 interface ConfigState {
   // 配置数据
@@ -132,6 +133,22 @@ const mergeConfigWithDefaults = (config?: Partial<AppConfig>): AppConfig => {
   };
 };
 
+const normalizeI18nLanguage = (language?: string): 'zh' | 'en' =>
+  language?.toLowerCase().startsWith('en') ? 'en' : 'zh';
+
+const syncUiPreferences = (config: AppConfig) => {
+  const language = config.ui?.language;
+  if (!language) return;
+
+  const normalizedLanguage = normalizeI18nLanguage(language);
+  if (typeof i18n?.changeLanguage === 'function' && i18n.language !== normalizedLanguage) {
+    void i18n.changeLanguage(normalizedLanguage);
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = language;
+  }
+};
+
 export const useConfigStore = create<ConfigState>()(
   persist(
     (set, get) => ({
@@ -145,6 +162,7 @@ export const useConfigStore = create<ConfigState>()(
           const mergedConfig = mergeConfigWithDefaults(config);
           set({ config: mergedConfig, isLoading: false });
           useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
+          syncUiPreferences(mergedConfig);
         } catch (error) {
           set({ isLoading: false });
           handleError('加载配置', error, false); // 不显示Toast，因为会使用默认配置
@@ -186,6 +204,7 @@ export const useConfigStore = create<ConfigState>()(
           await updateConfigCommand(mergedConfig);
           set({ config: mergedConfig });
           useDownloadStore.getState().setDownloadConfig(mergedConfig.download);
+          syncUiPreferences(mergedConfig);
           toast.success('配置已更新');
         } catch (error) {
           handleError('更新配置', error);
@@ -208,6 +227,7 @@ export const useConfigStore = create<ConfigState>()(
           const normalizedConfig = mergeConfigWithDefaults(resetConfig);
           set({ config: normalizedConfig });
           useDownloadStore.getState().setDownloadConfig(normalizedConfig.download);
+          syncUiPreferences(normalizedConfig);
           toast.success('配置已重置为默认值');
         } catch (error) {
           handleError('重置配置', error);
@@ -231,6 +251,7 @@ export const useConfigStore = create<ConfigState>()(
           const normalizedConfig = mergeConfigWithDefaults(importedConfig);
           set({ config: normalizedConfig });
           useDownloadStore.getState().setDownloadConfig(normalizedConfig.download);
+          syncUiPreferences(normalizedConfig);
           toast.success('配置已导入');
         } catch (error) {
           handleError('导入配置', error);

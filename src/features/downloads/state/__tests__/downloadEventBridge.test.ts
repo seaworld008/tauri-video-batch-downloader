@@ -90,6 +90,52 @@ describe('downloadEventBridge', () => {
     expect(state.stats.total_tasks).toBe(1);
     expect(state.stats.completed_tasks).toBe(1);
     expect(state.stats.active_downloads).toBe(0);
+    expect(refreshTasks).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(refreshTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces burst terminal status events into a single refreshTasks call', async () => {
+    vi.resetModules();
+
+    let downloadEventsHandler: ((event: { payload: unknown }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (eventName: string, handler: any) => {
+      if (eventName === 'download-events') {
+        downloadEventsHandler = handler;
+      }
+      return (() => {}) as () => void;
+    });
+
+    const { initializeDownloadEventBridge } = await import('../downloadEventBridge');
+    const { useDownloadStore } = await import('../../../../stores/downloadStore');
+
+    const refreshTasks = vi.fn().mockResolvedValue(undefined);
+    useDownloadStore.setState({
+      tasks: [buildTask('task-1', 'downloading'), buildTask('task-2', 'downloading')],
+      refreshTasks,
+    });
+
+    await initializeDownloadEventBridge();
+
+    for (const [idx, taskId] of ['task-1', 'task-2'].entries()) {
+      downloadEventsHandler?.({
+        payload: {
+          schema_version: 1,
+          event_id: `evt-burst-${idx}`,
+          event_type: 'task.status_changed',
+          ts: '2026-04-16T00:00:00Z',
+          payload: {
+            task_id: taskId,
+            status: 'Completed',
+            error_message: null,
+          },
+        },
+      });
+    }
+
+    expect(refreshTasks).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(250);
     expect(refreshTasks).toHaveBeenCalledTimes(1);
   });
 
@@ -109,7 +155,14 @@ describe('downloadEventBridge', () => {
 
     await initializeDownloadEventBridge();
     await vi.advanceTimersByTimeAsync(1500);
+    expect(syncRuntimeState).not.toHaveBeenCalled();
 
+    useDownloadStore.setState({
+      tasks: [buildTask('task-1', 'downloading')],
+      syncRuntimeState,
+    } as Partial<ReturnType<typeof useDownloadStore.getState>>);
+
+    await vi.advanceTimersByTimeAsync(1500);
     expect(syncRuntimeState).toHaveBeenCalledWith('downloadEventBridge:polling');
   });
 

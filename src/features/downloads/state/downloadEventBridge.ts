@@ -27,6 +27,7 @@ let retryTimer: number | null = null;
 let initRetryCount = 0;
 const MAX_INIT_RETRIES = 5;
 const PROGRESS_UI_UPDATE_INTERVAL_MS = 1000;
+const TERMINAL_REFRESH_DEBOUNCE_MS = 250;
 const DOWNLOAD_EVENT_CHANNEL = 'download-events';
 
 export const initializeDownloadEventBridge = async () => {
@@ -39,6 +40,35 @@ export const initializeDownloadEventBridge = async () => {
       const warmupProgressEventsByTask = new Map<string, number>();
       const pendingProgressUpdates = new Map<string, ProgressEventPayload>();
       const trailingFlushTimers = new Map<string, number>();
+      let terminalRefreshTimer: number | null = null;
+
+      const scheduleTerminalRefresh = () => {
+        const runRefresh = () => {
+          void useDownloadStore
+            .getState()
+            .refreshTasks()
+            .catch(error => {
+              reportFrontendDiagnosticIfEnabled(
+                'warn',
+                '[download-events] 终态任务刷新失败',
+                error
+              );
+            });
+        };
+
+        if (typeof window === 'undefined') {
+          runRefresh();
+          return;
+        }
+
+        if (terminalRefreshTimer !== null) {
+          window.clearTimeout(terminalRefreshTimer);
+        }
+        terminalRefreshTimer = window.setTimeout(() => {
+          terminalRefreshTimer = null;
+          runRefresh();
+        }, TERMINAL_REFRESH_DEBOUNCE_MS);
+      };
 
       const clearTrailingProgress = (taskId: string) => {
         pendingProgressUpdates.delete(taskId);
@@ -89,16 +119,7 @@ export const initializeDownloadEventBridge = async () => {
           payload.status === 'failed' ||
           payload.status === 'cancelled'
         ) {
-          void useDownloadStore
-            .getState()
-            .refreshTasks()
-            .catch(error => {
-              reportFrontendDiagnosticIfEnabled(
-                'warn',
-                '[download-events] 终态任务刷新失败',
-                error
-              );
-            });
+          scheduleTerminalRefresh();
         }
       };
 
@@ -202,6 +223,10 @@ export const initializeDownloadEventBridge = async () => {
           window.clearInterval(activeSyncTimer);
           activeSyncTimer = null;
         }
+        if (terminalRefreshTimer !== null && typeof window !== 'undefined') {
+          window.clearTimeout(terminalRefreshTimer);
+          terminalRefreshTimer = null;
+        }
         if (typeof window !== 'undefined') {
           for (const timerId of trailingFlushTimers.values()) {
             window.clearTimeout(timerId);
@@ -266,9 +291,8 @@ export const initializeDownloadEventBridge = async () => {
       const hasActiveDownloads = state.tasks.some(
         task => task.status === 'downloading' || task.status === 'committing'
       );
-      const hasPendingTasks = state.tasks.some(task => task.status === 'pending');
 
-      if (!hasActiveDownloads && !hasPendingTasks) return;
+      if (!hasActiveDownloads) return;
 
       state
         .syncRuntimeState('downloadEventBridge:polling')

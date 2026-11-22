@@ -108,4 +108,43 @@ describe('StateValidator frontend logging seam', () => {
       expect.objectContaining({ issueCount: 1 })
     );
   });
+
+  it('normalizes Rust PascalCase backend task statuses before comparing against frontend tasks', async () => {
+    runtimeQueryMocks.getDownloadTasksCommand.mockResolvedValue([
+      { id: 't1', title: 'One', status: 'Pending', progress: 0, downloaded_size: 0 },
+      { id: 't2', title: 'Two', status: 'Downloading', progress: 50, downloaded_size: 512 },
+      { id: 't3', title: 'Three', status: 'Completed', progress: 100, downloaded_size: 1024 },
+    ]);
+    runtimeQueryMocks.getDownloadStatsCommand.mockResolvedValue({
+      total_tasks: 3,
+      completed_tasks: 1,
+      failed_tasks: 0,
+      active_downloads: 1,
+      total_downloaded: 1536,
+      average_speed: 0,
+      display_total_speed_bps: 0,
+      queue_paused: false,
+    });
+
+    const result = await StateValidator.validateState(
+      [
+        { id: 't1', title: 'One', status: 'pending', progress: 0, downloaded_size: 0 },
+        { id: 't2', title: 'Two', status: 'downloading', progress: 50, downloaded_size: 512 },
+        { id: 't3', title: 'Three', status: 'completed', progress: 100, downloaded_size: 1024 },
+      ] as any,
+      {
+        total_tasks: 3,
+        completed_tasks: 1,
+        failed_tasks: 0,
+        active_downloads: 1,
+        total_downloaded: 1536,
+        average_speed: 0,
+        display_total_speed_bps: 0,
+        queue_paused: false,
+      } as any
+    );
+
+    expect(result.isConsistent).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
 });

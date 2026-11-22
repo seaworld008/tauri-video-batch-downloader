@@ -645,9 +645,10 @@ impl DownloadManager {
             debug!("Background task scheduler stopped");
         }
 
-        // Cancel all active downloads
+        // Cancel all active downloads cleanly (including external child process trees)
         let active_downloads: Vec<_> = self.active_downloads.drain().collect();
         for (task_id, handle) in active_downloads {
+            let _ = self.http_downloader.cancel_download(&task_id).await;
             handle.abort();
             self.update_task_status(&task_id, TaskStatus::Pending)
                 .await?;
@@ -3092,13 +3093,6 @@ impl DownloadManager {
                         task_id: task_id_clone.clone(),
                         progress: progress_event,
                     });
-
-                    if let Some(enhanced_stats) = enhanced_stats_for_event {
-                        let _ = event_sender_clone.send(DownloadEvent::EnhancedProgress {
-                            task_id: task_id_clone.clone(),
-                            progress: enhanced_stats,
-                        });
-                    }
                 }
             }
         });
@@ -3184,9 +3178,25 @@ impl DownloadManager {
                             }
                         });
 
-                        // Perform integrity verification (compute hash without expected value)
-                        let integrity_result =
-                            integrity_checker.compute_hash(&file_path, algorithm).await;
+                        // Perform integrity verification (verify against expected hash if configured, else compute)
+                        let expected_hash = config
+                            .expected_hashes
+                            .get(task_id)
+                            .or_else(|| config.expected_hashes.get(&file_path))
+                            .or_else(|| {
+                                std::path::Path::new(&file_path)
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .and_then(|name| config.expected_hashes.get(name))
+                            });
+
+                        let integrity_result = if let Some(expected) = expected_hash {
+                            integrity_checker
+                                .verify_integrity(&file_path, expected, algorithm)
+                                .await
+                        } else {
+                            integrity_checker.compute_hash(&file_path, algorithm).await
+                        };
 
                         // Stop integrity progress tracking
                         integrity_progress_handle.abort();
@@ -3344,7 +3354,12 @@ impl DownloadManager {
                         true,
                         3.0,
                     )
-                } else if download_error.contains("5") && download_error.len() >= 3 {
+                } else if [
+                    "500", "502", "503", "504", "520", "521", "522", "523", "524",
+                ]
+                .iter()
+                .any(|code| download_error.contains(code))
+                {
                     // Server errors (5xx) are typically retryable
                     errors::external_service_error(
                         download_error,
@@ -4643,5 +4658,26 @@ mod tests {
         assert!(!guard.active_downloads.contains_key(&active_id));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_convert_app_error_does_not_misclassify_arbitrary_digit_five_as_server_error() {
+        let converted = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "parse failed at line 5: bad header".to_string(),
+        ));
+        match converted {
+            crate::core::error_handling::DownloadError::Network { .. } => {}
+            other => panic!("expected Network fallback, got {:?}", other),
+        }
+
+        let server_err = DownloadManager::convert_app_error_to_download_error(AppError::Download(
+            "HTTP 503 Service Unavailable".to_string(),
+        ));
+        match server_err {
+            crate::core::error_handling::DownloadError::ExternalService { service, .. } => {
+                assert_eq!(service, "server_error");
+            }
+            other => panic!("expected ExternalService server_error, got {:?}", other),
+        }
     }
 }

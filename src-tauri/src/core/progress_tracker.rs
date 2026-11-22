@@ -6,7 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
@@ -410,6 +413,8 @@ pub struct ProgressTrackingManager {
     progress_sender: mpsc::UnboundedSender<EnhancedProgressStats>,
     /// Progress receiver for external consumption
     progress_receiver: Arc<RwLock<Option<mpsc::UnboundedReceiver<EnhancedProgressStats>>>>,
+    /// Only buffer channel updates after a consumer explicitly takes the receiver
+    has_consumer: Arc<AtomicBool>,
 }
 
 impl ProgressTrackingManager {
@@ -421,6 +426,7 @@ impl ProgressTrackingManager {
             trackers: Arc::new(RwLock::new(HashMap::new())),
             progress_sender,
             progress_receiver: Arc::new(RwLock::new(Some(progress_receiver))),
+            has_consumer: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -442,9 +448,11 @@ impl ProgressTrackingManager {
         if let Some(tracker) = trackers.get_mut(task_id) {
             let stats = tracker.update_progress(downloaded_bytes)?;
 
-            // Send update through channel
-            if let Err(e) = self.progress_sender.send(stats) {
-                warn!("Failed to send progress update for task {}: {}", task_id, e);
+            // Only push into the unbounded channel when an external consumer has taken ownership.
+            if self.has_consumer.load(Ordering::Acquire) {
+                if let Err(e) = self.progress_sender.send(stats) {
+                    warn!("Failed to send progress update for task {}: {}", task_id, e);
+                }
             }
         } else {
             warn!("Progress tracker not found for task: {}", task_id);
@@ -482,7 +490,11 @@ impl ProgressTrackingManager {
     pub async fn take_progress_receiver(
         &self,
     ) -> Option<mpsc::UnboundedReceiver<EnhancedProgressStats>> {
-        self.progress_receiver.write().await.take()
+        let receiver = self.progress_receiver.write().await.take();
+        if receiver.is_some() {
+            self.has_consumer.store(true, Ordering::Release);
+        }
+        receiver
     }
 
     /// Get global download statistics
@@ -636,5 +648,30 @@ mod tests {
         let final_stats = tracker.get_stats();
         assert!(final_stats.statistics.peak_speed > 0.0);
         assert!(final_stats.statistics.stability_score <= 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_progress_channel_does_not_buffer_without_consumer() {
+        let manager = ProgressTrackingManager::new();
+        manager
+            .start_tracking("task-no-consumer".to_string(), Some(1000))
+            .await
+            .unwrap();
+        manager
+            .update_progress("task-no-consumer", 250)
+            .await
+            .unwrap();
+
+        // Now claim the receiver and confirm earlier orphan updates were not queued,
+        // while subsequent updates arrive normally.
+        let mut rx = manager.take_progress_receiver().await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        manager
+            .update_progress("task-no-consumer", 500)
+            .await
+            .unwrap();
+        let delivered = rx.try_recv().unwrap();
+        assert_eq!(delivered.downloaded_bytes, 500);
     }
 }

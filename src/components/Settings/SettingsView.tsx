@@ -83,7 +83,6 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     try {
       await updateConfig(localConfig);
       setHasChanges(false);
-      notify.success('设置已保存', '配置已成功更新');
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:save_failed', error);
       notify.error('保存失败', formatErrorMessage(error));
@@ -97,7 +96,6 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     try {
       await resetConfig();
       setHasChanges(false);
-      notify.success('设置已重置', '已恢复默认配置');
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:reset_failed', error);
       notify.error('重置失败', formatErrorMessage(error));

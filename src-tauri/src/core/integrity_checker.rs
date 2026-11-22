@@ -509,24 +509,28 @@ impl IntegrityChecker {
         algorithm: HashAlgorithm,
         _file_size: u64,
     ) -> AppResult<String> {
-        let file = File::open(file_path).map_err(AppError::Io)?;
+        let file_path = file_path.to_string();
+        let buffer_size = self.config.buffer_size.max(4096);
 
-        let mut reader = BufReader::with_capacity(self.config.buffer_size, file);
-        let mut hasher = algorithm.create_hasher();
-        let mut buffer = vec![0u8; self.config.buffer_size];
+        tokio::task::spawn_blocking(move || -> AppResult<String> {
+            let file = File::open(&file_path).map_err(AppError::Io)?;
+            let mut reader = BufReader::with_capacity(buffer_size, file);
+            let mut hasher = algorithm.create_hasher();
+            let mut buffer = vec![0u8; buffer_size];
 
-        loop {
-            let bytes_read = reader.read(&mut buffer).map_err(AppError::Io)?;
-
-            if bytes_read == 0 {
-                break;
+            loop {
+                let bytes_read = reader.read(&mut buffer).map_err(AppError::Io)?;
+                if bytes_read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..bytes_read]);
             }
 
-            hasher.update(&buffer[..bytes_read]);
-        }
-
-        let hash = hasher.finalize_reset();
-        Ok(hex::encode(hash))
+            let hash = hasher.finalize_reset();
+            Ok(hex::encode(hash))
+        })
+        .await
+        .map_err(|e| AppError::System(format!("Hash task failed: {}", e)))?
     }
 
     /// Hash computation with progress reporting
@@ -536,63 +540,73 @@ impl IntegrityChecker {
         algorithm: HashAlgorithm,
         file_size: u64,
     ) -> AppResult<String> {
-        let file = File::open(file_path).map_err(AppError::Io)?;
+        let file_path = file_path.to_string();
+        let buffer_size = self.config.buffer_size.max(4096);
+        let progress_sender = self.progress_sender.clone();
 
-        let mut reader = BufReader::with_capacity(self.config.buffer_size, file);
-        let mut hasher = algorithm.create_hasher();
-        let mut buffer = vec![0u8; self.config.buffer_size];
-        let mut bytes_processed = 0u64;
-        let start_time = std::time::Instant::now();
-        let mut last_progress_time = start_time;
+        tokio::task::spawn_blocking(move || -> AppResult<String> {
+            let file = File::open(&file_path).map_err(AppError::Io)?;
+            let mut reader = BufReader::with_capacity(buffer_size, file);
+            let mut hasher = algorithm.create_hasher();
+            let mut buffer = vec![0u8; buffer_size];
+            let mut bytes_processed = 0u64;
+            let start_time = std::time::Instant::now();
+            let mut last_progress_time = start_time;
 
-        loop {
-            let bytes_read = reader.read(&mut buffer).map_err(AppError::Io)?;
-
-            if bytes_read == 0 {
-                break;
-            }
-
-            hasher.update(&buffer[..bytes_read]);
-            bytes_processed += bytes_read as u64;
-
-            // Emit progress every 100ms or 1MB, whichever comes first
-            let now = std::time::Instant::now();
-            if now.duration_since(last_progress_time).as_millis() >= 100
-                || bytes_processed.is_multiple_of(1024 * 1024)
-            {
-                if let Some(sender) = &self.progress_sender {
-                    let elapsed = now.duration_since(start_time).as_secs_f64();
-                    let speed = if elapsed > 0.0 {
-                        bytes_processed as f64 / elapsed
-                    } else {
-                        0.0
-                    };
-                    let progress_percent = (bytes_processed as f64 / file_size as f64) * 100.0;
-                    let eta_seconds = if speed > 0.0 {
-                        Some(((file_size - bytes_processed) as f64 / speed) as u64)
-                    } else {
-                        None
-                    };
-
-                    let progress = IntegrityProgress {
-                        file_path: file_path.to_string(),
-                        bytes_processed,
-                        total_size: file_size,
-                        progress_percent,
-                        speed,
-                        eta_seconds,
-                        algorithms: vec![algorithm],
-                    };
-
-                    let _ = sender.send(progress);
+            loop {
+                let bytes_read = reader.read(&mut buffer).map_err(AppError::Io)?;
+                if bytes_read == 0 {
+                    break;
                 }
 
-                last_progress_time = now;
-            }
-        }
+                hasher.update(&buffer[..bytes_read]);
+                bytes_processed += bytes_read as u64;
 
-        let hash = hasher.finalize_reset();
-        Ok(hex::encode(hash))
+                // Emit progress every 100ms or 1MB, whichever comes first
+                let now = std::time::Instant::now();
+                if now.duration_since(last_progress_time).as_millis() >= 100
+                    || bytes_processed.is_multiple_of(1024 * 1024)
+                {
+                    if let Some(ref sender) = progress_sender {
+                        let elapsed = now.duration_since(start_time).as_secs_f64();
+                        let speed = if elapsed > 0.0 {
+                            bytes_processed as f64 / elapsed
+                        } else {
+                            0.0
+                        };
+                        let progress_percent = if file_size > 0 {
+                            (bytes_processed as f64 / file_size as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let eta_seconds = if speed > 0.0 && file_size > bytes_processed {
+                            Some(((file_size - bytes_processed) as f64 / speed) as u64)
+                        } else {
+                            None
+                        };
+
+                        let progress = IntegrityProgress {
+                            file_path: file_path.clone(),
+                            bytes_processed,
+                            total_size: file_size,
+                            progress_percent,
+                            speed,
+                            eta_seconds,
+                            algorithms: vec![algorithm],
+                        };
+
+                        let _ = sender.send(progress);
+                    }
+
+                    last_progress_time = now;
+                }
+            }
+
+            let hash = hasher.finalize_reset();
+            Ok(hex::encode(hash))
+        })
+        .await
+        .map_err(|e| AppError::System(format!("Hash task failed: {}", e)))?
     }
 
     /// Clone checker for use in async tasks (without progress sender)

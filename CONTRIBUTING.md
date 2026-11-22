@@ -27,12 +27,12 @@ pnpm type-check
 pnpm lint
 pnpm exec vitest run
 pnpm exec vitest run --config vitest.config.integration.ts
+pnpm exec prettier --check "src/**/*.{ts,tsx,css,json}" "*.html" ".github/workflows/*.yml" ".github/workflows/README.md" "README.md" "docs/**/*.md"
 pnpm vite build
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-pnpm audit --prod
-cargo audit --manifest-path src-tauri/Cargo.toml
+pnpm audit --prod --audit-level moderate
 ```
 
 如果 `cargo test` 或 `cargo clippy` 因 Tauri `frontendDist` 缺失失败，先运行
@@ -68,13 +68,18 @@ npx gitnexus status
 npx gitnexus context DownloadManager
 ```
 
-Graphify 产物位于 `graphify-out/`。当前脚本会检测 CLI 是否支持图谱重建；如果当前
-`graphify` 只有 query 能力，会给出清晰 fallback：
+Graphify 产物位于
+`graphify-out/`（默认忽略，不入库）。如需在本地刷新代码图谱，请直接使用 Graphify
+CLI：
 
 ```bash
-./scripts/graphify-sync.sh smart
+graphify update .
 ```
 
-架构或计划类问题请先阅读
-`graphify-out/GRAPH_REPORT.md`；如果该文件不存在，参考脚本输出使用具备 build/update 能力的 Graphify
-CLI 重建。
+架构或计划类问题可结合 `graphify-out/GRAPH_REPORT.md` 与
+[docs/architecture-functional-design.md](docs/architecture-functional-design.md)
+阅读。
+
+## 开源协议
+
+提交的贡献将默认以本仓库 [MIT License](LICENSE) 协议发布。

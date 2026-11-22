@@ -1,9 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { ClipboardDocumentIcon, FolderOpenIcon } from '@heroicons/react/24/outline';
+import {
+  ClipboardDocumentIcon,
+  FolderOpenIcon,
+  PauseIcon,
+  PlayIcon,
+  TrashIcon,
+} from '@heroicons/react/24/outline';
 
 import { revealPathInFolderCommand } from '../../features/downloads/api/systemCommands';
 import { buildTaskSupportBundle } from '../../features/downloads/model/downloadDiagnostics';
+import { useDownloadStore } from '../../stores/downloadStore';
 import type { VideoTask } from '../../types';
 import { formatSpeed } from '../../utils/format';
 
@@ -97,6 +104,26 @@ export const TaskItem = React.memo<{
     }
   };
 
+  const handlePrimaryAction = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const store = useDownloadStore.getState();
+    if (task.status === 'downloading') {
+      void store.pauseDownload(task.id).catch(() => undefined);
+    } else if (task.status === 'paused') {
+      void store.resumeDownload(task.id).catch(() => undefined);
+    } else {
+      void store.startDownload(task.id).catch(() => undefined);
+    }
+  };
+
+  const handleDeleteTask = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    void useDownloadStore
+      .getState()
+      .removeTasks([task.id])
+      .catch(() => undefined);
+  };
+
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!canReveal) return;
     event.preventDefault();
@@ -171,7 +198,44 @@ export const TaskItem = React.memo<{
             </span>
             {task.title}
           </h4>
-          <div className='flex items-center gap-2 shrink-0'>
+          <div className='flex items-center gap-1.5 shrink-0'>
+            {task.status === 'downloading' && (
+              <button
+                type='button'
+                onClick={handlePrimaryAction}
+                className={`p-1 rounded-md text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/30 ${buttonFocusClass}`}
+                title='暂停任务'
+                aria-label={`暂停任务：${task.title}`}
+              >
+                <PauseIcon className='w-4 h-4' />
+              </button>
+            )}
+            {(task.status === 'pending' ||
+              task.status === 'paused' ||
+              task.status === 'failed' ||
+              task.status === 'cancelled') && (
+              <button
+                type='button'
+                onClick={handlePrimaryAction}
+                className={`p-1 rounded-md text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 ${buttonFocusClass}`}
+                title={
+                  task.status === 'paused'
+                    ? '继续任务'
+                    : task.status === 'failed'
+                      ? '重试任务'
+                      : '开始任务'
+                }
+                aria-label={`${
+                  task.status === 'paused'
+                    ? '继续任务'
+                    : task.status === 'failed'
+                      ? '重试任务'
+                      : '开始任务'
+                }：${task.title}`}
+              >
+                <PlayIcon className='w-4 h-4' />
+              </button>
+            )}
             <button
               type='button'
               onClick={handleCopyDiagnostic}
@@ -181,6 +245,17 @@ export const TaskItem = React.memo<{
             >
               <ClipboardDocumentIcon className='w-4 h-4' />
             </button>
+            {task.status !== 'committing' && (
+              <button
+                type='button'
+                onClick={handleDeleteTask}
+                className={`p-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/30 ${buttonFocusClass}`}
+                title='删除任务'
+                aria-label={`删除任务：${task.title}`}
+              >
+                <TrashIcon className='w-4 h-4' />
+              </button>
+            )}
             <span
               className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}
               data-testid='task-status'
@@ -223,8 +298,19 @@ export const TaskItem = React.memo<{
               <span>剩余: --</span>
             </>
           )}
-          {task.status !== 'downloading' && task.status !== 'committing' && (
-            <span className='truncate text-gray-400'>{task.output_path}</span>
+          {task.status === 'failed' && task.error_message ? (
+            <span
+              className='truncate text-red-600 dark:text-red-400'
+              title={task.error_message}
+              data-testid='task-error-message'
+            >
+              {task.error_message}
+            </span>
+          ) : (
+            task.status !== 'downloading' &&
+            task.status !== 'committing' && (
+              <span className='truncate text-gray-400'>{task.output_path}</span>
+            )
           )}
         </div>
 

@@ -1,8 +1,8 @@
 # Current State
 
-更新日期：2026-05-07
+更新日期：2026-11-22
 
-当前基线：`main` 加当前未提交多平台下载兼容优化工作树
+当前基线：`v1.1.0`（Phase 1 核心引擎加固与开源社区规范基线）
 
 这份文档是当前仓库的事实源摘要。它只描述现在仍应维护的主链行为，不再承载历史计划、旧评审记录或已完成阶段的流水账。
 
@@ -241,6 +241,24 @@ GitNexus 对当前未提交工作树的影响检查：
 - 上次会话恢复 UX 已增加主工作台状态条，提供批量继续、重试失败和清理完成入口。
 - 任务列表提供复制诊断入口，诊断文本包含任务 ID、URL、状态、下载器、平台 extractor、进度、文件路径、错误分类和日志位置。
 - `yt-dlp` 平台识别已预留 registry 入口，后续新增平台只需扩展规则和必要 schema。
+- `v1.1.0` 核心可靠性与交互闭环已完成加固：
+  - `AppConfig::save()` 与单流 `download_with_resume` 均改为临时文件 +
+    `sync_all()` + 原子重命名提交。
+  - `M3U8Downloader`
+    支持单任务上下文隔离（独立取消/暂停信号、进度通道、令牌桶限速）、暂停分片目录保留与原子
+    `.ts.tmp` 续传复用。
+  - `DownloadManager::stop()` 与 Tauri `CloseRequested`
+    联动（5 秒优雅退出窗口），`RetryExecutor` 联动熔断器计数，`spawn_blocking`
+    卸载完整性哈希计算。
+  - `DownloadEventBridge`
+    已去除内部统计/进度回环，前端终态刷新改为 250ms 防抖，去除空闲 `pending`
+    轮询；`StateValidator` 统一先标准化后端任务再比对。
+  - 设置项（主题 `theme`、语言
+    `language`、`show_completed_tasks`、`auto_start_downloads`、`show_notifications`）已全链路生效，`TaskListItem`
+    新增行级操作按钮与内联失败原因，`StatusBar` 显示实时队列状态徽标。
+  - 已补齐根目录 `LICENSE`（MIT）、`README.md` /
+    `README.zh-CN.md`、`CHANGELOG.md`、`CODE_OF_CONDUCT.md` 与准确的
+    `SECURITY.md` / `.github/dependabot.yml`。
 
 ---
 
@@ -254,56 +272,51 @@ pnpm lint
 pnpm exec vitest run
 pnpm exec vitest run --config vitest.config.integration.ts
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 如果改动涉及下载核心、恢复、导入或事件契约，应再跑对应 focused
-tests，并用 GitNexus `detect_changes` 看影响面。
+tests，并用 GitNexus 查看影响面。
 
-2026-05-07 当前未提交工作树最近一次已确认通过：
+2026-11-22 当前 `v1.1.0` 已验证通过：
 
 - `pnpm type-check`
-- `pnpm lint`
-- `pnpm exec vitest run`：52 个测试文件，280 个测试
-- `pnpm exec vitest run --config vitest.config.integration.ts`：2 个测试文件，14 个测试
+- `pnpm lint`（`--max-warnings 0`）
+- `pnpm exec vitest run`：54 个测试文件，302 个测试通过
+- `pnpm exec vitest run --config vitest.config.integration.ts`：2 个测试文件，14 个测试通过
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check`
-- `cargo test --manifest-path src-tauri/Cargo.toml`：lib 152 个测试，main
-  151 个测试
-- `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+- `cargo test --manifest-path src-tauri/Cargo.toml`：182 个测试通过
 - `pnpm sidecars:check:local`：允许占位文件的本地 smoke 预检通过
 - `git diff --check`
 
-真实 App 冒烟：
+真机 App 冒烟能力：
 
 - `pnpm tauri info`
 - `pnpm tauri dev` 冷启动和重启
 - `pnpm test:tauri-smoke` 真实 MCP Bridge smoke
-- MCP Bridge backend/window 状态读取
-- MCP Bridge 原生截图
 
-尚未通过真实 App 验收的阻塞项：
+当前发布环境差异说明：
 
-- 真实 `yt-dlp` / `ffmpeg`
-  sidecar 二进制仍未替换占位文件；严格发布预检会拦截生产构建。
-- `pnpm sidecars:check` 严格发布预检当前按预期失败，原因是本机 target 的
-  `yt-dlp` / `ffmpeg` 仍为占位文件。
-- 公开视频下载、合并、取消链路需在真实 sidecar 发布链完成后补跑。
-- MCP Bridge `execute_js` 当前受 `withGlobalTauri=false` 限制，真实 E2E
+- 本地未准备真实 sidecar 时，`pnpm sidecars:check`
+  会拦截占位二进制；生产 Release workflow 在打包前通过 `pnpm sidecars:prepare`
+  下载真实平台二进制。
+- MCP Bridge `execute_js` 受 `withGlobalTauri=false` 限制，真实 E2E
   smoke 默认不依赖 JS 注入结果。
 
 ---
 
-## 9. 当前仍值得继续优化
+## 9. 下一阶段规划方向
 
-优先级见 `docs/roadmap.md`。当前最重要的方向是：
+优先级与多阶段规划见 `docs/roadmap.md`：
 
-- 强化 429、断网、磁盘权限、`.part` 损坏、最终文件冲突等下载边界测试。
-- 为“上次会话恢复”增加更明确的 UI 提示和批量恢复入口。
-- 扩展 M3U8 加密、长 playlist、失败 segment retry、`yt-dlp` / `ffmpeg`
-  sidecar 的跨平台发布验证。
-- 增加真实演示截图/短视频和 License，让社区展示更完整。
-- 定期刷新 Graphify/GitNexus 摘要，避免大型代码库文档再次漂移。
+- **`v1.2.0`**：可插拔 `DownloadProvider` Trait 注册中心、完整 HLS Master
+  Playlist / fMP4 / FFmpeg 无损混流、原生 MPEG-DASH
+  (`.mpd`) 与单任务 Headers/Cookies/Proxy 参数透传。
+- **`v1.3.0`**：前端完整国际化 (`zh-CN` /
+  `en-US`)、系统托盘与原生桌面通知、快捷键与 Headless CLI。
+- **`v2.0.0`**：Cargo Workspace 模块化拆分与 SQLite WAL 持久化存储引擎。
 
 ---
 

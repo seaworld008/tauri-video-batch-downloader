@@ -38,8 +38,19 @@ pub(crate) fn managed_backup_path(tool_id: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn tool_data_dir() -> Option<PathBuf> {
-    ProjectDirs::from("com", "video-downloader", "VideoDownloaderPro")
-        .map(|dirs| dirs.data_local_dir().join("tools"))
+    let canonical = ProjectDirs::from("com", "videodownloader", "pro")
+        .map(|dirs| dirs.data_local_dir().join("tools"));
+    let legacy = ProjectDirs::from("com", "video-downloader", "VideoDownloaderPro")
+        .map(|dirs| dirs.data_local_dir().join("tools"));
+
+    match canonical {
+        Some(dir) if dir.exists() => Some(dir),
+        Some(dir) => match legacy {
+            Some(old) if old.exists() => Some(old),
+            _ => Some(dir),
+        },
+        None => legacy,
+    }
 }
 
 fn bundled_sidecar_path(tool_id: &str) -> Option<PathBuf> {

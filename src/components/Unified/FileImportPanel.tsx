@@ -56,6 +56,7 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
   const [outputDir, setOutputDir] = useState<string>('');
 
   const addTasks = useDownloadStore(state => state.addTasks);
+  const enqueueDownloads = useDownloadStore(state => state.enqueueDownloads);
   const refreshTasks = useDownloadStore(state => state.refreshTasks);
   const setFilterStatus = useDownloadStore(state => state.setFilterStatus);
   const setSearchQuery = useDownloadStore(state => state.setSearchQuery);
@@ -64,6 +65,9 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
 
   const defaultOutputDirFromConfig = useConfigStore(
     state => state.config.download.output_directory
+  );
+  const autoStartDownloads = useConfigStore(
+    state => state?.config?.ui?.auto_start_downloads ?? false
   );
 
   const previewImportData = async (filePath: string) => {
@@ -212,6 +216,10 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
         effectiveSnapshot
       );
 
+      if (autoStartDownloads && newTaskIds.length > 0 && typeof enqueueDownloads === 'function') {
+        enqueueDownloads(newTaskIds);
+      }
+
       const reconciliation = summarizeTaskCreationReconciliation(
         existingTasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[0],
         addedTasks as unknown as Parameters<typeof summarizeTaskCreationReconciliation>[1]
@@ -251,7 +259,9 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
     }
   }, [
     addTasks,
+    autoStartDownloads,
     defaultOutputDirFromConfig,
+    enqueueDownloads,
     fieldMapping,
     importPreview,
     outputDir,

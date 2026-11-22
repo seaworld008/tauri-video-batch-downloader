@@ -571,9 +571,14 @@ impl RetryExecutor {
             // Execute the function
             match f(retry_context.clone()).await {
                 Ok(result) => {
-                    // Success - update statistics and return
-                    self.update_success_stats(last_error.as_ref().map(|e| e.category()))
-                        .await;
+                    // Success - update statistics and record recovery on any previously failing breaker
+                    let recovered_category = last_error.as_ref().map(|e| e.category());
+                    if let Some(ref category) = recovered_category {
+                        if let Some(circuit_breaker) = self.circuit_breakers.get(category) {
+                            circuit_breaker.record_success().await;
+                        }
+                    }
+                    self.update_success_stats(recovered_category).await;
                     info!(
                         "Execution succeeded on attempt {} for {}",
                         attempt, attempt_id
@@ -583,9 +588,14 @@ impl RetryExecutor {
                 Err(error) => {
                     warn!("Attempt {} failed for {}: {}", attempt, attempt_id, error);
 
+                    let error_category = error.category();
+                    if let Some(circuit_breaker) = self.circuit_breakers.get(&error_category) {
+                        circuit_breaker.record_failure().await;
+                    }
+
                     // Check if error is retryable
                     if !error.is_retryable() {
-                        self.update_failure_stats(Some(error.category())).await;
+                        self.update_failure_stats(Some(error_category)).await;
                         return Err(anyhow::Error::from(error)).with_context(|| {
                             format!("Non-retryable error on attempt {}", attempt)
                         });
@@ -593,14 +603,13 @@ impl RetryExecutor {
 
                     // If this is the last attempt, fail
                     if attempt >= max_attempts {
-                        self.update_failure_stats(Some(error.category())).await;
+                        self.update_failure_stats(Some(error_category)).await;
                         return Err(anyhow::Error::from(error.clone())).with_context(|| {
                             format!("All {} retry attempts exhausted", max_attempts)
                         });
                     }
 
                     // Check circuit breaker for this error category
-                    let error_category = error.category();
                     if let Some(circuit_breaker) = self.circuit_breakers.get(&error_category) {
                         if circuit_breaker.state().await == CircuitBreakerState::Open {
                             self.update_failure_stats(Some(error_category)).await;

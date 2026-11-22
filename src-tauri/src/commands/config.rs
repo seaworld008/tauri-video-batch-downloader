@@ -216,94 +216,30 @@ async fn import_config_impl(state: &State<'_, AppState>, file_path: &str) -> App
 }
 
 fn validate_config(config: &AppConfig) -> AppResult<()> {
-    // Validate download configuration
-    if config.download.concurrent_downloads == 0 {
-        return Err(AppError::Config(
-            "Concurrent downloads must be greater than 0".to_string(),
-        ));
-    }
-
     if config.download.concurrent_downloads > 10 {
         warn!(
-            "⚠️ Concurrent downloads set to {} (recommended: 1-5)",
+            "⚠️ Concurrent downloads set to {} (recommended: 1-10)",
             config.download.concurrent_downloads
         );
     }
 
-    if config.download.timeout_seconds == 0 {
-        return Err(AppError::Config(
-            "Timeout must be greater than 0".to_string(),
-        ));
-    }
-
-    if config.download.timeout_seconds > 300 {
+    if config.download.timeout_seconds > 120 {
         warn!(
             "⚠️ Timeout set to {}s (recommended: 30-120s)",
             config.download.timeout_seconds
         );
     }
 
-    if config.download.retry_attempts > 10 {
+    if config.download.retry_attempts > 5 {
         warn!(
             "⚠️ Retry attempts set to {} (recommended: 1-5)",
             config.download.retry_attempts
         );
     }
 
-    // Validate UI configuration
-    if let Some(ref ui) = config.ui {
-        if ui.window_width < 800 || ui.window_height < 600 {
-            warn!(
-                "⚠️ Small window size detected: {}x{}",
-                ui.window_width, ui.window_height
-            );
-        }
-
-        if ui.window_width > 3840 || ui.window_height > 2160 {
-            warn!(
-                "⚠️ Very large window size detected: {}x{}",
-                ui.window_width, ui.window_height
-            );
-        }
-    }
-
-    // Validate system configuration
-    if let Some(ref system) = config.system {
-        if let Some(ref log_level) = system.log_level {
-            match log_level.to_lowercase().as_str() {
-                "error" | "warn" | "info" | "debug" | "trace" => {}
-                _ => {
-                    return Err(AppError::Config(format!(
-                        "Invalid log level: {}",
-                        log_level
-                    )));
-                }
-            }
-        }
-    }
-
-    // Validate YouTube configuration
-    if let Some(ref youtube) = config.youtube {
-        if let Some(ref quality) = youtube.default_quality {
-            match quality.as_str() {
-                "best" | "worst" | "720p" | "1080p" | "1440p" | "2160p" => {}
-                _ => {
-                    warn!("⚠️ Unusual YouTube quality setting: {}", quality);
-                }
-            }
-        }
-
-        if let Some(ref format) = youtube.default_format {
-            match format.as_str() {
-                "mp4" | "webm" | "mkv" | "avi" => {}
-                _ => {
-                    warn!("⚠️ Unusual YouTube format setting: {}", format);
-                }
-            }
-        }
-    }
-
-    Ok(())
+    config
+        .validate()
+        .map_err(|e| AppError::Config(e.to_string()))
 }
 
 #[cfg(test)]
@@ -320,15 +256,19 @@ mod tests {
         let mut config = AppConfig::default();
         config.download.concurrent_downloads = 0;
         assert!(validate_config(&config).is_err());
+
+        let mut bad_timeout = AppConfig::default();
+        bad_timeout.download.timeout_seconds = 500;
+        assert!(validate_config(&bad_timeout).is_err());
     }
 
     #[test]
     fn test_validate_config_warnings() {
         let mut config = AppConfig::default();
         config.download.concurrent_downloads = 15;
-        config.download.timeout_seconds = 500;
+        config.download.timeout_seconds = 240;
 
-        // Should not error, but would generate warnings in logs
+        // Within AppConfig::validate() hard limits (1..=20, 1..=300), emits warnings only
         assert!(validate_config(&config).is_ok());
     }
 }

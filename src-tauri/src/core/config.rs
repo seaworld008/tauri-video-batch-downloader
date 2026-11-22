@@ -202,8 +202,24 @@ impl AppConfig {
         let content =
             serde_json::to_string_pretty(self).with_context(|| "Failed to serialize config")?;
 
-        std::fs::write(&config_path, content)
-            .with_context(|| format!("Failed to write config file: {:?}", config_path))?;
+        let temp_path = config_path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&temp_path).with_context(|| {
+                format!("Failed to create temporary config file: {:?}", temp_path)
+            })?;
+            file.write_all(content.as_bytes()).with_context(|| {
+                format!("Failed to write temporary config file: {:?}", temp_path)
+            })?;
+            file.sync_all().with_context(|| {
+                format!("Failed to sync temporary config file: {:?}", temp_path)
+            })?;
+        }
+
+        std::fs::rename(&temp_path, &config_path).with_context(|| {
+            let _ = std::fs::remove_file(&temp_path);
+            format!("Failed to write config file: {:?}", config_path)
+        })?;
 
         tracing::info!("Saved configuration to: {:?}", config_path);
         Ok(())
