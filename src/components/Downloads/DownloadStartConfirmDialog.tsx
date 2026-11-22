@@ -30,14 +30,14 @@ export const DownloadStartConfirmDialog: React.FC<DownloadStartConfirmDialogProp
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !working) {
         onClose();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+  }, [open, working, onClose]);
 
   if (!open) {
     return null;
@@ -48,9 +48,15 @@ export const DownloadStartConfirmDialog: React.FC<DownloadStartConfirmDialogProp
   return (
     <div
       className='fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4'
-      onClick={onClose}
+      onClick={() => {
+        if (!working) {
+          onClose();
+        }
+      }}
     >
       <div
+        role='dialog'
+        aria-modal='true'
         className='bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-lg w-full p-6'
         onClick={event => event.stopPropagation()}
       >
@@ -63,7 +69,8 @@ export const DownloadStartConfirmDialog: React.FC<DownloadStartConfirmDialogProp
           </div>
           <button
             onClick={onClose}
-            className='p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700'
+            disabled={working}
+            className='p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50'
             aria-label='关闭'
           >
             <XMarkIcon className='h-5 w-5 text-gray-500' />
@@ -105,7 +112,8 @@ export const DownloadStartConfirmDialog: React.FC<DownloadStartConfirmDialogProp
         <div className='flex flex-col sm:flex-row gap-2'>
           <button
             onClick={onClose}
-            className='flex-1 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors'
+            disabled={working}
+            className='flex-1 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors'
           >
             取消
           </button>

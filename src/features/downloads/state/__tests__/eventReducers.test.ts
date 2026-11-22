@@ -50,6 +50,35 @@ describe('eventReducers', () => {
     expect(updated[0].progress).toBe(100);
   });
 
+  it('clears transfer metrics when task is paused and ignores unknown task ids', () => {
+    const tasks = [buildTask({ progress: 45, speed: 120, display_speed_bps: 120, eta: 20 })];
+
+    const paused = reduceTasksWithStatusUpdate(tasks, {
+      task_id: 'task-1',
+      status: 'paused',
+      error_message: null,
+    });
+
+    expect(paused[0].status).toBe('paused');
+    expect(paused[0].speed).toBe(0);
+    expect(paused[0].display_speed_bps).toBe(0);
+    expect(paused[0].eta).toBeUndefined();
+
+    const unchangedStatus = reduceTasksWithStatusUpdate(tasks, {
+      task_id: 'missing-task',
+      status: 'failed',
+      error_message: 'ignored',
+    });
+    expect(unchangedStatus).toBe(tasks);
+
+    const unchangedProgress = reduceTasksWithProgressUpdate(tasks, {
+      task_id: 'missing-task',
+      downloaded_size: 100,
+      progress: 0.5,
+    });
+    expect(unchangedProgress).toBe(tasks);
+  });
+
   it('normalizes progressed event into percentage', () => {
     const tasks = [buildTask({ progress: 30, downloaded_size: 300, file_size: 1000 })];
 

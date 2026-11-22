@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useConfigStore } from '../../stores/configStore';
 import { notify } from '../../stores/uiStore';
 import {
@@ -25,6 +25,9 @@ import { SettingsSaveBar } from './SettingsSaveBar';
 
 interface SettingsViewProps {}
 
+const formatErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 export const SettingsView: React.FC<SettingsViewProps> = () => {
   const config = useConfigStore(state => state.config);
   const updateConfig = useConfigStore(state => state.updateConfig);
@@ -42,21 +45,21 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     }
   }, [config]);
 
-  const refreshExternalTools = async () => {
+  const refreshExternalTools = useCallback(async () => {
     setIsLoadingTools(true);
     try {
       setExternalTools(await getExternalToolStatusCommand());
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tools_refresh_failed', error);
-      notify.error('工具检测失败', error as string);
+      notify.error('工具检测失败', formatErrorMessage(error));
     } finally {
       setIsLoadingTools(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void refreshExternalTools();
-  }, []);
+  }, [refreshExternalTools]);
 
   const handleConfigChange = (section: keyof AppConfig, key: string, value: any) => {
     if (!localConfig) return;
@@ -83,7 +86,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('设置已保存', '配置已成功更新');
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:save_failed', error);
-      notify.error('保存失败', error as string);
+      notify.error('保存失败', formatErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -97,7 +100,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('设置已重置', '已恢复默认配置');
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:reset_failed', error);
-      notify.error('重置失败', error as string);
+      notify.error('重置失败', formatErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -111,7 +114,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       }
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:select_output_directory_failed', error);
-      notify.error('选择目录失败', error as string);
+      notify.error('选择目录失败', formatErrorMessage(error));
     }
   };
 
@@ -123,7 +126,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('检查完成', '外部工具版本状态已更新');
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tools_check_failed', error);
-      notify.error('检查更新失败', error as string);
+      notify.error('检查更新失败', formatErrorMessage(error));
     } finally {
       setIsLoadingTools(false);
     }
@@ -137,7 +140,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('工具已更新', `${updated.display_name} 已更新到可用版本`);
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_update_failed', error);
-      notify.error('工具更新失败', error as string);
+      notify.error('工具更新失败', formatErrorMessage(error));
     } finally {
       setUpdatingTool(null);
     }
@@ -151,7 +154,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('工具已回退', `${updated.display_name} 已切回上一个 App 管理版本`);
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_rollback_failed', error);
-      notify.error('工具回退失败', error as string);
+      notify.error('工具回退失败', formatErrorMessage(error));
     } finally {
       setUpdatingTool(null);
     }
@@ -166,7 +169,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('工具路径已更新', `${updated.display_name} 将优先使用指定文件`);
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_override_failed', error);
-      notify.error('设置工具路径失败', error as string);
+      notify.error('设置工具路径失败', formatErrorMessage(error));
     }
   };
 
@@ -177,7 +180,7 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
       notify.success('工具路径已清除', `${updated.display_name} 已恢复自动检测`);
     } catch (error) {
       reportFrontendIssue('error', 'settings_view:external_tool_clear_failed', error);
-      notify.error('清除工具路径失败', error as string);
+      notify.error('清除工具路径失败', formatErrorMessage(error));
     }
   };
 

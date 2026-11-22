@@ -6,22 +6,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { setupDefaultMocks } from '../setup/integration.setup';
 import { LanguageSelector } from '../../components/Common/LanguageSelector';
 import { useLanguage, useI18n } from '../../i18n/hooks';
 import i18n from '../../i18n';
-
-const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-};
 
 describe('i18n Integration Tests', () => {
   beforeEach(() => {
@@ -35,13 +23,11 @@ describe('i18n Integration Tests', () => {
         const { t } = useI18n();
 
         return (
-          <TestWrapper>
-            <div>
-              <LanguageSelector />
-              <div data-testid='loading-text'>{t('common.loading')}</div>
-              <div data-testid='error-text'>{t('common.error')}</div>
-            </div>
-          </TestWrapper>
+          <div>
+            <LanguageSelector />
+            <div data-testid='loading-text'>{t('common.loading')}</div>
+            <div data-testid='error-text'>{t('common.error')}</div>
+          </div>
         );
       };
 
@@ -72,13 +58,11 @@ describe('i18n Integration Tests', () => {
         const { t } = useI18n();
 
         return (
-          <TestWrapper>
-            <div>
-              <LanguageSelector />
-              <span data-testid='current-language'>{currentLanguage}</span>
-              <div data-testid='cancel-text'>{t('common.cancel')}</div>
-            </div>
-          </TestWrapper>
+          <div>
+            <LanguageSelector />
+            <span data-testid='current-language'>{currentLanguage}</span>
+            <div data-testid='cancel-text'>{t('common.cancel')}</div>
+          </div>
         );
       };
 
@@ -111,15 +95,13 @@ describe('i18n Integration Tests', () => {
         const { changeLanguage } = useLanguage();
 
         return (
-          <TestWrapper>
-            <div>
-              <button onClick={() => void changeLanguage('zh')} data-testid='lang-button'>
-                {t('common.cancel')}
-              </button>
-              <div data-testid='loading-text'>{t('common.loading')}</div>
-              <div data-testid='error-text'>{t('common.error')}</div>
-            </div>
-          </TestWrapper>
+          <div>
+            <button onClick={() => void changeLanguage('zh')} data-testid='lang-button'>
+              {t('common.cancel')}
+            </button>
+            <div data-testid='loading-text'>{t('common.loading')}</div>
+            <div data-testid='error-text'>{t('common.error')}</div>
+          </div>
         );
       };
 
@@ -146,15 +128,13 @@ describe('i18n Integration Tests', () => {
         const { changeLanguage } = useLanguage();
 
         return (
-          <TestWrapper>
-            <div>
-              <button onClick={() => void changeLanguage('zh')} data-testid='change-lang'>
-                Change Language
-              </button>
-              <div data-testid='task-count'>{t('downloads.preview.taskCount', { count: 5 })}</div>
-              <div data-testid='percentage'>{t('formats.percentage', { value: 75.5 })}</div>
-            </div>
-          </TestWrapper>
+          <div>
+            <button onClick={() => void changeLanguage('zh')} data-testid='change-lang'>
+              Change Language
+            </button>
+            <div data-testid='task-count'>{t('downloads.preview.taskCount', { count: 5 })}</div>
+            <div data-testid='percentage'>{t('formats.percentage', { value: 75.5 })}</div>
+          </div>
         );
       };
 
@@ -179,11 +159,7 @@ describe('i18n Integration Tests', () => {
       const ErrorHandlingTest = () => {
         const { t } = useI18n();
 
-        return (
-          <TestWrapper>
-            <div data-testid='missing-key'>{t('nonexistent.translation.key' as never)}</div>
-          </TestWrapper>
-        );
+        return <div data-testid='missing-key'>{t('nonexistent.translation.key' as never)}</div>;
       };
 
       render(<ErrorHandlingTest />);

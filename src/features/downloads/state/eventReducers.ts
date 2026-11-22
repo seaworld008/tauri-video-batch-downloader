@@ -19,13 +19,18 @@ export interface StatusEventPayload {
 export const reduceTasksWithStatusUpdate = (
   tasks: VideoTask[],
   payload: StatusEventPayload
-): VideoTask[] =>
-  tasks.map(task => {
+): VideoTask[] => {
+  if (!tasks.some(task => task.id === payload.task_id)) {
+    return tasks;
+  }
+
+  return tasks.map(task => {
     if (task.id !== payload.task_id) {
       return task;
     }
 
     const isNonTransferringStatus =
+      payload.status === 'paused' ||
       payload.status === 'committing' ||
       payload.status === 'completed' ||
       payload.status === 'failed' ||
@@ -42,11 +47,16 @@ export const reduceTasksWithStatusUpdate = (
       updated_at: new Date().toISOString(),
     };
   });
+};
 
 export const reduceTasksWithProgressUpdate = (
   tasks: VideoTask[],
   update: ProgressEventPayload
 ): VideoTask[] => {
+  if (!tasks.some(task => task.id === update.task_id)) {
+    return tasks;
+  }
+
   const totalSize =
     typeof update.total_size === 'number' && Number.isFinite(update.total_size)
       ? update.total_size

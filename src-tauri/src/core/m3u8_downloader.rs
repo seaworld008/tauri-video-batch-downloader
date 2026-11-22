@@ -122,16 +122,17 @@ pub struct M3U8Downloader {
     config: M3U8DownloaderConfig,
     client: Client,
     active_downloads: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+    pause_flags: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
     progress_tx: ProgressSender,
     semaphore: Arc<Semaphore>,
-    is_paused: Arc<AtomicBool>,
 }
 
 impl M3U8Downloader {
     /// 创建新的M3U8下载器实例
     pub fn new(config: M3U8DownloaderConfig) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout))
+            .connect_timeout(Duration::from_secs(config.timeout))
+            .read_timeout(Duration::from_secs(config.timeout))
             .user_agent(&config.user_agent)
             .build()?;
 
@@ -144,10 +145,22 @@ impl M3U8Downloader {
             config,
             client,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            pause_flags: Arc::new(RwLock::new(HashMap::new())),
             progress_tx: Arc::new(ParkingRwLock::new(None)),
             semaphore,
-            is_paused: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    fn resolve_safe_task_temp_dir(base_dir: &Path, task_id: &str) -> Result<PathBuf> {
+        let sanitized = crate::utils::file_utils::sanitize_filename(task_id);
+        let candidate = Path::new(&sanitized);
+        let mut components = candidate.components();
+        match (components.next(), components.next()) {
+            (Some(std::path::Component::Normal(_)), None) if !sanitized.is_empty() => {
+                Ok(base_dir.join(sanitized))
+            }
+            _ => bail!("非法的任务临时目录标识: {}", task_id),
+        }
     }
 
     /// 设置进度回调
@@ -163,9 +176,10 @@ impl M3U8Downloader {
         output_path: &str,
         pause_flag: Arc<AtomicBool>,
     ) -> Result<()> {
+        crate::utils::validation::assert_http_url(m3u8_url)?;
         tracing::info!("开始下载M3U8流: {}", m3u8_url);
         // 解析M3U8播放列表
-        let playlist = self.parse_m3u8_playlist(m3u8_url).await?;
+        let mut playlist = self.parse_m3u8_playlist(m3u8_url).await?;
         tracing::info!(
             "解析到 {} 个片段，总时长: {:.2}秒",
             playlist.segments.len(),
@@ -176,42 +190,50 @@ impl M3U8Downloader {
             bail!("M3U8播放列表为空");
         }
 
-        // 创建任务临时目录
-        let task_temp_dir = self.config.temp_dir.join(task_id);
+        // 创建受限且安全的任务临时目录，防止恶意 task_id 路径穿越
+        let task_temp_dir = Self::resolve_safe_task_temp_dir(&self.config.temp_dir, task_id)?;
         tokio::fs::create_dir_all(&task_temp_dir).await?;
-
-        let mut playlist = playlist;
-        self.hydrate_segment_encryption_keys(&mut playlist).await?;
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
         {
             let mut downloads = self.active_downloads.write().await;
             downloads.insert(task_id.to_string(), cancel_flag.clone());
         }
+        {
+            let mut flags = self.pause_flags.write().await;
+            flags.insert(task_id.to_string(), Arc::clone(&pause_flag));
+        }
 
-        // 下载所有片段
-        let result = self
-            .download_segments(
-                task_id,
-                &playlist,
-                &task_temp_dir,
-                cancel_flag.clone(),
-                Arc::clone(&pause_flag),
-            )
-            .await;
+        let pipeline_result: Result<()> = async {
+            self.hydrate_segment_encryption_keys(&mut playlist).await?;
+            let segment_files = self
+                .download_segments(
+                    task_id,
+                    &playlist,
+                    &task_temp_dir,
+                    cancel_flag.clone(),
+                    Arc::clone(&pause_flag),
+                )
+                .await?;
 
-        // 清理活跃下载记录
+            tracing::info!("分片下载完成，开始合并");
+            self.merge_segments(&segment_files, output_path).await?;
+            Ok(())
+        }
+        .await;
+
+        // 清理活跃下载记录与暂停句柄
         {
             let mut downloads = self.active_downloads.write().await;
             downloads.remove(task_id);
         }
+        {
+            let mut flags = self.pause_flags.write().await;
+            flags.remove(task_id);
+        }
 
-        match result {
-            Ok(segment_files) => {
-                tracing::info!("分片下载完成，开始合并");
-
-                self.merge_segments(&segment_files, output_path).await?;
-
+        match pipeline_result {
+            Ok(()) => {
                 if !self.config.keep_temp_files {
                     self.cleanup_temp_files(&task_temp_dir).await?;
                 } else {
@@ -260,10 +282,16 @@ impl M3U8Downloader {
             encryption: None,
         };
 
+        let content = content.strip_prefix('\u{feff}').unwrap_or(content);
         let lines: Vec<&str> = content.lines().collect();
 
         // 验证是否为有效的M3U8文件
-        if !lines.first().unwrap_or(&"").starts_with("#EXTM3U") {
+        if !lines
+            .first()
+            .unwrap_or(&"")
+            .trim_start()
+            .starts_with("#EXTM3U")
+        {
             bail!("无效的M3U8文件格式");
         }
 
@@ -330,11 +358,12 @@ impl M3U8Downloader {
             }
 
             // 处理片段URL
-            let segment_url = if line.starts_with("http") {
+            let segment_url = if line.starts_with("http://") || line.starts_with("https://") {
                 line.to_string()
             } else {
                 self.resolve_relative_url(&playlist.base_url, line)?
             };
+            crate::utils::validation::assert_http_url(&segment_url)?;
 
             let byte_range = pending_byte_range.take();
             if let Some((_, end)) = byte_range {
@@ -368,23 +397,46 @@ impl M3U8Downloader {
         Ok(playlist)
     }
 
+    fn split_attribute_list(input: &str) -> Vec<&str> {
+        let mut attributes = Vec::new();
+        let mut in_quotes = false;
+        let mut start = 0usize;
+
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '"' => in_quotes = !in_quotes,
+                ',' if !in_quotes => {
+                    attributes.push(input[start..idx].trim());
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+
+        let tail = input[start..].trim();
+        if !tail.is_empty() {
+            attributes.push(tail);
+        }
+
+        attributes
+    }
+
     /// 解析加密行信息
     fn parse_encryption_line(&self, line: &str) -> Result<Option<M3U8Encryption>> {
-        let key_line = line.replace("#EXT-X-KEY:", "");
-        let parts: Vec<&str> = key_line.split(',').collect();
+        let key_line = line.strip_prefix("#EXT-X-KEY:").unwrap_or(line);
+        let parts = Self::split_attribute_list(key_line);
 
         let mut method = String::new();
         let mut key_url = None;
         let mut iv = None;
 
         for part in parts {
-            let kv: Vec<&str> = part.split('=').collect();
-            if kv.len() != 2 {
+            let Some((raw_key, raw_value)) = part.split_once('=') else {
                 continue;
-            }
+            };
 
-            let key = kv[0].trim();
-            let value = kv[1].trim().trim_matches('"');
+            let key = raw_key.trim();
+            let value = raw_value.trim().trim_matches('"');
 
             match key {
                 "METHOD" => method = value.to_string(),
@@ -415,11 +467,13 @@ impl M3U8Downloader {
             return Ok(());
         };
 
-        if Url::parse(key_url).is_ok() {
-            return Ok(());
-        }
-
-        encryption.key_url = Some(Url::parse(base_url)?.join(key_url)?.to_string());
+        let resolved = if Url::parse(key_url).is_ok() {
+            key_url.to_string()
+        } else {
+            Url::parse(base_url)?.join(key_url)?.to_string()
+        };
+        crate::utils::validation::assert_http_url(&resolved)?;
+        encryption.key_url = Some(resolved);
         Ok(())
     }
 
@@ -521,10 +575,7 @@ impl M3U8Downloader {
         let start_time = Instant::now();
 
         for (index, segment) in playlist.segments.iter().enumerate() {
-            if cancel_flag.load(Ordering::Relaxed)
-                || pause_flag.load(Ordering::Relaxed)
-                || self.is_paused.load(Ordering::Relaxed)
-            {
+            if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
                 return Err(if cancel_flag.load(Ordering::Relaxed) {
                     anyhow::anyhow!("download_cancelled")
                 } else {
@@ -548,7 +599,6 @@ impl M3U8Downloader {
             let encryption = segment.encryption.clone();
             let segment_index = segment.index;
             let pause_flag = Arc::clone(&pause_flag);
-            let global_pause = Arc::clone(&self.is_paused);
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore
@@ -556,10 +606,7 @@ impl M3U8Downloader {
                     .await
                     .map_err(|_| anyhow::anyhow!("segment semaphore closed"))?;
 
-                if cancel_flag.load(Ordering::Relaxed)
-                    || pause_flag.load(Ordering::Relaxed)
-                    || global_pause.load(Ordering::Relaxed)
-                {
+                if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
                     return Err(if cancel_flag.load(Ordering::Relaxed) {
                         anyhow::anyhow!("download_cancelled")
                     } else {
@@ -790,7 +837,6 @@ impl M3U8Downloader {
         let mut file = File::create(output_file).await?;
         file.write_all(&data).await?;
         file.flush().await?;
-        file.sync_all().await?;
 
         Ok(data.len() as u64)
     }
@@ -848,7 +894,7 @@ impl M3U8Downloader {
         Some(arr)
     }
 
-    /// 合并片段为最终文件
+    /// 合并片段为最终文件（先写 .part 再原子重命名，避免中断留下半成品）
     async fn merge_segments(&self, segment_files: &[PathBuf], output_path: &str) -> Result<()> {
         tracing::info!("合并 {} 个片段到: {}", segment_files.len(), output_path);
 
@@ -857,34 +903,47 @@ impl M3U8Downloader {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let mut output_file = File::create(output_file_path).await?;
+        let part_path = crate::core::part_file::derive_part_path(output_file_path);
+        let merge_result: Result<()> = async {
+            let mut output_file = File::create(&part_path).await?;
 
-        for (index, segment_file) in segment_files.iter().enumerate() {
-            if !segment_file.exists() {
-                bail!("片段文件不存在: {:?}", segment_file);
-            }
-
-            tracing::debug!(
-                "合并片段 {}/{}: {:?}",
-                index + 1,
-                segment_files.len(),
-                segment_file
-            );
-
-            let mut segment_file_handle = File::open(segment_file).await?;
-            let mut buffer = vec![0u8; self.config.buffer_size];
-
-            loop {
-                let bytes_read = segment_file_handle.read(&mut buffer).await?;
-                if bytes_read == 0 {
-                    break;
+            for (index, segment_file) in segment_files.iter().enumerate() {
+                if !segment_file.exists() {
+                    bail!("片段文件不存在: {:?}", segment_file);
                 }
-                output_file.write_all(&buffer[..bytes_read]).await?;
-            }
-        }
 
-        output_file.flush().await?;
-        output_file.sync_all().await?;
+                tracing::debug!(
+                    "合并片段 {}/{}: {:?}",
+                    index + 1,
+                    segment_files.len(),
+                    segment_file
+                );
+
+                let mut segment_file_handle = File::open(segment_file).await?;
+                let mut buffer = vec![0u8; self.config.buffer_size];
+
+                loop {
+                    let bytes_read = segment_file_handle.read(&mut buffer).await?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    output_file.write_all(&buffer[..bytes_read]).await?;
+                }
+            }
+
+            output_file.flush().await?;
+            output_file.sync_all().await?;
+            drop(output_file);
+
+            tokio::fs::rename(&part_path, output_file_path).await?;
+            Ok(())
+        }
+        .await;
+
+        if merge_result.is_err() {
+            let _ = tokio::fs::remove_file(&part_path).await;
+        }
+        merge_result?;
 
         tracing::info!("片段合并完成");
         Ok(())
@@ -901,14 +960,24 @@ impl M3U8Downloader {
 
     /// 暂停下载
     pub async fn pause_download(&self, task_id: &str) -> Result<()> {
-        self.is_paused.store(true, Ordering::Relaxed);
+        if let Some(flag) = {
+            let flags = self.pause_flags.read().await;
+            flags.get(task_id).cloned()
+        } {
+            flag.store(true, Ordering::Relaxed);
+        }
         tracing::info!("M3U8下载已暂停: {}", task_id);
         Ok(())
     }
 
     /// 恢复下载
     pub async fn resume_download(&self, task_id: &str) -> Result<()> {
-        self.is_paused.store(false, Ordering::Relaxed);
+        if let Some(flag) = {
+            let flags = self.pause_flags.read().await;
+            flags.get(task_id).cloned()
+        } {
+            flag.store(false, Ordering::Relaxed);
+        }
         tracing::info!("M3U8下载已恢复: {}", task_id);
         Ok(())
     }
@@ -932,14 +1001,15 @@ mod tests {
     use cbc::Encryptor;
     use cipher::BlockEncryptMut;
     use tempfile::tempdir;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn test_m3u8_downloader_creation() {
         let temp_dir = tempdir().unwrap();
-        let mut config = M3U8DownloaderConfig::default();
-        config.temp_dir = temp_dir.path().to_path_buf();
+        let config = M3U8DownloaderConfig {
+            temp_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let downloader = M3U8Downloader::new(config);
         assert!(downloader.is_ok());
@@ -1070,9 +1140,7 @@ segment000.ts
 
                 let (body, content_type): (Vec<u8>, &str) = match path {
                     "/master.m3u8" => (
-                        format!(
-                            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key-a.bin\",IV=0X00000000000000000000000000000000\n#EXTINF:1.0,\n/seg-a.ts\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key-b.bin\",IV=0X00000000000000000000000000000001\n#EXTINF:1.0,\n/seg-b.ts\n#EXT-X-ENDLIST\n"
-                        )
+                        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key-a.bin\",IV=0X00000000000000000000000000000000\n#EXTINF:1.0,\n/seg-a.ts\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key-b.bin\",IV=0X00000000000000000000000000000001\n#EXTINF:1.0,\n/seg-b.ts\n#EXT-X-ENDLIST\n".to_string()
                         .into_bytes(),
                         "application/vnd.apple.mpegurl",
                     ),
@@ -1101,8 +1169,10 @@ segment000.ts
         });
 
         let temp_dir = tempdir().unwrap();
-        let mut config = M3U8DownloaderConfig::default();
-        config.temp_dir = temp_dir.path().join("segments");
+        let config = M3U8DownloaderConfig {
+            temp_dir: temp_dir.path().join("segments"),
+            ..Default::default()
+        };
         let downloader = M3U8Downloader::new(config).unwrap();
         let output = temp_dir.path().join("output.ts");
 
@@ -1174,5 +1244,38 @@ segment000.ts
         assert_eq!(encryption.method, "AES-128");
         assert_eq!(encryption.key_url.unwrap(), "https://example.com/key.bin");
         assert_eq!(encryption.iv.unwrap(), "0X99b74007b6254e4bd1c6e03631cad15b");
+    }
+
+    #[test]
+    fn test_encryption_parsing_preserves_equals_and_commas_in_uri() {
+        let downloader = M3U8Downloader::new(M3U8DownloaderConfig::default()).unwrap();
+        let encryption_line = r#"#EXT-X-KEY:METHOD=AES-128,URI="https://example.com/key?token=abc==&a=1,2",IV=0X99b74007b6254e4bd1c6e03631cad15b"#;
+
+        let encryption = downloader
+            .parse_encryption_line(encryption_line)
+            .unwrap()
+            .unwrap();
+        assert_eq!(encryption.method, "AES-128");
+        assert_eq!(
+            encryption.key_url.as_deref(),
+            Some("https://example.com/key?token=abc==&a=1,2")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bom_playlist_and_safe_temp_dir_sanitization() {
+        let downloader = M3U8Downloader::new(M3U8DownloaderConfig::default()).unwrap();
+        let bom_playlist = "\u{feff}#EXTM3U\n#EXTINF:2.0,\nseg0.ts\n#EXT-X-ENDLIST\n";
+        let parsed = downloader
+            .parse_m3u8_content("https://example.com/live/index.m3u8", bom_playlist)
+            .await
+            .unwrap();
+        assert_eq!(parsed.segments.len(), 1);
+        assert_eq!(parsed.segments[0].url, "https://example.com/live/seg0.ts");
+
+        let base = Path::new("/tmp/m3u8");
+        let resolved =
+            M3U8Downloader::resolve_safe_task_temp_dir(base, "../../etc/passwd").unwrap();
+        assert!(resolved.starts_with(base));
     }
 }

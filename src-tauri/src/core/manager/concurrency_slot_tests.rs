@@ -7,9 +7,11 @@ async fn finished_handle_does_not_free_slot_before_terminal_event_updates_status
 {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("download_state.json");
-    let mut config = DownloadConfig::default();
-    config.concurrent_downloads = 1;
-    config.output_directory = temp_dir.path().to_string_lossy().to_string();
+    let config = DownloadConfig {
+        concurrent_downloads: 1,
+        output_directory: temp_dir.path().to_string_lossy().to_string(),
+        ..Default::default()
+    };
 
     let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();

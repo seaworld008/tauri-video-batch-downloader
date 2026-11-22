@@ -177,6 +177,7 @@ export const UnifiedView: React.FC = () => {
       {/* Drawer */}
       <div
         className={`fixed inset-y-0 right-0 w-full max-w-md bg-white dark:bg-gray-900 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${showSettings ? 'translate-x-0' : 'translate-x-full'}`}
+        aria-hidden={!showSettings}
         data-testid='settings-drawer'
       >
         <div className='flex flex-col h-full'>
@@ -192,9 +193,7 @@ export const UnifiedView: React.FC = () => {
               <XMarkIcon className='w-5 h-5 text-gray-500' />
             </button>
           </div>
-          <div className='flex-1 overflow-y-auto p-6'>
-            <SettingsView />
-          </div>
+          <div className='flex-1 overflow-y-auto p-6'>{showSettings && <SettingsView />}</div>
         </div>
       </div>
 
@@ -215,7 +214,7 @@ export const UnifiedView: React.FC = () => {
               Video Downloader Pro
             </h2>
             <p className='text-gray-500 dark:text-gray-400 mb-6 font-mono text-sm'>
-              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.0.26'}
+              v{typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.0.27'}
             </p>
             <p className='text-gray-600 dark:text-gray-300 mb-8 text-sm leading-relaxed'>
               专业的批量视频下载工具

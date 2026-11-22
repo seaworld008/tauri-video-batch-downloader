@@ -286,5 +286,22 @@ describe('Zod v4 schemas', () => {
         }).success
       ).toBe(false);
     });
+
+    it('preserves falsy valid parsed values (0, false, empty string) in safeParse and DataValidator', () => {
+      expect(safeParse(z.number(), 0)).toEqual({ success: true, data: 0 });
+      expect(safeParse(z.boolean(), false)).toEqual({ success: true, data: false });
+      expect(safeParse(z.string(), '')).toEqual({ success: true, data: '' });
+
+      const validator = DataValidator.getInstance();
+      expect(validator.validate(z.number(), 0)).toEqual(
+        expect.objectContaining({ success: true, data: 0 })
+      );
+      expect(validator.validate(z.boolean(), false)).toEqual(
+        expect.objectContaining({ success: true, data: false })
+      );
+      expect(validator.validate(z.string(), '')).toEqual(
+        expect.objectContaining({ success: true, data: '' })
+      );
+    });
   });
 });

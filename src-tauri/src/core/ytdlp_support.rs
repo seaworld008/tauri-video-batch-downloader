@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -181,16 +182,22 @@ fn parse_template_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
     })
 }
 
+fn classic_progress_regex() -> &'static regex::Regex {
+    static CLASSIC_PROGRESS_RE: OnceLock<regex::Regex> = OnceLock::new();
+    CLASSIC_PROGRESS_RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%\s+of\s+~?\s*(?P<total>\d+(?:\.\d+)?)\s*(?P<unit>[kmgtp]?i?b)(?:\s+at\s+(?P<speed>\d+(?:\.\d+)?)\s*(?P<speed_unit>[kmgtp]?i?b)/s)?(?:\s+ETA\s+(?P<eta>\d{1,2}:\d{2}(?::\d{2})?))?",
+        )
+        .expect("static classic yt-dlp progress regex must compile")
+    })
+}
+
 fn parse_classic_progress_line(line: &str) -> Option<ParsedYtDlpProgress> {
     if !line.contains("[download]") {
         return None;
     }
 
-    let re = regex::Regex::new(
-        r"(?i)\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%\s+of\s+~?\s*(?P<total>\d+(?:\.\d+)?)\s*(?P<unit>[kmgtp]?i?b)(?:\s+at\s+(?P<speed>\d+(?:\.\d+)?)\s*(?P<speed_unit>[kmgtp]?i?b)/s)?(?:\s+ETA\s+(?P<eta>\d{1,2}:\d{2}(?::\d{2})?))?",
-    )
-    .ok()?;
-    let captures = re.captures(line)?;
+    let captures = classic_progress_regex().captures(line)?;
     let percent = parse_f64(captures.name("percent")?.as_str())?;
     let progress = (percent / 100.0).clamp(0.0, 1.0);
     let total_bytes = parse_byte_size(

@@ -65,14 +65,24 @@ pub async fn update_tool(tool_id: &str) -> Result<ExternalToolStatus> {
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    download_file(&asset.browser_download_url, &temp).await?;
-    verify_asset_checksum(&release, &asset.name, &temp).await?;
-    make_executable(&temp).await?;
-    let version = read_tool_version(&temp, tool_id).await?;
-    validate_tool_contract(&temp, tool_id).await?;
+    let install_result: Result<()> = async {
+        download_file(&asset.browser_download_url, &temp).await?;
+        verify_asset_checksum(&release, &asset.name, &temp).await?;
+        make_executable(&temp).await?;
+        let version = read_tool_version(&temp, tool_id).await?;
+        validate_tool_contract(&temp, tool_id).await?;
 
-    replace_managed_tool(&target, &temp, &backup).await?;
-    save_managed_metadata(tool_id, &release.tag_name, &version).await?;
+        replace_managed_tool(&target, &temp, &backup).await?;
+        save_managed_metadata(tool_id, &release.tag_name, &version).await?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(err) = install_result {
+        let _ = tokio::fs::remove_file(&temp).await;
+        return Err(err);
+    }
+
     Ok(status_for_tool(tool_id, Some(release.tag_name)).await)
 }
 
@@ -127,6 +137,8 @@ pub async fn rollback_tool(tool_id: &str) -> Result<ExternalToolStatus> {
 
 async fn fetch_latest_ytdlp_release() -> Result<GitHubRelease> {
     let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(30))
         .user_agent("VideoDownloaderPro/1.0 external-tool-updater")
         .build()?;
     let release = client
@@ -155,6 +167,8 @@ fn select_ytdlp_asset(release: &GitHubRelease) -> Result<&GitHubReleaseAsset> {
 
 async fn download_file(url: &str, path: &Path) -> Result<()> {
     let bytes = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(180))
         .user_agent("VideoDownloaderPro/1.0 external-tool-updater")
         .build()?
         .get(url)
@@ -180,6 +194,8 @@ async fn verify_asset_checksum(
         .find(|asset| asset.name == "SHA2-256SUMS")
         .ok_or_else(|| anyhow!("external_tool_failed: release checksum file missing"))?;
     let text = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(30))
         .user_agent("VideoDownloaderPro/1.0 external-tool-updater")
         .build()?
         .get(&sums.browser_download_url)

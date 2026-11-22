@@ -3542,8 +3542,10 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let state_path = temp_dir.path().join("download_state.json");
-        let mut config = DownloadConfig::default();
-        config.concurrent_downloads = 1;
+        let config = DownloadConfig {
+            concurrent_downloads: 1,
+            ..Default::default()
+        };
         let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
         let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
         manager.event_sender = Some(sender);
@@ -3936,12 +3938,14 @@ mod tests {
 
     #[test]
     fn test_ytdlp_progress_fallback_does_not_require_enhanced_stats() {
-        let mut stats = DownloadStats::default();
-        stats.downloaded_bytes = 7_900_000;
-        stats.total_bytes = Some(23_561_576);
-        stats.speed = 1_250_000.0;
-        stats.eta = Some(13);
-        stats.progress = 0.335;
+        let stats = DownloadStats {
+            downloaded_bytes: 7_900_000,
+            total_bytes: Some(23_561_576),
+            speed: 1_250_000.0,
+            eta: Some(13),
+            progress: 0.335,
+            ..Default::default()
+        };
 
         let progress =
             DownloadManager::progress_update_from_download_stats("task-ytdlp", &stats, None);
@@ -4186,9 +4190,11 @@ mod tests {
         let test_content = b"Hello, integrity testing!";
         fs::write(&test_file, test_content).unwrap();
 
-        let mut config = DownloadConfig::default();
-        config.auto_verify_integrity = true;
-        config.integrity_algorithm = Some("sha256".to_string());
+        let config = DownloadConfig {
+            auto_verify_integrity: true,
+            integrity_algorithm: Some("sha256".to_string()),
+            ..Default::default()
+        };
 
         let manager = DownloadManager::new(config)?;
 
@@ -4532,9 +4538,11 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
 
-        let mut downloader_config = DownloaderConfig::default();
-        downloader_config.timeout = 2;
-        downloader_config.retry_attempts = 0;
+        let downloader_config = DownloaderConfig {
+            timeout: 2,
+            retry_attempts: 0,
+            ..Default::default()
+        };
         let downloader = Arc::new(HttpDownloader::new(downloader_config).expect("http downloader"));
 
         let retry_policy = RetryPolicy {

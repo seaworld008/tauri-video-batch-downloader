@@ -138,7 +138,7 @@ export const ManualInputPanel: React.FC = () => {
   const addNewUrlEntry = () => {
     if (newUrlInput.trim()) {
       const newEntry: ManualUrlEntry = {
-        id: Date.now().toString(),
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         url: newUrlInput.trim(),
         isValid: undefined,
         isProcessing: false,
@@ -162,7 +162,7 @@ export const ManualInputPanel: React.FC = () => {
       }
 
       const newEntries: ManualUrlEntry[] = urls.map(url => ({
-        id: `clipboard_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `clipboard_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         url,
         isValid: undefined,
         isProcessing: false,
@@ -253,7 +253,7 @@ export const ManualInputPanel: React.FC = () => {
         setOutputDir(selected);
       }
     } catch (error) {
-      notify.error('选择目录失败', error as string);
+      notify.error('选择目录失败', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -279,8 +279,14 @@ export const ManualInputPanel: React.FC = () => {
         current.map(entry => resolvedUrls.find(resolved => resolved.id === entry.id) ?? entry)
       );
 
-      const videoTasks: VideoTask[] = resolvedUrls.map((entry, index) => ({
-        id: `manual_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`,
+      const startableUrls = resolvedUrls.filter(entry => entry.isValid !== false);
+      if (startableUrls.length === 0) {
+        notify.error('没有有效的URL', '请检查链接格式后重试');
+        return;
+      }
+
+      const videoTasks: VideoTask[] = startableUrls.map((entry, index) => ({
+        id: `manual_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 9)}`,
         url: entry.url,
         title: entry.title || `任务_${index + 1}`,
         output_path: targetDir,
@@ -327,7 +333,7 @@ export const ManualInputPanel: React.FC = () => {
       notify.success('任务已添加', `成功添加 ${addedTasks.length} 个任务到队列`);
       setManualUrls([]);
     } catch (error) {
-      notify.error('启动下载失败', String(error));
+      notify.error('启动下载失败', error instanceof Error ? error.message : String(error));
     } finally {
       setIsPreparingDownload(false);
     }
@@ -344,7 +350,11 @@ export const ManualInputPanel: React.FC = () => {
             type='url'
             value={newUrlInput}
             onChange={e => setNewUrlInput(e.target.value)}
-            onKeyPress={e => e.key === 'Enter' && addNewUrlEntry()}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                addNewUrlEntry();
+              }
+            }}
             placeholder='输入视频链接 (HTTP/HTTPS/Bilibili...)'
             data-testid='url-input'
             className='block w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg leading-5 bg-white dark:bg-gray-700 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-all shadow-sm'

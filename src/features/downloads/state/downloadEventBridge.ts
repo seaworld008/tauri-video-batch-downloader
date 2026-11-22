@@ -23,6 +23,9 @@ import {
 let listenersInitialized = false;
 let listenerSetupPromise: Promise<void> | null = null;
 let activeSyncTimer: number | null = null;
+let retryTimer: number | null = null;
+let initRetryCount = 0;
+const MAX_INIT_RETRIES = 5;
 const PROGRESS_UI_UPDATE_INTERVAL_MS = 1000;
 const DOWNLOAD_EVENT_CHANNEL = 'download-events';
 
@@ -32,7 +35,6 @@ export const initializeDownloadEventBridge = async () => {
 
   const setupListeners = async () => {
     try {
-      let progressEventCount = 0;
       const lastProgressUpdate = new Map<string, number>();
       const warmupProgressEventsByTask = new Map<string, number>();
       const pendingProgressUpdates = new Map<string, ProgressEventPayload>();
@@ -157,12 +159,10 @@ export const initializeDownloadEventBridge = async () => {
             const parsedPayload = parseTaskProgressedPayload(envelope.payload);
             if (parsedPayload.success === false) return;
             if (!shouldDispatchProgressUpdate(parsedPayload.data.task_id)) {
-              progressEventCount++;
               scheduleTrailingProgressFlush(parsedPayload.data);
               return;
             }
             clearTrailingProgress(parsedPayload.data.task_id);
-            progressEventCount++;
             updateTaskProgress(parsedPayload.data);
             break;
           }
@@ -194,6 +194,10 @@ export const initializeDownloadEventBridge = async () => {
       });
 
       const cleanup = () => {
+        if (retryTimer !== null && typeof window !== 'undefined') {
+          window.clearTimeout(retryTimer);
+          retryTimer = null;
+        }
         if (activeSyncTimer !== null && typeof window !== 'undefined') {
           window.clearInterval(activeSyncTimer);
           activeSyncTimer = null;
@@ -218,6 +222,7 @@ export const initializeDownloadEventBridge = async () => {
         }
         listenersInitialized = false;
         listenerSetupPromise = null;
+        initRetryCount = 0;
       };
 
       if (typeof window !== 'undefined') {
@@ -227,6 +232,7 @@ export const initializeDownloadEventBridge = async () => {
         import.meta.hot.dispose(cleanup);
       }
 
+      initRetryCount = 0;
       listenersInitialized = true;
     } catch (error) {
       listenerSetupPromise = null;
@@ -240,11 +246,18 @@ export const initializeDownloadEventBridge = async () => {
   try {
     await listenerSetupPromise;
   } catch {
-    if (typeof window !== 'undefined') {
-      window.setTimeout(() => {
+    if (typeof window !== 'undefined' && initRetryCount < MAX_INIT_RETRIES) {
+      initRetryCount += 1;
+      const retryDelayMs = 1000 * 2 ** (initRetryCount - 1);
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
         void initializeDownloadEventBridge();
-      }, 1000);
+      }, retryDelayMs);
     }
+    return;
   }
 
   if (typeof window !== 'undefined' && activeSyncTimer === null) {

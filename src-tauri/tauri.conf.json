@@ -31,13 +31,13 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.0-37", "libgtk-3-0", "libayatana-appindicator3-1"]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"]
       }
     }
   },
   "productName": "Video Downloader Pro",
   "mainBinaryName": "Video Downloader Pro",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "identifier": "com.videodownloader.pro",
   "plugins": {},
   "app": {
@@ -48,7 +48,7 @@
       "menuOnLeftClick": false
     },
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' asset: https://asset.localhost; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' asset: https://asset.localhost"
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' asset: https://asset.localhost; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; media-src 'self' asset: https://asset.localhost"
     },
     "windows": [
       {

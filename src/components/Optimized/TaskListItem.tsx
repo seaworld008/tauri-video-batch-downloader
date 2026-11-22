@@ -249,7 +249,22 @@ export const TaskItem = React.memo<{
         <div
           ref={menuRef}
           className='fixed z-50 min-w-44 rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900'
-          style={{ left: menuPosition.x, top: menuPosition.y }}
+          style={{
+            left: Math.max(
+              8,
+              Math.min(
+                menuPosition.x,
+                (typeof window !== 'undefined' ? window.innerWidth : 1024) - 192
+              )
+            ),
+            top: Math.max(
+              8,
+              Math.min(
+                menuPosition.y,
+                (typeof window !== 'undefined' ? window.innerHeight : 768) - 56
+              )
+            ),
+          }}
           role='menu'
         >
           <button

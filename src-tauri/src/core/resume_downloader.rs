@@ -412,10 +412,13 @@ impl ResumeDownloader {
 
         // 如果没有总大小信息，尝试获取
         if resume_info.total_size == 0 {
-            if let Some(size) = self.get_content_length(url).await? {
-                resume_info.total_size = size;
-            } else {
-                bail!("无法获取文件大小，不支持断点续传");
+            match self.get_content_length(url).await? {
+                Some(size) if size > 0 => {
+                    resume_info.total_size = size;
+                }
+                _ => {
+                    bail!("无法获取有效文件大小，不支持断点续传");
+                }
             }
         }
 
@@ -477,6 +480,9 @@ impl ResumeDownloader {
     /// 创建下载分片
     async fn create_chunks(&self, resume_info: &ResumeInfo) -> Result<Vec<ChunkInfo>> {
         let total_size = resume_info.total_size;
+        if total_size == 0 {
+            bail!("文件大小为 0，无法创建分片");
+        }
         let supports_ranges = resume_info.server_capabilities.supports_ranges;
 
         // 如果不支持Range请求或文件较小，使用单个分片
@@ -1227,12 +1233,37 @@ mod tests {
     #[tokio::test]
     async fn test_resume_downloader_creation() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader = ResumeDownloader::new(config, client, BandwidthController::new());
         assert!(downloader.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_chunks_rejects_zero_total_size() {
+        let temp_dir = tempdir().unwrap();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let downloader =
+            ResumeDownloader::new(config, Client::new(), BandwidthController::new()).unwrap();
+        let resume_info = ResumeInfo::new(
+            "zero-size".to_string(),
+            "/tmp/zero.bin".to_string(),
+            "https://example.com/zero.bin".to_string(),
+            0,
+        );
+
+        let err = downloader
+            .create_chunks(&resume_info)
+            .await
+            .expect_err("zero total_size should fail safely instead of underflowing");
+        assert!(err.to_string().contains("文件大小为 0"));
     }
 
     #[tokio::test]
@@ -1265,10 +1296,12 @@ mod tests {
     #[tokio::test]
     async fn test_create_chunks() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
-        config.chunk_size = 1024; // 1KB chunks
-        config.large_file_threshold = 2048; // 2KB threshold
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            chunk_size: 1024,           // 1KB chunks
+            large_file_threshold: 2048, // 2KB threshold
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
@@ -1309,8 +1342,10 @@ mod tests {
     #[tokio::test]
     async fn test_migrates_legacy_chunk_files_into_single_part_file() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader =
@@ -1358,8 +1393,10 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_task_removes_part_file_and_resume_metadata() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
@@ -1388,8 +1425,10 @@ mod tests {
     #[tokio::test]
     async fn test_rejects_oversized_part_file_and_quarantines_it() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
@@ -1432,8 +1471,10 @@ mod tests {
     #[tokio::test]
     async fn test_truncated_part_file_clamps_multi_chunk_progress() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();
@@ -1473,8 +1514,10 @@ mod tests {
     #[tokio::test]
     async fn test_server_capabilities() {
         let temp_dir = tempdir().unwrap();
-        let mut config = ResumeDownloaderConfig::default();
-        config.resume_info_dir = temp_dir.path().to_path_buf();
+        let config = ResumeDownloaderConfig {
+            resume_info_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let client = Client::new();
         let downloader = ResumeDownloader::new(config, client, BandwidthController::new()).unwrap();

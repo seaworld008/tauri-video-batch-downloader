@@ -56,6 +56,7 @@ function App() {
   const loadConfig = useConfigStore(state => state.loadConfig);
 
   useEffect(() => {
+    let cancelled = false;
     void initializeDownloadEventBridge();
 
     const initializeApp = async () => {
@@ -64,18 +65,23 @@ function App() {
       } catch (error) {
         reportFrontendIssue('warn', 'app_bootstrap:load_config_failed', error);
       }
+      if (cancelled) return;
 
       try {
         await initDownloadStore();
       } catch (error) {
         reportFrontendIssue('warn', 'app_bootstrap:initialize_store_failed', error);
       }
+      if (cancelled) return;
 
       setIsInitialized(true);
       void checkExternalToolUpdatesInBackground();
     };
 
     void initializeApp();
+    return () => {
+      cancelled = true;
+    };
   }, [initDownloadStore, loadConfig]);
 
   if (!isInitialized) {

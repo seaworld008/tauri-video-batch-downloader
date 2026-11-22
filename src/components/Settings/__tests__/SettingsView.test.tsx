@@ -165,7 +165,7 @@ describe('SettingsView', () => {
         expect.any(Error)
       );
     });
-    expect(notifyMocks.notify.error).toHaveBeenCalledWith('选择目录失败', expect.any(Error));
+    expect(notifyMocks.notify.error).toHaveBeenCalledWith('选择目录失败', 'dialog unavailable');
   });
 
   it('checks external tool updates from settings', async () => {

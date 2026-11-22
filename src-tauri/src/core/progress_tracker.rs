@@ -619,7 +619,7 @@ mod tests {
         let mut tracker = TaskProgressTracker::new("speed_test".to_string(), Some(1000000));
 
         // Simulate variable speed download
-        let speeds = vec![100000, 150000, 120000, 180000, 90000];
+        let speeds = [100000, 150000, 120000, 180000, 90000];
         let mut cumulative_bytes = 0u64;
         for (i, &bytes) in speeds.iter().enumerate() {
             sleep(Duration::from_millis(250)).await;

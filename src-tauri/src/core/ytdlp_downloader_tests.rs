@@ -1,18 +1,45 @@
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 
 use crate::core::models::{SourcePlatform, TaskStatus};
+#[cfg(unix)]
+use crate::core::ytdlp_downloader::YtDlpDownloaderConfig;
 use crate::core::{
     downloader::DownloadTask,
-    ytdlp_downloader::{parse_progress_line, YtDlpDownloader, YtDlpDownloaderConfig},
+    ytdlp_downloader::{
+        format_ytdlp_output_template, parse_filepath_line, parse_progress_line, YtDlpDownloader,
+    },
     ytdlp_support::{emit_progress, platform_host_rules, ParsedYtDlpProgress},
 };
+
+#[test]
+fn escapes_percent_in_ytdlp_output_template_and_parses_filepath_prefix_strictly() {
+    assert_eq!(
+        format_ytdlp_output_template("100% %(extractor)s video", false),
+        "100%% %%(extractor)s video.%(ext)s"
+    );
+    assert_eq!(
+        format_ytdlp_output_template("ignored", true),
+        "%(title).200B.%(ext)s"
+    );
+    assert_eq!(
+        parse_filepath_line("  filepath:/downloads/final.mp4  "),
+        Some(std::path::PathBuf::from("/downloads/final.mp4"))
+    );
+    assert_eq!(
+        parse_filepath_line("WARNING: title had filepath:/not/this"),
+        None
+    );
+}
 
 #[test]
 fn detects_supported_social_platforms() {

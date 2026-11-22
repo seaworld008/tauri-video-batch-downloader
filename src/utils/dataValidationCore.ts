@@ -79,7 +79,7 @@ export class DataValidator {
     try {
       const result = safeParse(schema, data);
 
-      if (result.success && result.data) {
+      if (result.success && result.data !== undefined) {
         return {
           success: true,
           data: result.data,
@@ -128,8 +128,8 @@ export class DataValidator {
       const item = dataArray[index];
       const result = this.validate(schema, item, { sanitize, context: `${context}[${index}]` });
 
-      if (result.success && result.data) {
-        validItems.push(result.sanitizedData || result.data);
+      if (result.success && result.data !== undefined) {
+        validItems.push(result.sanitizedData !== undefined ? result.sanitizedData : result.data);
       } else {
         invalidItems.push({
           index,

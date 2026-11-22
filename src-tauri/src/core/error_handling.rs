@@ -552,7 +552,8 @@ impl RetryExecutor {
         let attempt_id = Uuid::new_v4().to_string();
         let mut last_error: Option<DownloadError> = None;
 
-        for attempt in 1..=self.policy.max_attempts {
+        let max_attempts = self.policy.max_attempts.max(1);
+        for attempt in 1..=max_attempts {
             let retry_context = RetryContext {
                 attempt_id: attempt_id.clone(),
                 attempt_number: attempt,
@@ -591,10 +592,10 @@ impl RetryExecutor {
                     }
 
                     // If this is the last attempt, fail
-                    if attempt >= self.policy.max_attempts {
+                    if attempt >= max_attempts {
                         self.update_failure_stats(Some(error.category())).await;
                         return Err(anyhow::Error::from(error.clone())).with_context(|| {
-                            format!("All {} retry attempts exhausted", self.policy.max_attempts)
+                            format!("All {} retry attempts exhausted", max_attempts)
                         });
                     }
 
@@ -615,7 +616,7 @@ impl RetryExecutor {
                         "Retrying in {:?} (attempt {}/{})",
                         delay,
                         attempt + 1,
-                        self.policy.max_attempts
+                        max_attempts
                     );
 
                     // Apply delay
@@ -628,8 +629,9 @@ impl RetryExecutor {
             }
         }
 
-        // This should not be reached due to the loop logic above
-        unreachable!("Retry loop should have returned or failed before reaching this point");
+        Err(anyhow::anyhow!(
+            "Retry loop exited unexpectedly without result"
+        ))
     }
 
     /// Calculate delay for the next retry attempt

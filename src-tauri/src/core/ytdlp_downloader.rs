@@ -90,8 +90,14 @@ impl YtDlpDownloader {
                 anyhow::anyhow!("external_tool_failed: {}", err)
             }
         })?;
-        let mut stdout = child.stdout.take().expect("probe stdout pipe");
-        let mut stderr = child.stderr.take().expect("probe stderr pipe");
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("external_tool_failed: missing probe stdout pipe"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("external_tool_failed: missing probe stderr pipe"))?;
         let stdout_task = tokio::spawn(async move {
             let mut buffer = Vec::new();
             stdout.read_to_end(&mut buffer).await.map(|_| buffer)
@@ -151,11 +157,8 @@ impl YtDlpDownloader {
                 .unwrap_or("video"),
         );
         let use_extractor_title_template = should_use_extractor_title_template(&safe_name);
-        let output_template = if use_extractor_title_template {
-            "%(title).200B.%(ext)s".to_string()
-        } else {
-            format!("{}.%(ext)s", safe_name)
-        };
+        let output_template =
+            format_ytdlp_output_template(&safe_name, use_extractor_title_template);
         let args = build_download_args(
             &task.url,
             Path::new(&task.output_path),
@@ -383,6 +386,22 @@ fn discover_latest_output_file(output_dir: &Path) -> Option<PathBuf> {
     matches.into_iter().map(|(path, _)| path).next()
 }
 
+pub(crate) fn format_ytdlp_output_template(
+    safe_name: &str,
+    use_extractor_title_template: bool,
+) -> String {
+    if use_extractor_title_template {
+        "%(title).200B.%(ext)s".to_string()
+    } else {
+        format!("{}.%(ext)s", safe_name.replace('%', "%%"))
+    }
+}
+
+pub(crate) fn parse_filepath_line(line: &str) -> Option<PathBuf> {
+    let path = line.trim().strip_prefix("filepath:")?.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
 fn handle_ytdlp_line(
     line: String,
     task: &mut DownloadTask,
@@ -392,9 +411,8 @@ fn handle_ytdlp_line(
     partial_name_prefix: &mut Option<String>,
     stderr: &mut String,
 ) {
-    if let Some(path_start) = line.find("filepath:") {
-        let path = &line[path_start + "filepath:".len()..];
-        *final_path = Some(PathBuf::from(path.trim()));
+    if let Some(parsed_path) = parse_filepath_line(&line) {
+        *final_path = Some(parsed_path);
     } else if let Some(destination) = parse_destination_line(&line) {
         if let Some(file_name) = destination.file_name().and_then(|name| name.to_str()) {
             *partial_name_prefix = Some(file_name.to_string());
@@ -528,6 +546,10 @@ async fn terminate_child_tree(root_pid: u32, signal: &str) {
             .output()
             .await;
     }
+    let _ = hidden_command("kill")
+        .args([signal, &root_pid.to_string()])
+        .output()
+        .await;
 }
 
 #[cfg(unix)]

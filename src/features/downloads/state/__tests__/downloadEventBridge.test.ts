@@ -112,4 +112,29 @@ describe('downloadEventBridge', () => {
 
     expect(syncRuntimeState).toHaveBeenCalledWith('downloadEventBridge:polling');
   });
+
+  it('bounds listener retries and does not start polling timer when initialization fails', async () => {
+    vi.resetModules();
+
+    vi.mocked(listen).mockRejectedValue(new Error('ipc unavailable'));
+
+    const { initializeDownloadEventBridge } = await import('../downloadEventBridge');
+    const { useDownloadStore } = await import('../../../../stores/downloadStore');
+
+    const syncRuntimeState = vi.fn().mockResolvedValue(undefined);
+    useDownloadStore.setState({
+      tasks: [buildTask('task-1', 'pending')],
+      syncRuntimeState,
+    } as Partial<ReturnType<typeof useDownloadStore.getState>>);
+
+    await initializeDownloadEventBridge();
+    expect(listen).toHaveBeenCalledTimes(1);
+
+    // Advance past 5 exponential retries (1s + 2s + 4s + 8s + 16s = 31s) and beyond
+    await vi.advanceTimersByTimeAsync(60000);
+
+    // 1 initial attempt + 5 retries = 6 total attempts max, and polling timer never ran
+    expect(listen).toHaveBeenCalledTimes(6);
+    expect(syncRuntimeState).not.toHaveBeenCalled();
+  });
 });

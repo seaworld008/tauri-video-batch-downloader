@@ -5,7 +5,6 @@
 //!
 //! Uses the advanced FileParser system for robust file parsing with multi-encoding support.
 
-use std::path::Path;
 use tauri::{AppHandle, State};
 use tracing::{debug, error, info};
 
@@ -223,16 +222,10 @@ async fn import_file_impl(
     max_rows: Option<usize>,
     custom_field_mapping: Option<std::collections::HashMap<String, Vec<String>>>,
 ) -> AppResult<ImportResult> {
-    // Check if file exists
-    if !Path::new(file_path).exists() {
-        return Err(AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("File not found: {}", file_path),
-        )));
-    }
-
-    // Get file size
-    let file_size = std::fs::metadata(file_path).map_err(AppError::Io)?.len();
+    let file_size = tokio::fs::metadata(file_path)
+        .await
+        .map_err(AppError::Io)?
+        .len();
 
     // Create parser configuration
     let mut config = FileParserConfig {
@@ -279,11 +272,14 @@ async fn import_file_impl(
 }
 
 async fn detect_file_encoding_impl(file_path: &str) -> AppResult<EncodingDetection> {
-    // Use the sophisticated EncodingDetector from file_parser
-    let detector = EncodingDetector::new();
-    let detected_encoding = detector
-        .detect_encoding(file_path)
-        .map_err(|e| AppError::Parse(format!("Encoding detection failed: {}", e)))?;
+    let owned_path = file_path.to_string();
+    let detected_encoding = tokio::task::spawn_blocking(move || {
+        let detector = EncodingDetector::new();
+        detector.detect_encoding(&owned_path)
+    })
+    .await
+    .map_err(|e| AppError::Parse(format!("Encoding detection task failed: {}", e)))?
+    .map_err(|e| AppError::Parse(format!("Encoding detection failed: {}", e)))?;
 
     // Calculate confidence based on encoding type
     let confidence = match detected_encoding.name() {
@@ -322,8 +318,10 @@ async fn preview_import_data_impl(
     };
 
     let parser = FileParser::with_config(config);
-    parser
-        .generate_preview(file_path, max_rows)
+    let owned_path = file_path.to_string();
+    tokio::task::spawn_blocking(move || parser.generate_preview(&owned_path, max_rows))
+        .await
+        .map_err(|e| AppError::Parse(format!("Failed to execute preview task: {}", e)))?
         .map_err(|e| AppError::Parse(format!("Failed to preview file: {}", e)))
 }
 

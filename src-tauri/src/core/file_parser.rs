@@ -14,7 +14,7 @@
 
 use crate::core::models::ImportPreview;
 use anyhow::{anyhow, Result};
-use calamine::{open_workbook_auto, DataType, Reader, Sheets};
+use calamine::{open_workbook_auto, Data, Reader, Sheets};
 use chardetng::EncodingDetector as ChardetngDetector;
 use csv::ReaderBuilder;
 use encoding_rs::{Encoding, BIG5, EUC_JP, GB18030, GBK, SHIFT_JIS, UTF_8};
@@ -104,6 +104,7 @@ pub struct FileParserConfig {
 /// 增强型编码检测器
 ///
 /// 使用多层次检测策略，确保中文编码的准确识别
+#[derive(Clone)]
 pub struct EncodingDetector {
     /// 检测缓冲区大小
     buffer_size: usize,
@@ -114,6 +115,7 @@ pub struct EncodingDetector {
 }
 
 /// 文件解析器主结构
+#[derive(Clone)]
 pub struct FileParser {
     config: FileParserConfig,
     encoding_detector: EncodingDetector,
@@ -476,11 +478,19 @@ impl FileParser {
     }
 
     /// 解析文件（自动检测格式）
+    /// 解析文件（自动检测格式）
     pub async fn parse_file<P: AsRef<Path>>(
         &self,
         file_path: P,
     ) -> Result<(Vec<VideoRecord>, ParseStats)> {
-        let path = file_path.as_ref();
+        let path = file_path.as_ref().to_path_buf();
+        let parser = self.clone();
+        tokio::task::spawn_blocking(move || parser.parse_file_sync(&path))
+            .await
+            .map_err(|e| anyhow!("文件解析任务执行失败: {}", e))?
+    }
+
+    fn parse_file_sync(&self, path: &Path) -> Result<(Vec<VideoRecord>, ParseStats)> {
         info!("开始解析文件: {}", path.display());
 
         let start_time = std::time::Instant::now();
@@ -490,8 +500,8 @@ impl FileParser {
 
         // 根据格式选择解析方法
         let result = match format {
-            FileFormat::Csv => self.parse_csv_file(path).await,
-            FileFormat::Excel => self.parse_excel_file(path).await,
+            FileFormat::Csv => self.parse_csv_file_sync(path),
+            FileFormat::Excel => self.parse_excel_file_sync(path),
         };
 
         match result {
@@ -513,7 +523,7 @@ impl FileParser {
         }
     }
 
-    /// �����ļ���Ԥ����Ϣ����ʵ����ͷ��Ԥ��������Ϣ
+    /// 生成文件导入预览信息（真实表头与预览行数据）
     pub fn generate_preview<P: AsRef<Path>>(
         &self,
         file_path: P,
@@ -597,11 +607,11 @@ impl FileParser {
 
         if headers.is_empty() {
             headers = vec![
-                "ר��ID".to_string(),
-                "ר������".to_string(),
-                "�γ�ID".to_string(),
-                "�γ�����".to_string(),
-                "��Ƶ����".to_string(),
+                "专栏ID".to_string(),
+                "专栏名称".to_string(),
+                "课程ID".to_string(),
+                "课程名称".to_string(),
+                "视频链接".to_string(),
             ];
         }
 
@@ -615,22 +625,22 @@ impl FileParser {
     }
 
     fn generate_excel_preview(&self, path: &Path, max_rows: usize) -> Result<ImportPreview> {
-        let mut workbook = open_workbook_auto(path).map_err(|e| anyhow!("�޷���Excel�ļ�: {}", e))?;
+        let mut workbook =
+            open_workbook_auto(path).map_err(|e| anyhow!("无法打开Excel文件: {}", e))?;
         let sheet_names = workbook.sheet_names().to_owned();
         if sheet_names.is_empty() {
-            return Err(anyhow!("Excel�ļ���û���ҵ�������"));
+            return Err(anyhow!("Excel文件中没有找到工作表"));
         }
 
         let sheet_name = &sheet_names[0];
         let range = workbook
             .worksheet_range(sheet_name)
-            .ok_or_else(|| anyhow!("�޷�������: {}", sheet_name))?
-            .map_err(|e| anyhow!("�޷���ȡ�������� '{}': {}", sheet_name, e))?;
+            .map_err(|e| anyhow!("无法读取工作表 '{}': {}", sheet_name, e))?;
 
         let mut rows_iter = range.rows();
         let header_row = rows_iter
             .next()
-            .ok_or_else(|| anyhow!("Excel�ļ�ȱ��ͷ����"))?;
+            .ok_or_else(|| anyhow!("Excel文件缺少表头行"))?;
 
         let mut headers: Vec<String> = header_row
             .iter()
@@ -671,11 +681,11 @@ impl FileParser {
 
         if headers.is_empty() {
             headers = vec![
-                "ר��ID".to_string(),
-                "ר������".to_string(),
-                "�γ�ID".to_string(),
-                "�γ�����".to_string(),
-                "��Ƶ����".to_string(),
+                "专栏ID".to_string(),
+                "专栏名称".to_string(),
+                "课程ID".to_string(),
+                "课程名称".to_string(),
+                "视频链接".to_string(),
             ];
         }
 
@@ -697,7 +707,7 @@ impl FileParser {
         }
     }
 
-    fn normalize_excel_header(&self, cell: &DataType, index: usize) -> String {
+    fn normalize_excel_header(&self, cell: &Data, index: usize) -> String {
         let value = self.datatype_to_string(cell);
         if value.trim().is_empty() {
             format!("Column {}", index + 1)
@@ -712,7 +722,7 @@ impl FileParser {
             .collect()
     }
 
-    fn excel_row_to_vec(&self, row: &[DataType], column_count: usize) -> Vec<String> {
+    fn excel_row_to_vec(&self, row: &[Data], column_count: usize) -> Vec<String> {
         (0..column_count)
             .map(|idx| {
                 row.get(idx)
@@ -743,7 +753,7 @@ impl FileParser {
     }
 
     /// 解析CSV文件
-    async fn parse_csv_file<P: AsRef<Path>>(
+    fn parse_csv_file_sync<P: AsRef<Path>>(
         &self,
         file_path: P,
     ) -> Result<(Vec<VideoRecord>, ParseStats)> {
@@ -1033,12 +1043,11 @@ impl FileParser {
 
     /// 验证URL格式
     fn is_valid_url(&self, url: &str) -> bool {
-        // 简单的URL验证
-        url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://")
+        crate::utils::validation::assert_http_url(url).is_ok()
     }
 
     /// 解析Excel文件
-    async fn parse_excel_file<P: AsRef<Path>>(
+    fn parse_excel_file_sync<P: AsRef<Path>>(
         &self,
         file_path: P,
     ) -> Result<(Vec<VideoRecord>, ParseStats)> {
@@ -1076,10 +1085,7 @@ impl FileParser {
         for sheet_name in &sheet_names {
             debug!("开始解析工作表: {}", sheet_name);
 
-            match self
-                .parse_excel_worksheet(&mut workbook, sheet_name, &mut stats)
-                .await
-            {
+            match self.parse_excel_worksheet(&mut workbook, sheet_name, &mut stats) {
                 Ok(mut records) => {
                     debug!(
                         "工作表 '{}' 解析完成，获得 {} 条记录",
@@ -1121,7 +1127,7 @@ impl FileParser {
     }
 
     /// 解析单个Excel工作表
-    async fn parse_excel_worksheet<RS: Read + Seek>(
+    fn parse_excel_worksheet<RS: Read + Seek>(
         &self,
         workbook: &mut Sheets<RS>,
         sheet_name: &str,
@@ -1130,7 +1136,6 @@ impl FileParser {
         // 获取工作表范围
         let range = workbook
             .worksheet_range(sheet_name)
-            .ok_or_else(|| anyhow!("工作表 '{}' 不存在", sheet_name))?
             .map_err(|e| anyhow!("读取工作表 '{}' 时出错: {}", sheet_name, e))?;
 
         if range.is_empty() {
@@ -1208,14 +1213,14 @@ impl FileParser {
     }
 
     /// 构建Excel字段映射
-    fn build_excel_field_mapping(&self, header_row: &[DataType]) -> Result<HashMap<String, usize>> {
+    fn build_excel_field_mapping(&self, header_row: &[Data]) -> Result<HashMap<String, usize>> {
         let mut field_mapping = HashMap::new();
 
         for (index, cell) in header_row.iter().enumerate() {
             let header_str = match cell {
-                DataType::String(s) => s.trim(),
-                DataType::Int(i) => &i.to_string(),
-                DataType::Float(f) => &f.to_string(),
+                Data::String(s) => s.trim().to_string(),
+                Data::Int(i) => i.to_string(),
+                Data::Float(f) => f.to_string(),
                 _ => continue, // 跳过其他类型的表头
             };
 
@@ -1291,10 +1296,10 @@ impl FileParser {
     }
 
     /// 检查Excel行是否为空
-    fn is_empty_excel_row(&self, row: &[DataType]) -> bool {
+    fn is_empty_excel_row(&self, row: &[Data]) -> bool {
         row.iter().all(|cell| match cell {
-            DataType::Empty => true,
-            DataType::String(s) => s.trim().is_empty(),
+            Data::Empty => true,
+            Data::String(s) => s.trim().is_empty(),
             _ => false,
         })
     }
@@ -1302,7 +1307,7 @@ impl FileParser {
     /// 解析单个Excel记录
     fn parse_excel_record(
         &self,
-        row: &[DataType],
+        row: &[Data],
         field_mapping: &HashMap<String, usize>,
         row_number: usize,
         sheet_name: &str,
@@ -1350,13 +1355,13 @@ impl FileParser {
         })
     }
 
-    /// 将DataType转换为字符串
-    fn datatype_to_string(&self, data: &DataType) -> String {
+    /// 将Data转换为字符串
+    fn datatype_to_string(&self, data: &Data) -> String {
         match data {
-            DataType::Empty => String::new(),
-            DataType::String(s) => s.clone(),
-            DataType::Int(i) => i.to_string(),
-            DataType::Float(f) => {
+            Data::Empty => String::new(),
+            Data::String(s) => s.clone(),
+            Data::Int(i) => i.to_string(),
+            Data::Float(f) => {
                 // 处理浮点数，去除不必要的小数点
                 if f.fract() == 0.0 {
                     format!("{:.0}", f)
@@ -1364,12 +1369,11 @@ impl FileParser {
                     f.to_string()
                 }
             }
-            DataType::Bool(b) => b.to_string(),
-            DataType::DateTime(dt) => dt.to_string(),
-            DataType::Error(err) => format!("ERROR: {:?}", err),
-            DataType::DurationIso(d) => d.to_string(),
-            DataType::DateTimeIso(dt) => dt.to_string(),
-            DataType::Duration(d) => format!("{}", d),
+            Data::Bool(b) => b.to_string(),
+            Data::DateTime(dt) => dt.to_string(),
+            Data::Error(err) => format!("ERROR: {:?}", err),
+            Data::DurationIso(d) => d.to_string(),
+            Data::DateTimeIso(dt) => dt.to_string(),
         }
     }
 }
