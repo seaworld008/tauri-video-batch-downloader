@@ -157,11 +157,15 @@ export class AppErrorHandler {
         break;
 
       case ErrorType.VALIDATION_ERROR:
-        toast.error(`📝 数据验证失败: ${message}`);
+        toast.error(
+          `📝 ${message.startsWith('数据验证失败') ? message : `数据验证失败: ${message}`}`
+        );
         break;
 
       case ErrorType.BACKEND_ERROR:
-        toast.error(`⚙️ 后端服务异常: ${message}`);
+        toast.error(
+          `⚙️ ${message.startsWith('后端服务异常') ? message : `后端服务异常: ${message}`}`
+        );
         break;
 
       default:
@@ -189,7 +193,11 @@ export class AppErrorHandler {
       return String((error as any).error);
     }
 
-    return JSON.stringify(error);
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
   }
 
   /**
@@ -320,8 +328,9 @@ export class AppErrorHandler {
     operation: () => Promise<T>,
     timeoutMs: number = 30000
   ): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         reject(new Error(`${action} 超时 (${timeoutMs}ms)`));
       }, timeoutMs);
     });
@@ -330,6 +339,10 @@ export class AppErrorHandler {
       return await Promise.race([operation(), timeoutPromise]);
     } catch (error) {
       throw this.handle(action, error, true);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
     }
   }
 }

@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -81,7 +81,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -155,7 +155,7 @@ jobs:
           done
 
       - name: Run Rust clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
         working-directory: ./src-tauri
 
   backend-tests:
@@ -226,7 +226,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm via Corepack
         shell: bash

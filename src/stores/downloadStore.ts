@@ -393,6 +393,7 @@ export const useDownloadStore = create<DownloadState>()(
           toastApi: toast,
         });
       } catch (error) {
+        set({ isLoading: false });
         handleError('添加下载任务', error);
         return [];
       }
@@ -728,6 +729,7 @@ export const useDownloadStore = create<DownloadState>()(
         });
         set({ recoveredSessionTaskIds: result.validatedTasks.map(task => task.id) });
       } catch (error) {
+        set({ isLoading: false });
         handleError('初始化下载管理器', error);
       }
     },

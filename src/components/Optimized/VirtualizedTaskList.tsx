@@ -179,7 +179,7 @@ export const VirtualizedTaskList: React.FC<VirtualizedTaskListProps> = ({
   }, []);
 
   return (
-    <div className={`h-full w-full ${className}`} data-testid='task-list'>
+    <div className={`h-full w-full ${className}`} data-testid='virtualized-task-list'>
       <div
         ref={containerRef}
         className='h-full w-full overflow-y-auto custom-scrollbar'

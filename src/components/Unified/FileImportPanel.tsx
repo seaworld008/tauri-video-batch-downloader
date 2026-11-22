@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import {
   DocumentArrowUpIcon,
-  TableCellsIcon,
   CheckCircleIcon,
   XMarkIcon,
   ArrowDownTrayIcon,
@@ -84,7 +83,7 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
       setFieldMapping(defaultMapping);
       return { preview, mapping: defaultMapping };
     } catch (error) {
-      notify.error('数据预览失败', String(error));
+      notify.error('数据预览失败', error instanceof Error ? error.message : String(error));
       setImportPreview(null);
       return null;
     } finally {
@@ -104,7 +103,7 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
         }
       }
     } catch (error) {
-      notify.error('文件选择失败', error as string);
+      notify.error('文件选择失败', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -119,7 +118,7 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
         setOutputDir(selected);
       }
     } catch (error) {
-      notify.error('选择目录失败', error as string);
+      notify.error('选择目录失败', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -300,7 +299,11 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
               </div>
             </div>
             <button
-              onClick={() => setSelectedFile(null)}
+              onClick={() => {
+                setSelectedFile(null);
+                setImportPreview(null);
+                setFieldMapping({});
+              }}
               className='p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-gray-400 hover:text-red-500 transition-colors'
             >
               <XMarkIcon className='w-5 h-5' />
@@ -311,9 +314,9 @@ export const FileImportPanel: React.FC<FileImportPanelProps> = ({ onImportSucces
             <>
               {/* Mapping Section */}
               <div className='grid grid-cols-1 md:grid-cols-2 gap-4 mb-6'>
-                {importPreview.headers.map(header => (
+                {importPreview.headers.map((header, index) => (
                   <div
-                    key={header}
+                    key={`${header}-${index}`}
                     className='flex items-center gap-2 bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg'
                   >
                     <label className='text-sm text-gray-500 w-1/3 truncate' title={header}>

@@ -34,7 +34,6 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
   const removeTasks = useDownloadStore(state => state.removeTasks);
   const clearSelection = useDownloadStore(state => state.clearSelection);
   const setSelectedTasks = useDownloadStore(state => state.setSelectedTasks);
-  const startDownload = useDownloadStore(state => state.startDownload);
   const pauseDownload = useDownloadStore(state => state.pauseDownload);
   const applyOutputDirectoryOverride = useDownloadStore(
     state => state.applyOutputDirectoryOverride
@@ -306,9 +305,17 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
         switch (action) {
           case 'start':
             openStartConfirm(async () => {
+              const store = useDownloadStore.getState();
+              const startableSelectedSet = new Set(startableSelectedTaskIds);
+              const latestStartable = store.tasks.filter(
+                task =>
+                  startableSelectedSet.has(task.id) &&
+                  ['pending', 'paused', 'failed'].includes(task.status)
+              );
               await startTasksSequentially(
-                selectedItems.filter(task => ['pending', 'paused', 'failed'].includes(task.status)),
-                startDownload
+                latestStartable,
+                store.startDownload,
+                store.syncRuntimeState
               );
             }, startableSelectedTaskIds);
             break;
@@ -345,7 +352,6 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
       removeTasks,
       selectedTasks,
       startAllDownloads,
-      startDownload,
       tasks,
     ]
   );

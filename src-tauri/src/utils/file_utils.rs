@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 const MAX_SAFE_FILENAME_CHARS: usize = 120;
+const MAX_SAFE_FILENAME_BYTES: usize = 200;
 
 /// Ensure directory exists
 pub fn ensure_dir_exists(path: &Path) -> Result<()> {
@@ -105,36 +106,51 @@ fn is_windows_reserved_filename(filename: &str) -> bool {
     )
 }
 
+fn take_prefix_within_limits(value: &str, max_chars: usize, max_bytes: usize) -> String {
+    let mut result = String::new();
+    let mut byte_count = 0usize;
+
+    for (char_count, ch) in value.chars().enumerate() {
+        let ch_bytes = ch.len_utf8();
+        if char_count >= max_chars || byte_count + ch_bytes > max_bytes {
+            break;
+        }
+        result.push(ch);
+        byte_count += ch_bytes;
+    }
+
+    result
+}
+
 fn truncate_filename_preserving_extension(filename: &str, max_chars: usize) -> String {
-    if filename.chars().count() <= max_chars {
+    if filename.chars().count() <= max_chars && filename.len() <= MAX_SAFE_FILENAME_BYTES {
         return filename.to_string();
     }
 
     let path = Path::new(filename);
     let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
-        return filename.chars().take(max_chars).collect();
+        return take_prefix_within_limits(filename, max_chars, MAX_SAFE_FILENAME_BYTES);
     };
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-        return filename.chars().take(max_chars).collect();
+        return take_prefix_within_limits(filename, max_chars, MAX_SAFE_FILENAME_BYTES);
     };
 
     let extension_with_dot = format!(".{extension}");
     let extension_len = extension_with_dot.chars().count();
-    if extension_len + 1 >= max_chars {
-        return filename.chars().take(max_chars).collect();
+    let extension_bytes = extension_with_dot.len();
+    if extension_len + 1 >= max_chars || extension_bytes + 1 >= MAX_SAFE_FILENAME_BYTES {
+        return take_prefix_within_limits(filename, max_chars, MAX_SAFE_FILENAME_BYTES);
     }
 
-    let stem_limit = max_chars - extension_len;
-    let truncated_stem = stem
-        .chars()
-        .take(stem_limit)
-        .collect::<String>()
+    let stem_char_limit = max_chars - extension_len;
+    let stem_byte_limit = MAX_SAFE_FILENAME_BYTES - extension_bytes;
+    let truncated_stem = take_prefix_within_limits(stem, stem_char_limit, stem_byte_limit)
         .trim()
         .trim_matches('.')
         .to_string();
 
     if truncated_stem.is_empty() {
-        filename.chars().take(max_chars).collect()
+        take_prefix_within_limits(filename, max_chars, MAX_SAFE_FILENAME_BYTES)
     } else {
         format!("{truncated_stem}{extension_with_dot}")
     }
@@ -169,8 +185,14 @@ mod tests {
     fn sanitize_filename_caps_extreme_lengths() {
         let long_name = "视".repeat(240);
         let sanitized = sanitize_filename(&long_name);
-        assert_eq!(sanitized.chars().count(), 120);
+        assert!(sanitized.chars().count() <= 120);
+        assert!(sanitized.len() <= 200);
         assert!(sanitized.chars().all(|ch| ch == '视'));
+
+        let long_cjk_with_ext = format!("{}.mp4", "视".repeat(120));
+        let sanitized_with_ext = sanitize_filename(&long_cjk_with_ext);
+        assert!(sanitized_with_ext.ends_with(".mp4"));
+        assert!(sanitized_with_ext.len() <= 200);
     }
 
     #[test]

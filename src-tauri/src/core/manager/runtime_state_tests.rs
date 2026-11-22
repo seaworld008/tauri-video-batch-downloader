@@ -44,8 +44,10 @@ async fn runtime_start_rejects_non_startable_statuses() -> AppResult<()> {
 async fn runtime_start_queues_failed_task_and_clears_error_when_full() -> AppResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("download_state.json");
-    let mut config = DownloadConfig::default();
-    config.concurrent_downloads = 0;
+    let config = DownloadConfig {
+        concurrent_downloads: 0,
+        ..Default::default()
+    };
     let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
 
     let task_id = manager
@@ -172,8 +174,10 @@ async fn runtime_resume_rejects_terminal_and_committing_statuses() -> AppResult<
 async fn runtime_resume_paused_task_queues_when_slots_full() -> AppResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("download_state.json");
-    let mut config = DownloadConfig::default();
-    config.concurrent_downloads = 0;
+    let config = DownloadConfig {
+        concurrent_downloads: 0,
+        ..Default::default()
+    };
     let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
 
     let task_id = manager
@@ -253,8 +257,10 @@ async fn runtime_start_paused_stale_handle_falls_through_instead_of_marking_down
 ) -> AppResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let state_path = temp_dir.path().join("download_state.json");
-    let mut config = DownloadConfig::default();
-    config.concurrent_downloads = 0;
+    let config = DownloadConfig {
+        concurrent_downloads: 0,
+        ..Default::default()
+    };
     let mut manager = DownloadManager::new_with_state_path(config, state_path)?;
 
     let task_id = manager

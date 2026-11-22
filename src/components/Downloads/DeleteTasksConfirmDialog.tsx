@@ -49,6 +49,8 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
       }}
     >
       <div
+        role='dialog'
+        aria-modal='true'
         className='bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-lg w-full p-6'
         onClick={event => event.stopPropagation()}
       >
@@ -78,8 +80,8 @@ export const DeleteTasksConfirmDialog: React.FC<DeleteTasksConfirmDialogProps> =
               即将处理的任务
             </div>
             <div className='space-y-1 text-sm text-gray-800 dark:text-gray-100'>
-              {taskTitles.slice(0, 3).map(taskTitle => (
-                <div key={taskTitle} className='truncate' title={taskTitle}>
+              {taskTitles.slice(0, 3).map((taskTitle, index) => (
+                <div key={`${taskTitle}-${index}`} className='truncate' title={taskTitle}>
                   {taskTitle}
                 </div>
               ))}

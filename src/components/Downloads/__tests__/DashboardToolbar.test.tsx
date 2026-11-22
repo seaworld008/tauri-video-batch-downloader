@@ -32,6 +32,7 @@ const storeActions = vi.hoisted(() => ({
   setSearchQuery: vi.fn(),
   refreshStats: vi.fn().mockResolvedValue(undefined),
   forceSync: vi.fn().mockResolvedValue(undefined),
+  syncRuntimeState: vi.fn().mockResolvedValue(undefined),
 }));
 
 const storeState = vi.hoisted(() => ({
@@ -71,11 +72,19 @@ vi.mock('react-hot-toast', () => ({
   default: toastMock.toast,
 }));
 vi.mock('../../../stores/downloadStore', () => ({
-  useDownloadStore: (selector: (state: any) => unknown) =>
-    selector({
-      ...storeState,
-      ...storeActions,
-    }),
+  useDownloadStore: Object.assign(
+    (selector: (state: any) => unknown) =>
+      selector({
+        ...storeState,
+        ...storeActions,
+      }),
+    {
+      getState: () => ({
+        ...storeState,
+        ...storeActions,
+      }),
+    }
+  ),
 }));
 vi.mock('../../../stores/configStore', () => ({
   useConfigStore: (selector: (state: any) => unknown) => selector(configState),

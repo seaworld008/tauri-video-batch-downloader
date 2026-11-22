@@ -8,6 +8,8 @@ interface UIState {
   clearAllNotifications: () => void;
 }
 
+const notificationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export const useUIStore = create<UIState>((set, get) => ({
   notifications: [],
 
@@ -23,19 +25,30 @@ export const useUIStore = create<UIState>((set, get) => ({
     }));
 
     if (notification.duration && notification.duration > 0) {
-      setTimeout(() => {
+      const timerId = setTimeout(() => {
+        notificationTimers.delete(newNotification.id);
         get().removeNotification(newNotification.id);
       }, notification.duration);
+      notificationTimers.set(newNotification.id, timerId);
     }
   },
 
   removeNotification: id => {
+    const timerId = notificationTimers.get(id);
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
+      notificationTimers.delete(id);
+    }
     set(state => ({
       notifications: state.notifications.filter(notification => notification.id !== id),
     }));
   },
 
   clearAllNotifications: () => {
+    for (const timerId of notificationTimers.values()) {
+      clearTimeout(timerId);
+    }
+    notificationTimers.clear();
     set({ notifications: [] });
   },
 }));

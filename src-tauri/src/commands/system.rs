@@ -221,6 +221,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     {
         hidden_command("open")
+            .arg("--")
             .arg(folder_path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
@@ -229,6 +230,7 @@ async fn open_folder_impl(folder_path: &str) -> AppResult<()> {
     #[cfg(target_os = "linux")]
     {
         hidden_command("xdg-open")
+            .arg("--")
             .arg(folder_path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
@@ -288,12 +290,14 @@ async fn reveal_path_impl(path: &str) -> AppResult<()> {
             RevealTarget::File(path) => {
                 hidden_command("open")
                     .arg("-R")
+                    .arg("--")
                     .arg(path)
                     .spawn()
                     .map_err(|e| AppError::System(format!("Failed to reveal file: {}", e)))?;
             }
             RevealTarget::Directory(path) => {
                 hidden_command("open")
+                    .arg("--")
                     .arg(path)
                     .spawn()
                     .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
@@ -311,6 +315,7 @@ async fn reveal_path_impl(path: &str) -> AppResult<()> {
             RevealTarget::Directory(path) => path,
         };
         hidden_command("xdg-open")
+            .arg("--")
             .arg(path)
             .spawn()
             .map_err(|e| AppError::System(format!("Failed to open folder: {}", e)))?;
@@ -340,7 +345,7 @@ async fn validate_url_impl(url: &str) -> AppResult<bool> {
             }
 
             // Check for common video domains or patterns
-            let host = parsed_url.host_str().unwrap_or("");
+            let host = parsed_url.host_str().unwrap_or("").to_ascii_lowercase();
 
             // Common video hosting domains
             let video_domains = [
@@ -364,8 +369,10 @@ async fn validate_url_impl(url: &str) -> AppResult<bool> {
                 ".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm", ".m4v",
             ];
 
-            // Validate if URL contains video patterns or known domains
-            let is_video_domain = video_domains.iter().any(|domain| host.contains(domain));
+            // Match exact domain or subdomain only (never substring like evil-youtube.com)
+            let is_video_domain = video_domains
+                .iter()
+                .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")));
             let is_video_file = video_extensions.iter().any(|ext| path.ends_with(ext));
             let is_m3u8 = path.contains(".m3u8") || url.contains("m3u8");
 
@@ -521,5 +528,24 @@ mod tests {
             .expect_err("missing target should fail");
 
         assert!(error.to_string().contains("Path not found"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_enforces_exact_domain_suffix() {
+        assert!(validate_url_impl("https://www.youtube.com/watch?v=123")
+            .await
+            .unwrap());
+        assert!(validate_url_impl("https://youtube.com/watch?v=123")
+            .await
+            .unwrap());
+        assert!(!validate_url_impl("https://evil-youtube.com/watch?v=123")
+            .await
+            .unwrap());
+        assert!(
+            !validate_url_impl("https://youtube.com.attacker.com/watch?v=123")
+                .await
+                .unwrap()
+        );
+        assert!(!validate_url_impl("file:///etc/passwd").await.unwrap());
     }
 }

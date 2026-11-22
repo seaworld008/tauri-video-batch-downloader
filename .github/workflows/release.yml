@@ -56,9 +56,13 @@ jobs:
       - name: Resolve release tag
         id: release-meta
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${{ inputs.tag }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$INPUT_TAG"
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
@@ -78,14 +82,14 @@ jobs:
           WINDOWS='{"key":"windows-x64","family":"windows","name":"Windows 10+ x64","os":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","build_target":"x86_64-pc-windows-msvc","sidecar_targets":"x86_64-pc-windows-msvc","bundles":"nsis"}'
           MACOS='{"key":"macos-universal","family":"macos","name":"macOS Universal","os":"macos-latest","rust_targets":"x86_64-apple-darwin,aarch64-apple-darwin","build_target":"universal-apple-darwin","sidecar_targets":"x86_64-apple-darwin,aarch64-apple-darwin","bundles":"dmg"}'
 
-          if [[ "${{ github.event_name }}" == "push" || "${{ inputs.platforms }}" == "all" ]]; then
+          if [[ "$EVENT_NAME" == "push" || "$INPUT_PLATFORMS" == "all" ]]; then
             MATRIX="[$WINDOWS,$MACOS]"
-          elif [[ "${{ inputs.platforms }}" == "windows" ]]; then
+          elif [[ "$INPUT_PLATFORMS" == "windows" ]]; then
             MATRIX="[$WINDOWS]"
-          elif [[ "${{ inputs.platforms }}" == "macos" ]]; then
+          elif [[ "$INPUT_PLATFORMS" == "macos" ]]; then
             MATRIX="[$MACOS]"
           else
-            echo "Unsupported platforms value: ${{ inputs.platforms }}" >&2
+            echo "Unsupported platforms value: $INPUT_PLATFORMS" >&2
             exit 1
           fi
 
@@ -104,10 +108,42 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify manifest versions match tag
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.release-meta.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          expected = os.environ["EXPECTED_VERSION"]
+          pkg_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+          tauri_version = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["version"]
+          cargo_toml = Path("src-tauri/Cargo.toml").read_text(encoding="utf-8")
+          m = re.search(r'(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"', cargo_toml)
+          if not m:
+              raise SystemExit("Failed to parse [package] version in src-tauri/Cargo.toml")
+          cargo_version = m.group(1)
+
+          mismatches = [
+              f"{name}={val}"
+              for name, val in [
+                  ("package.json", pkg_version),
+                  ("src-tauri/tauri.conf.json", tauri_version),
+                  ("src-tauri/Cargo.toml", cargo_version),
+              ]
+              if val != expected
+          ]
+          if mismatches:
+              raise SystemExit(f"Manifest version mismatch for tag {expected}: {', '.join(mismatches)}")
+          print(f"All manifest versions match {expected}")
+          PY
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -157,8 +193,11 @@ jobs:
           "README.md"
           "docs/**/*.md"
 
-      - name: Run frontend tests
+      - name: Run frontend unit tests
         run: pnpm exec vitest run
+
+      - name: Run frontend integration tests
+        run: pnpm exec vitest run --config vitest.config.integration.ts
 
       - name: Prepare frontendDist placeholder
         run: |
@@ -184,7 +223,7 @@ jobs:
         working-directory: ./src-tauri
 
       - name: Run Rust clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
         working-directory: ./src-tauri
 
       - name: Run Rust tests
@@ -211,7 +250,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Enable pnpm via Corepack
         shell: bash
@@ -322,12 +361,14 @@ jobs:
             fi
           done
 
-          VERSION="${{ needs.preflight.outputs.version }}"
           pnpm tauri build \
-            --target ${{ matrix.platform.build_target }} \
-            --bundles ${{ matrix.platform.bundles }} \
-            --config "{\"version\":\"$VERSION\"}"
+            --target "$BUILD_TARGET" \
+            --bundles "$BUNDLES" \
+            --config "{\"version\":\"$RELEASE_VERSION\"}"
         env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          BUILD_TARGET: ${{ matrix.platform.build_target }}
+          BUNDLES: ${{ matrix.platform.bundles }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -347,12 +388,17 @@ jobs:
             exit 0
           fi
 
-          xcrun notarytool submit src-tauri/target/${{ matrix.platform.build_target }}/release/bundle/dmg/*.dmg \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
+          shopt -s nullglob
+          for dmg in src-tauri/target/"$BUILD_TARGET"/release/bundle/dmg/*.dmg; do
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "$dmg"
+          done
         env:
+          BUILD_TARGET: ${{ matrix.platform.build_target }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

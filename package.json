@@ -1,6 +1,6 @@
 {
   "name": "video-downloader-pro",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "Professional batch video downloader with modern UI",
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "dev:check": "powershell -ExecutionPolicy Bypass -File ./scripts/dev.ps1 -Check",
     "start": "./scripts/quick-start.bat",
     "build": "pnpm sidecars:check && tauri build",
-    "build:local": "pnpm sidecars:check -- --allow-placeholders && tauri build --config src-tauri/tauri.conf.local.json --features local-logging",
+    "build:local": "pnpm sidecars:check -- --allow-placeholders && tauri build --features local-logging",
     "build:prod": "pnpm sidecars:check && tauri build",
     "vite": "vite",
     "preview": "vite preview",
@@ -39,32 +39,19 @@
   "dependencies": {
     "@headlessui/react": "^2.2.0",
     "@heroicons/react": "^2.2.0",
-    "@hookform/resolvers": "^3.9.1",
-    "@tanstack/react-query": "^5.62.0",
-    "@tanstack/react-query-devtools": "^5.62.0",
-    "@tanstack/react-virtual": "^3.11.2",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
-    "@tauri-apps/plugin-fs": "^2.5.1",
-    "@tauri-apps/plugin-os": "^2.1.0",
-    "@tauri-apps/plugin-shell": "^2.1.0",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "date-fns": "^4.1.0",
     "i18next": "^25.10.10",
     "i18next-browser-languagedetector": "^8.0.2",
-    "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-dropzone": "^14.3.5",
-    "react-hook-form": "^7.54.2",
     "react-hot-toast": "^2.4.1",
     "react-i18next": "^15.4.0",
-    "tailwind-merge": "^2.5.5",
     "zod": "^4.6.7",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.4",
     "@tauri-apps/cli": "^2.11.1",
     "@testing-library/jest-dom": "^6.6.3",
@@ -73,35 +60,23 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
-    "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.2",
     "@vitejs/plugin-react": "^4.7.0",
-    "@vitest/coverage-v8": "^4.1.5",
-    "@vitest/ui": "^4.1.5",
+    "@vitest/coverage-v8": "^4.1.12",
+    "@vitest/ui": "^4.1.12",
     "eslint": "^9.39.3",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.1.0",
-    "eslint-plugin-react-refresh": "^0.4.16",
     "ffmpeg-static": "^5.2.0",
     "husky": "^9.1.7",
     "jsdom": "^25.0.1",
-    "lint-staged": "^15.5.2",
     "prettier": "^3.8.3",
     "tailwindcss": "^4.2.4",
     "typescript": "^5.7.2",
-    "vite": "^7.3.2",
+    "vite": "^7.3.7",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^4.1.5",
-    "ws": "^8.18.3"
-  },
-  "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{json,md}": [
-      "prettier --write"
-    ]
+    "vitest": "^4.1.12",
+    "ws": "^8.21.0"
   },
   "engines": {
     "node": ">=20.0.0",
@@ -109,12 +84,18 @@
   },
   "pnpm": {
     "overrides": {
-      "brace-expansion@^1.0.0": "1.1.13",
-      "minimatch@^3.0.0": "3.1.4",
-      "picomatch@^2.0.0": "2.3.2",
-      "picomatch@^4.0.0": "4.0.4",
-      "postcss": "8.5.10",
-      "yaml": "2.8.3"
+      "@humanfs/node": "^0.16.8",
+      "baseline-browser-mapping": "^2.11.0",
+      "brace-expansion@^1.0.0": "^1.1.21",
+      "brace-expansion@>=3.0.0": "^5.0.12",
+      "browserslist": "^4.28.7",
+      "fflate@^0.8.0": "^0.8.3",
+      "form-data": "^4.0.6",
+      "js-yaml": "^4.3.2",
+      "minimatch@>=7.0.0": "^11.0.1",
+      "nanoid@^3.3.11": "^3.3.18",
+      "postcss": "^8.5.23",
+      "source-map-js": "^1.2.2"
     }
   },
   "packageManager": "pnpm@9.15.0"

@@ -34,7 +34,7 @@ export const validateArray = <T extends z.ZodType>(
 
   dataArray.forEach((item, index) => {
     const result = safeParse(schema, item);
-    if (result.success && result.data) {
+    if (result.success && result.data !== undefined) {
       validItems.push(result.data);
     } else {
       invalidItems.push({

@@ -80,11 +80,13 @@ mod tests {
 
     #[test]
     fn builds_http_downloader_config_from_download_config() {
-        let mut download = DownloadConfig::default();
-        download.concurrent_downloads = 0;
-        download.timeout_seconds = 42;
-        download.retry_attempts = 7;
-        download.user_agent = "test-agent".into();
+        let download = DownloadConfig {
+            concurrent_downloads: 0,
+            timeout_seconds: 42,
+            retry_attempts: 7,
+            user_agent: "test-agent".into(),
+            ..Default::default()
+        };
 
         let config = downloader_config_from_download_config(&download);
 

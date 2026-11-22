@@ -21,7 +21,6 @@ pub mod progress_tracker;
 pub mod queue_scheduler;
 pub mod resume_downloader;
 pub mod runtime;
-pub mod youtube_downloader;
 pub mod ytdlp_downloader;
 #[cfg(test)]
 mod ytdlp_downloader_tests;

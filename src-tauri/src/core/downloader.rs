@@ -257,7 +257,8 @@ impl HttpDownloader {
     pub fn new(config: DownloaderConfig) -> Result<Self> {
         let bandwidth_controller = BandwidthController::new();
         let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout))
+            .connect_timeout(Duration::from_secs(config.timeout))
+            .read_timeout(Duration::from_secs(config.timeout))
             .user_agent(&config.user_agent)
             .build()?;
 
@@ -653,7 +654,7 @@ impl HttpDownloader {
         let full_path = Path::new(&task.output_path).join(&task.filename);
         let output_path_str = full_path.to_string_lossy().to_string();
 
-        tracing::info!("ʹ��ResumeDownloader��ʼ����: {}", task.filename);
+        tracing::info!("使用ResumeDownloader开始下载: {}", task.filename);
 
         if cancel_flag.load(Ordering::Relaxed) || pause_flag.load(Ordering::Relaxed) {
             return Err(if cancel_flag.load(Ordering::Relaxed) {
@@ -757,20 +758,21 @@ impl HttpDownloader {
             }
         }
 
-        tracing::info!("ResumeDownloader�������: {}", task.filename);
+        tracing::info!("ResumeDownloader下载完成: {}", task.filename);
         Ok(())
     }
 
     async fn get_content_metadata(&self, url: &str) -> Result<ContentMetadata> {
         tracing::info!("🔍 [GET_CONTENT_LENGTH] Sending HEAD request to: {}", url);
 
-        // 使用较短的超时时间，防止阻塞
-        let client = Client::builder()
+        // 复用连接池并使用较短的探针超时，防止阻塞
+        let response = match self
+            .client
+            .head(url)
             .timeout(Duration::from_secs(10))
-            .user_agent(&self.config.user_agent)
-            .build()?;
-
-        let response = match client.head(url).send().await {
+            .send()
+            .await
+        {
             Ok(resp) => {
                 tracing::info!(
                     "🔍 [GET_CONTENT_LENGTH] HEAD response status: {}",
@@ -1354,7 +1356,7 @@ impl Clone for HttpDownloader {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_downloader_creation() {
@@ -1373,7 +1375,7 @@ mod tests {
 
         assert_eq!(task.status, TaskStatus::Pending);
         assert_eq!(task.stats.progress, 0.0);
-        assert!(task.id.len() > 0);
+        assert!(!task.id.is_empty());
         assert_eq!(task.url, "https://httpbin.org/bytes/1024");
         assert_eq!(task.filename, "test.bin");
     }
@@ -1685,7 +1687,7 @@ mod test_support {
         for line in lines {
             let lower = line.to_ascii_lowercase();
             if lower.starts_with("range:") {
-                if let Some(value) = line.splitn(2, ':').nth(1) {
+                if let Some((_, value)) = line.split_once(':') {
                     let value = value.trim();
                     if let Some(bytes_part) = value.strip_prefix("bytes=") {
                         if let Some(start_str) = bytes_part.split('-').next() {

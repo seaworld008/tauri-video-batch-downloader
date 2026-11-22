@@ -20,6 +20,13 @@ interface SettingsSectionProps {
   onConfigChange: ConfigChangeHandler;
 }
 
+const parseIntInput = (raw: string, onValid: (value: number) => void) => {
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isNaN(parsed)) {
+    onValid(parsed);
+  }
+};
+
 export const DownloadSettingsSection: React.FC<
   SettingsSectionProps & { onSelectOutputDirectory: () => void }
 > = ({ localConfig, onConfigChange, onSelectOutputDirectory }) => (
@@ -37,10 +44,12 @@ export const DownloadSettingsSection: React.FC<
         <input
           type='number'
           min='1'
-          max='20'
+          max='10'
           value={localConfig.download.concurrent_downloads}
           onChange={e =>
-            onConfigChange('download', 'concurrent_downloads', parseInt(e.target.value))
+            parseIntInput(e.target.value, value =>
+              onConfigChange('download', 'concurrent_downloads', value)
+            )
           }
           data-testid='concurrent-downloads'
           className={inputClass}
@@ -57,7 +66,11 @@ export const DownloadSettingsSection: React.FC<
           min='0'
           max='10'
           value={localConfig.download.retry_attempts}
-          onChange={e => onConfigChange('download', 'retry_attempts', parseInt(e.target.value))}
+          onChange={e =>
+            parseIntInput(e.target.value, value =>
+              onConfigChange('download', 'retry_attempts', value)
+            )
+          }
           data-testid='retry-attempts'
           className={inputClass}
         />
@@ -72,7 +85,11 @@ export const DownloadSettingsSection: React.FC<
           min='10'
           max='300'
           value={localConfig.download.timeout_seconds}
-          onChange={e => onConfigChange('download', 'timeout_seconds', parseInt(e.target.value))}
+          onChange={e =>
+            parseIntInput(e.target.value, value =>
+              onConfigChange('download', 'timeout_seconds', value)
+            )
+          }
           data-testid='timeout-setting'
           className={inputClass}
         />
@@ -238,7 +255,11 @@ export const AdvancedSettingsSection: React.FC<SettingsSectionProps> = ({
           min='1'
           max='50'
           value={localConfig.advanced.max_log_files}
-          onChange={e => onConfigChange('advanced', 'max_log_files', parseInt(e.target.value))}
+          onChange={e =>
+            parseIntInput(e.target.value, value =>
+              onConfigChange('advanced', 'max_log_files', value)
+            )
+          }
           className={inputClass}
         />
       </div>

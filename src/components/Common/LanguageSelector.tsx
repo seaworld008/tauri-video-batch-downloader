@@ -8,7 +8,23 @@ import { ChevronDownIcon, GlobeAltIcon, CheckIcon } from '@heroicons/react/24/ou
 import { Listbox, Transition } from '@headlessui/react';
 import { useLanguage } from '../../i18n/hooks';
 import { SupportedLanguage } from '../../i18n/index';
-import clsx from 'clsx';
+
+const cx = (
+  ...classes: Array<string | false | null | undefined | Record<string, boolean>>
+): string => {
+  const result: string[] = [];
+  for (const item of classes) {
+    if (!item) continue;
+    if (typeof item === 'string') {
+      result.push(item);
+    } else {
+      for (const [key, enabled] of Object.entries(item)) {
+        if (enabled) result.push(key);
+      }
+    }
+  }
+  return result.join(' ');
+};
 
 interface LanguageSelectorProps {
   /** Component size variant */
@@ -48,7 +64,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     lg: 'text-lg py-3 px-4',
   };
 
-  const buttonClasses = clsx(
+  const buttonClasses = cx(
     'relative w-full cursor-pointer rounded-lg bg-white dark:bg-gray-800',
     'border border-gray-300 dark:border-gray-600',
     'text-left shadow-sm transition-all duration-200',
@@ -60,7 +76,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   );
 
   const optionClasses = (active: boolean, selected: boolean) =>
-    clsx('relative cursor-pointer select-none py-2 pl-3 pr-9', 'transition-colors duration-150', {
+    cx('relative cursor-pointer select-none py-2 pl-3 pr-9', 'transition-colors duration-150', {
       'bg-primary-50 dark:bg-primary-900/20 text-primary-900 dark:text-primary-100': active,
       'text-gray-900 dark:text-gray-100': !active,
       'bg-primary-100 dark:bg-primary-800/30': selected,
@@ -105,7 +121,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
             {/* Dropdown arrow */}
             <span className='absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none'>
               <ChevronDownIcon
-                className={clsx(
+                className={cx(
                   'h-4 w-4 text-gray-400 transition-transform duration-200',
                   { 'rotate-180': false } // Could add state for open/close
                 )}
@@ -136,10 +152,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
 
                       {/* Language name */}
                       <span
-                        className={clsx(
-                          'block truncate',
-                          selected ? 'font-semibold' : 'font-normal'
-                        )}
+                        className={cx('block truncate', selected ? 'font-semibold' : 'font-normal')}
                       >
                         {LANGUAGE_NATIVE_NAMES[code as SupportedLanguage]}
                       </span>
